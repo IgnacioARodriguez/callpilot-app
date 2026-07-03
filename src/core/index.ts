@@ -1,0 +1,93 @@
+export { createGlobalContext, type GlobalContext, type PreferredLanguage } from "./context.ts";
+export { MODES, modeById, type AssistantModeId, type ModeDefinition } from "./modes.ts";
+export { formatEvidenceForPrompt, pickEvidence, type EvidenceItem, type EvidenceSelection, type EvidenceSource } from "./evidencePicker.ts";
+export { buildPrompt, type BuiltPrompt } from "./promptBuilder.ts";
+export { classifyScreenText, createEmptyScreenContext, type ScreenContext, type ScreenKind } from "./screenContext.ts";
+export {
+  cleanOcrText,
+  normalizeOcrLanguage,
+  ocrConfidenceLabel,
+  type OcrLanguage,
+  type OcrResult,
+} from "./ocr.ts";
+export { TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, type TranscriptSnapshot, type TranscriptSpeaker } from "./transcriptBuffer.ts";
+export {
+  detectQuestionIntent,
+  shouldAutoAnswer,
+  type QuestionDetection,
+} from "./liveConversation.ts";
+export {
+  pruneRecentSpeech,
+  shouldDropCandidateEcho,
+  speechSimilarity,
+  type RecentSpeech,
+} from "./conversationDedupe.ts";
+export {
+  DEFAULT_LIVE_TRANSCRIPTION_SETTINGS,
+  browserRecognitionLanguage,
+  buildRealtimeTranscriptionSessionUpdate,
+  liveTranscriptionPlan,
+  normalizeLiveTranscriptionSettings,
+  realtimeDelayForPreset,
+  type LiveAudioSource,
+  type LiveLatencyPreset,
+  type LiveTranscriptionPlan,
+  type LiveTranscriptionProvider,
+  type LiveTranscriptionSettings,
+} from "./liveTranscription.ts";
+export {
+  DEFAULT_TRANSCRIPTION_MODEL,
+  DEFAULT_OLLAMA_BASE_URL,
+  OPENAI_TRANSCRIPTION_MAX_BYTES,
+  buildOllamaChatRequest,
+  buildOpenAIImageAnalysisRequest,
+  buildOpenAIResponsesRequest,
+  createMockAnswer,
+  extractOllamaModels,
+  extractOllamaResponseText,
+  extractOpenAIResponseText,
+  extractOpenAITranscriptionText,
+  isSupportedAudioMimeType,
+  normalizeOllamaBaseUrl,
+  normalizeTranscriptionModelName,
+  validateAudioTranscriptionInput,
+  type AudioTranscriptionInput,
+  type AudioTranscriptionModel,
+  type AudioTranscriptionResult,
+  type GenerateAnswerInput,
+  type GenerateAnswerResult,
+  type ModelProvider,
+  type OllamaModelInfo,
+  type OllamaModelListResult,
+} from "./modelClient.ts";
+export {
+  CURRENT_SESSION_KEY,
+  SESSION_LIBRARY_KEY,
+  createSessionSnapshot,
+  makeSessionTitle,
+  parseSessionJson,
+  sanitizeSessionImport,
+  serializeSession,
+  upsertSession,
+  type SavedSession,
+  type SessionDraft,
+} from "./sessions.ts";
+export {
+  DEFAULT_APP_SETTINGS,
+  mergeAppSettings,
+  type AppSettings,
+} from "./settings.ts";
+export {
+  defaultStealthState,
+  applyShareSafeState,
+  assessPrivacyState,
+  normalizeStealthState,
+  reduceStealthState,
+  resetPrivacyState,
+  resetStealthState,
+  type FocusMode,
+  type PrivacyCheckResult,
+  type PrivacyCheckStatus,
+  type StealthAction,
+  type StealthState,
+} from "./stealth.ts";

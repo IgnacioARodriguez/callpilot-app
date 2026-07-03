@@ -1,0 +1,87 @@
+{
+  "name": "callpilot-v0",
+  "version": "0.1.0",
+  "description": "Private technical interview preparation copilot with a discreet desktop overlay.",
+  "author": "CallPilot",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "desktop:dev": "node scripts/desktop-dev.cjs",
+    "desktop:start": "npm run build && electron .",
+    "build": "tsc && vite build",
+    "pack": "npm run verify:desktop && node scripts/pack-unpacked.cjs",
+    "dist": "npm run verify:desktop && electron-builder",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --experimental-strip-types --test \"src/test/*.test.ts\"",
+    "test:privacy": "node --experimental-strip-types --test \"src/test/privacy.test.ts\"",
+    "verify:local-stt": "node scripts/verify-local-stt.cjs",
+    "verify:renderer-stt": "node scripts/verify-renderer-local-stt.cjs",
+    "verify:privacy": "npm run test:privacy && node scripts/verify-privacy.cjs",
+    "verify:desktop": "npm test && npm run build && npm run verify:local-stt && npm run verify:renderer-stt && node scripts/verify-desktop.cjs && node scripts/verify-privacy.cjs && node scripts/verify-isolation.cjs",
+    "verify:package": "node scripts/verify-package.cjs",
+    "verify:isolation": "node scripts/verify-isolation.cjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "lucide-react": "^0.460.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tesseract.js": "^7.0.0"
+  },
+  "build": {
+    "appId": "local.callpilot.v0",
+    "productName": "CallPilot V0",
+    "asar": true,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    }
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.0.1",
+    "@types/node": "^26.1.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21"
+  }
+}

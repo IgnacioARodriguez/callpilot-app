@@ -1,0 +1,57 @@
+{
+  "scope": "Consent-based privacy verification for ordinary video calls. This matrix does not cover proctoring, cheating prevention, anti-detection, or bypassing platform controls.",
+  "requiredConsent": true,
+  "platforms": [
+    {
+      "id": "google_meet",
+      "label": "Google Meet",
+      "shareTargets": ["entire_screen", "window"],
+      "requiredObserver": true
+    },
+    {
+      "id": "zoom",
+      "label": "Zoom",
+      "shareTargets": ["entire_screen", "window"],
+      "requiredObserver": true
+    },
+    {
+      "id": "microsoft_teams",
+      "label": "Microsoft Teams",
+      "shareTargets": ["entire_screen", "window"],
+      "requiredObserver": true
+    }
+  ],
+  "states": [
+    {
+      "id": "not_approved",
+      "callPrivacyAllowed": false,
+      "expectedLocalState": {
+        "overlayVisible": true,
+        "contentProtectionEnabled": false,
+        "mousePassthroughEnabled": false
+      },
+      "expectedObserverResult": "CallPilot may be visible if it is on the shared screen. Privacy controls must be unavailable."
+    },
+    {
+      "id": "approved_visible_protected",
+      "callPrivacyAllowed": true,
+      "overlayVisible": true,
+      "contentProtectionEnabled": true,
+      "mousePassthroughEnabled": false,
+      "expectedObserverResult": "Observer should not see readable CallPilot content. If content is visible, mark this platform and share target as failed."
+    },
+    {
+      "id": "approved_hidden",
+      "callPrivacyAllowed": true,
+      "overlayVisible": false,
+      "contentProtectionEnabled": true,
+      "mousePassthroughEnabled": true,
+      "expectedObserverResult": "Observer should not see the CallPilot window because it is hidden."
+    }
+  ],
+  "blockedUseCases": [
+    "LeetCode or similar interview/proctoring anti-detection checks",
+    "Bypassing screen monitoring, browser monitoring, or platform integrity controls",
+    "Claiming universal invisibility across third-party platforms"
+  ]
+}
