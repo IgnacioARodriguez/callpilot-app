@@ -837,10 +837,18 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
     : process.env.OPENAI_API_KEY || getStoredOpenAIKey();
 
   if (!apiKey) return { ok: false, text: "", error: "missing_openai_api_key" };
+  if (!modelName) return { ok: false, text: "", error: "missing_openai_model" };
   if (!imagePath || !fs.existsSync(imagePath)) return { ok: false, text: "", error: "missing_screenshot_file" };
 
   try {
     const imageDataUrl = `data:image/png;base64,${fs.readFileSync(imagePath, "base64")}`;
+    const prompt = [
+      "Analyze this screenshot for a live coding interview assistant.",
+      "Use the screenshot image, not OCR text, as the source of truth.",
+      "Return JSON with problemTitle, functionSignature, language, examples, constraints, and solution.",
+      "The solution must follow these sections: Problem detected, Approach, Solution, Complexity, Edge cases, What to say out loud.",
+      "If the screenshot is not a coding problem or code editor, return empty coding fields and a concise summary.",
+    ].join(" ");
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -855,9 +863,9 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
             content: [
               {
                 type: "input_text",
-                text: "Extract visible text and summarize this screen for a technical interview assistant. Return concise plain text with any coding problem title, constraints, code language, or meeting actions you can see.",
+                text: prompt,
               },
-              { type: "input_image", image_url: imageDataUrl, detail: "low" },
+              { type: "input_image", image_url: imageDataUrl, detail: "high" },
             ],
           },
         ],

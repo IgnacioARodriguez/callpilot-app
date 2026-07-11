@@ -1284,6 +1284,7 @@ function App() {
       return;
     }
 
+    const localScreenContext = classifyScreenText(ocr.text);
     updateScreenContext([
       ocr.text,
       "",
@@ -1292,7 +1293,26 @@ function App() {
       result.displayName ? `Display: ${result.displayName}` : "",
     ].filter(Boolean).join("\n"));
     setDesktopStatus("Local OCR complete");
-  }, [preferredLanguage]);
+
+    if (
+      modelProvider === "openai"
+      && window.callpilotDesktop?.analyzeScreenshot
+      && (localScreenContext.kind === "coding_problem" || localScreenContext.kind === "code_editor")
+    ) {
+      setDesktopStatus("Coding screen detected; analyzing screenshot with vision...");
+      const analysis = await window.callpilotDesktop.analyzeScreenshot({
+        path: result.path,
+        modelName,
+        apiKey: sessionApiKey,
+      });
+      if (analysis.ok && analysis.text) {
+        updateScreenContext(`${analysis.text}\n\nScreenshot: ${result.path}`);
+        setDesktopStatus("Coding screenshot analyzed with vision");
+      } else {
+        setDesktopStatus(`Coding screen detected, vision analysis failed: ${analysis.error ?? "unknown"}`);
+      }
+    }
+  }, [modelName, modelProvider, preferredLanguage, sessionApiKey]);
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onShortcut((action) => {

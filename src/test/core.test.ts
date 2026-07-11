@@ -327,6 +327,9 @@ test("OpenAI image analysis request uses Responses image content", () => {
   const request = buildOpenAIImageAnalysisRequest("data:image/png;base64,abc", "gpt-5.5");
   assert.equal(request.model, "gpt-5.5");
   assert.equal(request.store, false);
+  const promptText = request.input[0]?.content[0].text ?? "";
+  assert.match(promptText, /functionSignature/);
+  assert.match(promptText, /What to say out loud/);
   assert.deepEqual(request.input[0]?.content[1], {
     type: "input_image",
     image_url: "data:image/png;base64,abc",

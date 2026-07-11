@@ -64,6 +64,22 @@ export interface AudioTranscriptionResult {
   error?: string;
 }
 
+export interface CodingProblemExtraction {
+  problemTitle: string;
+  functionSignature: string;
+  language: string;
+  examples: Array<{ input: string; output: string }>;
+  constraints: string[];
+  solution: {
+    problemDetected: string;
+    approach: string;
+    code: string;
+    complexity: string;
+    edgeCases: string[];
+    whatToSayOutLoud: string;
+  };
+}
+
 export const normalizeTranscriptionModelName = (modelName?: string): string => {
   const normalized = typeof modelName === "string" ? modelName.trim() : "";
   return normalized || DEFAULT_TRANSCRIPTION_MODEL;
@@ -173,7 +189,12 @@ export const extractOllamaResponseText = (response: unknown): string => {
 export const buildOpenAIImageAnalysisRequest = (
   imageDataUrl: string,
   modelName: string,
-  prompt = "Extract the visible text and summarize the screen for a technical interview assistant. Return concise plain text.",
+  prompt = [
+    "Analyze this screenshot for a live coding interview assistant.",
+    "If it shows a coding problem or code editor, use the image as the source of truth and return JSON with problemTitle, functionSignature, language, examples, constraints, and solution.",
+    "The solution must include: Problem detected, Approach, Solution, Complexity, Edge cases, What to say out loud.",
+    "If it is not a coding screen, return a concise JSON summary with empty coding fields.",
+  ].join(" "),
 ) => ({
   model: modelName,
   input: [
