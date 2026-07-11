@@ -40,6 +40,7 @@ const settingsDefaults = {
 };
 
 const openAITranscriptionMaxBytes = 25 * 1024 * 1024;
+const openAIBaseUrl = () => (process.env.CALLPILOT_OPENAI_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
 const supportedAudioMimeTypes = new Set([
   "audio/mp3",
   "audio/mpeg",
@@ -759,7 +760,7 @@ ipcMain.handle("model:generate", async (_event, input) => {
         sendDetailChunk(pendingDetailChunks.shift());
       }
     };
-    const headlinePromise = fetch("https://api.openai.com/v1/responses", {
+    const headlinePromise = fetch(`${openAIBaseUrl()}/v1/responses`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -797,7 +798,7 @@ ipcMain.handle("model:generate", async (_event, input) => {
       return structured;
     });
 
-    const detailResponse = await fetch("https://api.openai.com/v1/responses", {
+    const detailResponse = await fetch(`${openAIBaseUrl()}/v1/responses`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -880,7 +881,7 @@ ipcMain.handle("audio:transcribe", async (_event, input) => {
     form.append("model", modelName);
     form.append("response_format", "json");
 
-    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const response = await fetch(`${openAIBaseUrl()}/v1/audio/transcriptions`, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -946,7 +947,7 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
       "The solution must follow these sections: Problem detected, Approach, Solution, Complexity, Edge cases, What to say out loud.",
       "If the screenshot is not a coding problem or code editor, return empty coding fields and a concise summary.",
     ].join(" ");
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch(`${openAIBaseUrl()}/v1/responses`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
