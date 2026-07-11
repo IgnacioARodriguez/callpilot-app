@@ -8,6 +8,7 @@ if (process.env.CALLPILOT_REMOTE_DEBUG_PORT) {
 }
 
 let mainWindow = null;
+let overlayWindow = null;
 let shortcutHealth = [];
 const ocrWorkers = new Map();
 
@@ -427,16 +428,65 @@ const assessPrivacyState = async () => {
 };
 
 const syncWindowState = () => {
-  if (!mainWindow) return;
   normalizeStealthState();
-  mainWindow.setAlwaysOnTop(true, "screen-saver");
-  mainWindow.setContentProtection(Boolean(stealthState.contentProtectionEnabled));
-  mainWindow.setIgnoreMouseEvents(Boolean(stealthState.mousePassthroughEnabled), { forward: true });
-  if (stealthState.overlayVisible) {
+  for (const windowRef of [mainWindow, overlayWindow]) {
+    if (!windowRef) continue;
+    windowRef.setAlwaysOnTop(true, "screen-saver");
+    windowRef.setContentProtection(Boolean(stealthState.contentProtectionEnabled));
+    windowRef.setIgnoreMouseEvents(Boolean(stealthState.mousePassthroughEnabled), { forward: true });
+  }
+  if (mainWindow && stealthState.overlayVisible && !overlayWindow) {
     if (!mainWindow.isVisible()) mainWindow.showInactive();
-  } else {
+  } else if (mainWindow) {
     mainWindow.hide();
   }
+};
+
+const createOverlayWindow = async () => {
+  if (overlayWindow) {
+    overlayWindow.showInactive();
+    return;
+  }
+  overlayWindow = new BrowserWindow({
+    width: 420,
+    height: 640,
+    minWidth: 320,
+    minHeight: 260,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  syncWindowState();
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) {
+    await overlayWindow.loadURL(`${devUrl}#/overlay`);
+  } else {
+    await overlayWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"), { hash: "/overlay" });
+  }
+  overlayWindow.on("closed", () => {
+    overlayWindow = null;
+  });
+};
+
+const closeOverlayWindow = () => {
+  if (!overlayWindow) return;
+  overlayWindow.close();
+  overlayWindow = null;
+};
+
+const sendToOverlay = (channel, payload) => {
+  overlayWindow?.webContents.send(channel, payload);
 };
 
 const createWindow = async () => {
@@ -546,6 +596,20 @@ ipcMain.handle("stealth:reset-privacy", () => {
   return { ...stealthState };
 });
 ipcMain.handle("privacy:check", () => assessPrivacyState());
+ipcMain.handle("session:start", async () => {
+  await createOverlayWindow();
+  mainWindow?.hide();
+  return { ok: true };
+});
+ipcMain.handle("session:end", () => {
+  closeOverlayWindow();
+  mainWindow?.show();
+  return { ok: true };
+});
+ipcMain.handle("transcript:publish", (_event, message) => {
+  sendToOverlay("transcript:message", message);
+  return { ok: true };
+});
 ipcMain.handle("settings:get", () => readSettings());
 ipcMain.handle("settings:save", (_event, settings) => writeSettings(settings));
 ipcMain.handle("shortcuts:health", () => shortcutHealth.map((item) => ({ ...item })));
@@ -702,6 +766,10 @@ ipcMain.handle("model:generate", async (_event, input) => {
           headline: structured.headline,
           keywords: structured.keywords,
         });
+        sendToOverlay("answer:headline", {
+          headline: structured.headline,
+          keywords: structured.keywords,
+        });
       }
       return structured;
     });
@@ -732,6 +800,7 @@ ipcMain.handle("model:generate", async (_event, input) => {
     const text = await readOpenAISseStream(detailResponse, (event) => {
       if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
         _event.sender.send("answer:detail-chunk", event.delta);
+        sendToOverlay("answer:detail-chunk", event.delta);
       }
     });
     const headlineResult = await headlinePromise.catch((error) => ({ headline: "", keywords: [], detail: "", error: error.message }));

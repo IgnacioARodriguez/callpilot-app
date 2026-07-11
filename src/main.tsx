@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BriefcaseBusiness, Copy, Eye, EyeOff, FileText, Mic, MousePointer2, Pause, Play, Radar, RefreshCw, RotateCcw, ScanText, Send, Shield, ShieldCheck, Sparkles, Square, Trash2 } from "lucide-react";
+import { BriefcaseBusiness, Copy, Eye, EyeOff, FileText, Mic, MonitorUp, MousePointer2, Pause, Play, Radar, RefreshCw, RotateCcw, ScanText, Send, Shield, ShieldCheck, Sparkles, Square, Trash2 } from "lucide-react";
 import {
   CURRENT_SESSION_KEY,
   DEFAULT_OLLAMA_BASE_URL,
@@ -42,6 +42,7 @@ import {
   type TranscriptSpeaker,
   type TranscriptSnapshot,
 } from "./core";
+import OverlayApp from "./overlay/OverlayApp";
 import "./styles.css";
 
 const loadSavedSession = (): Partial<SavedSession> => {
@@ -216,7 +217,8 @@ function App() {
     if (!text.trim()) return;
     setTranscript((current) => {
       const next = new TranscriptBuffer(current);
-      next.append(text, source, Date.now(), speaker);
+      const message = next.append(text, source, Date.now(), speaker);
+      if (message) void window.callpilotDesktop?.publishTranscriptMessage?.(message);
       return next.snapshot();
     });
   }, []);
@@ -225,9 +227,19 @@ function App() {
     if (!text.trim()) return;
     setTranscript((current) => {
       const next = new TranscriptBuffer(current);
-      next.append(text, "manual", Date.now(), "assistant");
+      const message = next.append(text, "manual", Date.now(), "assistant");
+      if (message) void window.callpilotDesktop?.publishTranscriptMessage?.(message);
       return next.snapshot();
     });
+  }, []);
+
+  const startSession = React.useCallback(async () => {
+    if (!window.callpilotDesktop?.startSession) {
+      setDesktopStatus("Overlay requires desktop mode");
+      return;
+    }
+    const result = await window.callpilotDesktop.startSession();
+    setDesktopStatus(result.ok ? "Overlay session started" : `Overlay failed: ${result.error ?? "unknown"}`);
   }, []);
 
   React.useEffect(() => {
@@ -1472,6 +1484,10 @@ function App() {
               </span>
             </div>
             <div className="primary-actions">
+              <button className="primary" onClick={startSession}>
+                <MonitorUp size={18} />
+                Start session
+              </button>
               <button className={isDictating ? "primary danger" : "primary"} onClick={toggleDictation}>
                 {isDictating ? <Square size={18} /> : <Mic size={18} />}
                 {isDictating ? "Stop listening" : "Start listening"}
@@ -1954,6 +1970,6 @@ function App() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    {window.location.hash === "#/overlay" ? <OverlayApp /> : <App />}
   </React.StrictMode>,
 );

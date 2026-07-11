@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   captureScreenshot: () => ipcRenderer.invoke("screen:capture"),
   recognizeScreenText: (input) => ipcRenderer.invoke("screen:ocr", input),
   analyzeScreenshot: (input) => ipcRenderer.invoke("screen:analyze", input),
+  startSession: () => ipcRenderer.invoke("session:start"),
+  endSession: () => ipcRenderer.invoke("session:end"),
+  publishTranscriptMessage: (message) => ipcRenderer.invoke("transcript:publish", message),
   listOllamaModels: (input) => ipcRenderer.invoke("ollama:list-models", input),
   generateAnswer: (input) => ipcRenderer.invoke("model:generate", input),
   transcribeAudio: (input) => ipcRenderer.invoke("audio:transcribe", input),
@@ -37,5 +40,10 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     const handler = (_event, chunk) => callback(chunk);
     ipcRenderer.on("answer:detail-chunk", handler);
     return () => ipcRenderer.removeListener("answer:detail-chunk", handler);
+  },
+  onTranscriptMessage: (callback) => {
+    const handler = (_event, message) => callback(message);
+    ipcRenderer.on("transcript:message", handler);
+    return () => ipcRenderer.removeListener("transcript:message", handler);
   },
 });

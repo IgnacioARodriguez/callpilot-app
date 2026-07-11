@@ -112,6 +112,9 @@ declare global {
       captureScreenshot: () => Promise<ScreenshotResult>;
       recognizeScreenText: (input: { path: string; language?: OcrLanguage | "auto" | "english" | "spanish" }) => Promise<OcrResult>;
       analyzeScreenshot: (input: { path: string; modelName: string; apiKey?: string }) => Promise<ScreenAnalysisResult>;
+      startSession: () => Promise<{ ok: boolean; error?: string }>;
+      endSession: () => Promise<{ ok: boolean; error?: string }>;
+      publishTranscriptMessage: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       listOllamaModels: (input?: { ollamaBaseUrl?: string }) => Promise<OllamaModelListResult>;
       generateAnswer: (input: GenerateAnswerInput) => Promise<GenerateAnswerResult>;
       transcribeAudio: (input: {
@@ -132,6 +135,7 @@ declare global {
       onShortcut: (callback: (action: DesktopShortcutAction) => void) => () => void;
       onAnswerHeadline: (callback: (payload: { headline: string; keywords: string[] }) => void) => () => void;
       onAnswerDetailChunk: (callback: (chunk: string) => void) => () => void;
+      onTranscriptMessage: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
     };
   }
 }

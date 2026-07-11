@@ -15,6 +15,18 @@ body {
   color: #17202a;
 }
 
+:root {
+  --cp-overlay-bg: rgba(255, 255, 255, 0.78);
+  --cp-bubble-candidate: rgba(241, 239, 232, 0.9);
+  --cp-bubble-recruiter: rgba(245, 244, 239, 0.75);
+  --cp-bubble-assistant-bg: #eeedfe;
+  --cp-bubble-assistant-border: #cecbf6;
+  --cp-text: #17202a;
+  --cp-text-muted: #5f5e5a;
+  --cp-accent: #534ab7;
+  --cp-accent-pill-bg: #cecbf6;
+}
+
 button,
 textarea,
 input,
@@ -45,6 +57,102 @@ button:hover {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.cp-overlay {
+  height: 100vh;
+  background: var(--cp-overlay-bg);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 16px;
+  padding: 12px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  -webkit-app-region: drag;
+}
+
+.cp-overlay__bar {
+  color: #26215c;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px 10px;
+  font-size: 13px;
+}
+
+.cp-overlay__bar button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12px;
+  -webkit-app-region: no-drag;
+}
+
+.cp-overlay__messages {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.cp-bubble {
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--cp-text);
+  overflow-wrap: anywhere;
+}
+
+.cp-bubble p {
+  margin: 0;
+}
+
+.cp-bubble--candidate {
+  background: var(--cp-bubble-candidate);
+  margin-left: 40px;
+  color: var(--cp-text-muted);
+}
+
+.cp-bubble--recruiter {
+  background: var(--cp-bubble-recruiter);
+  margin-right: 40px;
+  color: var(--cp-text-muted);
+}
+
+.cp-bubble--assistant {
+  background: var(--cp-bubble-assistant-bg);
+  border: 1px solid var(--cp-bubble-assistant-border);
+}
+
+.cp-bubble__headline {
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: #26215c;
+}
+
+.cp-bubble__keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.cp-keyword {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--cp-accent-pill-bg);
+  color: var(--cp-accent);
+  font-weight: 600;
+}
+
+.cp-bubble__detail {
+  color: var(--cp-accent);
+  white-space: pre-wrap;
 }
 
 textarea,
