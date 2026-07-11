@@ -33,7 +33,7 @@ export const buildPrompt = (context: GlobalContext, userInput: string): BuiltPro
     sections.push(fenced(name, value));
   };
 
-  add("selected_evidence", formatEvidenceForPrompt(evidence));
+  // Stable context stays before transcript, screen context, and current user input so provider prompt caching can reuse exact prefixes when available.
   add("user_profile", context.userProfile);
   add("company_name", context.companyName);
   add("role_title", context.roleTitle);
@@ -46,6 +46,7 @@ export const buildPrompt = (context: GlobalContext, userInput: string): BuiltPro
   add("coding_language_preference", context.codingLanguagePreference);
   add("user_notes", context.userNotes);
   add("response_constraints", context.responseConstraints.join("\n"));
+  add("selected_evidence", formatEvidenceForPrompt(evidence));
   add("transcript", compactTranscript(context.transcript, 6000, 80));
   add("screen_context", `kind: ${context.screenContext.kind}\nconfidence: ${context.screenContext.confidence}\n${context.screenContext.visibleText}`);
   add("user_input", userInput);

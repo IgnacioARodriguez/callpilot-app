@@ -12,11 +12,13 @@ import {
   buildPrompt,
   classifyScreenText,
   createGlobalContext,
+  createLatencyMetricRun,
   createSessionSnapshot,
   defaultStealthState,
   assessPrivacyState,
   detectQuestionIntent,
   liveTranscriptionPlan,
+  markLatencyStage,
   normalizeLiveTranscriptionSettings,
   normalizeOcrLanguage,
   ocrConfidenceLabel,
@@ -30,6 +32,7 @@ import {
   upsertSession,
   type AssistantModeId,
   type GlobalContext,
+  type LatencyMetricRun,
   type LiveAudioSource,
   type LiveLatencyPreset,
   type LiveTranscriptionProvider,
@@ -108,7 +111,7 @@ function App() {
   const [codingLanguage, setCodingLanguage] = React.useState(savedSession.codingLanguage ?? "Python");
   const [answerVerbosity, setAnswerVerbosity] = React.useState<"short" | "medium" | "detailed">(savedSession.answerVerbosity ?? "medium");
   const [modelProvider, setModelProvider] = React.useState<ModelProvider>(savedSession.modelProvider ?? "mock");
-  const [modelName, setModelName] = React.useState(savedSession.modelName ?? "gpt-5.5");
+  const [modelName, setModelName] = React.useState(savedSession.modelName ?? "");
   const [ollamaBaseUrl, setOllamaBaseUrl] = React.useState(DEFAULT_OLLAMA_BASE_URL);
   const [ollamaModels, setOllamaModels] = React.useState<string[]>([]);
   const [ollamaStatus, setOllamaStatus] = React.useState("Ollama models not checked yet");
@@ -124,6 +127,7 @@ function App() {
   const [isRecordingMic, setIsRecordingMic] = React.useState(false);
   const [recordingStatus, setRecordingStatus] = React.useState("");
   const [isGenerating, setIsGenerating] = React.useState(false);
+  const [latencyRuns, setLatencyRuns] = React.useState<LatencyMetricRun[]>([]);
   const [question, setQuestion] = React.useState(savedSession.question ?? "");
   const [answer, setAnswer] = React.useState(savedSession.answer ?? "");
   const [sessionLibrary, setSessionLibrary] = React.useState<SavedSession[]>(loadSessionLibrary);
@@ -155,6 +159,8 @@ function App() {
   const localSegmentTimerRef = React.useRef<number | null>(null);
   const autoCheckRanRef = React.useRef(false);
   const localSttPipelineRef = React.useRef<Promise<unknown> | null>(null);
+  const activeLatencyRunIdRef = React.useRef<string | null>(null);
+  const firstDetailChunkSeenRef = React.useRef(false);
 
   const context = React.useMemo(
     () =>
@@ -377,6 +383,10 @@ function App() {
     const builtPrompt = buildPrompt(context, effectiveQuestion);
     setLastPrompt(builtPrompt);
     setIsGenerating(true);
+    const latencyRun = markLatencyStage(createLatencyMetricRun("answer"), "model_call_start");
+    activeLatencyRunIdRef.current = latencyRun.id;
+    firstDetailChunkSeenRef.current = false;
+    setLatencyRuns((current) => [...current, latencyRun].slice(-12));
 
     try {
       if (modelProvider === "mock") {
@@ -404,6 +414,12 @@ function App() {
       setAnswer(text);
       appendAssistantTranscriptLine(text);
     } finally {
+      const activeRunId = activeLatencyRunIdRef.current;
+      if (activeRunId) {
+        setLatencyRuns((current) => current.map((run) =>
+          run.id === activeRunId ? markLatencyStage(run, "response_complete") : run,
+        ));
+      }
       setIsGenerating(false);
     }
   }, [appendAssistantTranscriptLine, context, modelName, modelProvider, ollamaBaseUrl, question, sessionApiKey]);
@@ -1244,6 +1260,8 @@ function App() {
       return;
     }
 
+    const latencyRun = markLatencyStage(createLatencyMetricRun("screen"), "audio_or_screen_capture");
+    setLatencyRuns((current) => [...current, latencyRun].slice(-12));
     const result = await window.callpilotDesktop.captureScreenshot();
     if (!result.ok || !result.path) {
       setDesktopStatus(`Screenshot failed: ${result.error ?? "unknown"}`);
@@ -1264,6 +1282,9 @@ function App() {
         apiKey: sessionApiKey,
       });
       if (analysis.ok && analysis.text) {
+        setLatencyRuns((current) => current.map((run) =>
+          run.id === latencyRun.id ? markLatencyStage(run, "transcription_or_vision_done") : run,
+        ));
         updateScreenContext(`${analysis.text}\n\nScreenshot: ${result.path}`);
         setDesktopStatus("Screenshot analyzed");
       } else {
@@ -1278,6 +1299,8 @@ function App() {
       return;
     }
 
+    const latencyRun = markLatencyStage(createLatencyMetricRun("screen+ocr"), "audio_or_screen_capture");
+    setLatencyRuns((current) => [...current, latencyRun].slice(-12));
     setDesktopStatus("Capturing screen for local OCR...");
     const result = await window.callpilotDesktop.captureScreenshot();
     if (!result.ok || !result.path) {
@@ -1295,6 +1318,9 @@ function App() {
       updateScreenContext([`Screenshot captured: ${result.path}`, result.displayName ? `Display: ${result.displayName}` : ""].filter(Boolean).join("\n"));
       return;
     }
+    setLatencyRuns((current) => current.map((run) =>
+      run.id === latencyRun.id ? markLatencyStage(run, "transcription_or_vision_done") : run,
+    ));
 
     const localScreenContext = classifyScreenText(ocr.text);
     updateScreenContext([
@@ -1339,10 +1365,23 @@ function App() {
 
   React.useEffect(() => {
     const disposeHeadline = window.callpilotDesktop?.onAnswerHeadline?.((payload) => {
+      const activeRunId = activeLatencyRunIdRef.current;
+      if (activeRunId) {
+        setLatencyRuns((current) => current.map((run) =>
+          run.id === activeRunId ? markLatencyStage(run, "first_headline") : run,
+        ));
+      }
       const keywords = payload.keywords.length ? `\n\nKeywords: ${payload.keywords.join(", ")}` : "";
       setAnswer(`${payload.headline}${keywords}`);
     });
     const disposeDetail = window.callpilotDesktop?.onAnswerDetailChunk?.((chunk) => {
+      const activeRunId = activeLatencyRunIdRef.current;
+      if (activeRunId && !firstDetailChunkSeenRef.current) {
+        firstDetailChunkSeenRef.current = true;
+        setLatencyRuns((current) => current.map((run) =>
+          run.id === activeRunId ? markLatencyStage(run, "first_token") : run,
+        ));
+      }
       setAnswer((current) => `${current}${chunk}`);
     });
     return () => {
@@ -1957,6 +1996,10 @@ function App() {
                 <div>
                   <div className="mini-title">Prompt debug</div>
                   <pre>{JSON.stringify(lastPrompt.debug, null, 2)}</pre>
+                </div>
+                <div>
+                  <div className="mini-title">Latency</div>
+                  <pre>{JSON.stringify(latencyRuns, null, 2)}</pre>
                 </div>
               </div>
             </details>

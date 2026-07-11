@@ -1,4 +1,5 @@
 const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, safeStorage, session } = require("electron");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createWorker } = require("tesseract.js");
@@ -156,6 +157,14 @@ const parseStructuredAnswer = (text) => {
   } catch {
     return { headline: "", keywords: [], detail: String(text || "") };
   }
+};
+
+const createPromptCacheKey = (prompt) => {
+  const stablePrefix = [
+    String(prompt?.system ?? ""),
+    String(prompt?.user ?? "").split("<transcript>")[0] ?? "",
+  ].join("\n");
+  return `callpilot:${crypto.createHash("sha256").update(stablePrefix).digest("hex").slice(0, 24)}`;
 };
 
 const readOpenAISseStream = async (response, onEvent) => {
@@ -736,6 +745,7 @@ ipcMain.handle("model:generate", async (_event, input) => {
       model: modelName,
       instructions: String(prompt?.system ?? ""),
       input: String(prompt?.user ?? ""),
+      prompt_cache_key: createPromptCacheKey(prompt),
       store: false,
     };
     const headlinePromise = fetch("https://api.openai.com/v1/responses", {

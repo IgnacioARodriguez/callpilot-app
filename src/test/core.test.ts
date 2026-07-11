@@ -13,6 +13,7 @@ import {
   buildOpenAIResponsesRequest,
   buildPrompt,
   classifyScreenText,
+  createLatencyMetricRun,
   createSessionSnapshot,
   createGlobalContext,
   defaultStealthState,
@@ -25,6 +26,7 @@ import {
   isSupportedAudioMimeType,
   liveTranscriptionPlan,
   mergeAppSettings,
+  markLatencyStage,
   normalizeOllamaBaseUrl,
   normalizeOcrLanguage,
   normalizeLiveTranscriptionSettings,
@@ -51,6 +53,15 @@ test("context defaults to live coding and Python", () => {
   assert.equal(context.activeMode, "live_coding");
   assert.equal(context.codingLanguagePreference, "Python");
   assert.doesNotThrow(() => JSON.stringify(context));
+});
+
+test("latency metrics record elapsed stages", () => {
+  const run = createLatencyMetricRun("answer", 1000);
+  const marked = markLatencyStage(run, "first_token", 1250);
+
+  assert.equal(marked.id, run.id);
+  assert.equal(marked.events[0].stage, "first_token");
+  assert.equal(marked.events[0].elapsedMs, 250);
 });
 
 test("prompt builder emits debug metadata", () => {

@@ -78,6 +78,12 @@ export {
   type AppSettings,
 } from "./settings.ts";
 export {
+  createLatencyMetricRun,
+  markLatencyStage,
+  type LatencyMetricRun,
+  type LatencyStage,
+} from "./latencyMetrics.ts";
+export {
   defaultStealthState,
   applyShareSafeState,
   assessPrivacyState,
