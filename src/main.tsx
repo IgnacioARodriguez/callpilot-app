@@ -1242,10 +1242,10 @@ function App() {
       if (liveTranscriptionProvider === "openai_realtime" && !hasOpenAITranscriptionKey) {
         setLiveTranscriptionProvider("browser");
       }
-      void refreshOllamaModels({ selectFirst: modelName === "gpt-5.5" || modelName === "mock-local" });
+      void refreshOllamaModels({ selectFirst: !modelName || modelName === "mock-local" });
     }
     if (provider === "openai" && modelName === "llama3.1") {
-      setModelName("gpt-5.5");
+      setModelName("");
     }
   };
 

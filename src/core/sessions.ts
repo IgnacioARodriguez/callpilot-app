@@ -106,7 +106,7 @@ export const sanitizeSessionImport = (value: unknown): SavedSession | null => {
       ? value.answerVerbosity as "short" | "medium" | "detailed"
       : "medium",
     modelProvider: value.modelProvider === "openai" || value.modelProvider === "ollama" ? value.modelProvider : "mock",
-    modelName: typeof value.modelName === "string" ? value.modelName : "gpt-5.5",
+    modelName: typeof value.modelName === "string" ? value.modelName : "",
     question: typeof value.question === "string" ? value.question : "",
     answer: typeof value.answer === "string" ? value.answer : "",
   });

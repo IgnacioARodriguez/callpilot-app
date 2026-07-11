@@ -748,6 +748,17 @@ ipcMain.handle("model:generate", async (_event, input) => {
       prompt_cache_key: createPromptCacheKey(prompt),
       store: false,
     };
+    let headlineDelivered = false;
+    const pendingDetailChunks = [];
+    const sendDetailChunk = (chunk) => {
+      _event.sender.send("answer:detail-chunk", chunk);
+      sendToOverlay("answer:detail-chunk", chunk);
+    };
+    const flushPendingDetailChunks = () => {
+      while (pendingDetailChunks.length > 0) {
+        sendDetailChunk(pendingDetailChunks.shift());
+      }
+    };
     const headlinePromise = fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -780,6 +791,8 @@ ipcMain.handle("model:generate", async (_event, input) => {
           headline: structured.headline,
           keywords: structured.keywords,
         });
+        headlineDelivered = true;
+        flushPendingDetailChunks();
       }
       return structured;
     });
@@ -809,11 +822,16 @@ ipcMain.handle("model:generate", async (_event, input) => {
 
     const text = await readOpenAISseStream(detailResponse, (event) => {
       if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-        _event.sender.send("answer:detail-chunk", event.delta);
-        sendToOverlay("answer:detail-chunk", event.delta);
+        if (headlineDelivered) {
+          sendDetailChunk(event.delta);
+        } else {
+          pendingDetailChunks.push(event.delta);
+        }
       }
     });
     const headlineResult = await headlinePromise.catch((error) => ({ headline: "", keywords: [], detail: "", error: error.message }));
+    headlineDelivered = true;
+    flushPendingDetailChunks();
     return {
       ok: Boolean(text),
       text,

@@ -332,8 +332,8 @@ test("manual scenario fixtures exist", () => {
 
 test("OpenAI Responses request uses instructions and input", () => {
   const prompt = buildPrompt(createGlobalContext(), "Explain queues");
-  const request = buildOpenAIResponsesRequest(prompt, "gpt-5.5");
-  assert.equal(request.model, "gpt-5.5");
+  const request = buildOpenAIResponsesRequest(prompt, "openai-model-under-test");
+  assert.equal(request.model, "openai-model-under-test");
   assert.equal(request.instructions, prompt.system);
   assert.equal(request.input, prompt.user);
   assert.equal(request.store, false);
@@ -352,8 +352,8 @@ test("OpenAI response text extraction supports helper and output array", () => {
 });
 
 test("OpenAI image analysis request uses Responses image content", () => {
-  const request = buildOpenAIImageAnalysisRequest("data:image/png;base64,abc", "gpt-5.5");
-  assert.equal(request.model, "gpt-5.5");
+  const request = buildOpenAIImageAnalysisRequest("data:image/png;base64,abc", "openai-model-under-test");
+  assert.equal(request.model, "openai-model-under-test");
   assert.equal(request.store, false);
   const promptText = request.input[0]?.content[0].text ?? "";
   assert.match(promptText, /functionSignature/);
@@ -411,7 +411,7 @@ test("session snapshots serialize without secrets and round trip", () => {
     codingLanguage: context.codingLanguagePreference,
     answerVerbosity: "medium",
     modelProvider: "openai",
-    modelName: "gpt-5.5",
+    modelName: "openai-model-under-test",
     question: "question",
     answer: "answer",
   }, new Date("2026-07-02T10:00:00.000Z"));
