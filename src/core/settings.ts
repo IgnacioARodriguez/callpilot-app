@@ -27,7 +27,8 @@ export interface AppSettings {
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   modelProvider: "mock",
-  modelName: "gpt-5.5",
+  // ASSUMPTION: no OpenAI API key was available during implementation to verify /v1/models, so OpenAI model selection is user-configured instead of hardcoded.
+  modelName: "",
   ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
   transcriptionModelName: "gpt-4o-transcribe",
   preferredLanguage: "auto",

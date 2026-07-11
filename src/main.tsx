@@ -436,16 +436,16 @@ function App() {
     }
     const detection = detectQuestionIntent(normalized, preferredLanguage);
     if (!autoAnswerEnabled) {
-      setLiveAssistStatus(detection.shouldAnswer ? `Question detected (${detection.confidence.toFixed(2)})` : "Listening");
+      setLiveAssistStatus(detection.shouldDispatch ? `Turn ready (${detection.reason})` : "Listening");
       return;
     }
     if (shouldAutoAnswer(detection, now, lastAutoAnsweredAtRef.current, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence)) {
       lastAutoAnsweredAtRef.current = now;
-      setLiveAssistStatus(`Auto answering (${detection.confidence.toFixed(2)})`);
+      setLiveAssistStatus(`Auto answering (${detection.reason})`);
       void ask(detection.normalizedText);
       return;
     }
-    setLiveAssistStatus(detection.shouldAnswer ? "Question detected, cooldown active" : "Listening");
+    setLiveAssistStatus(detection.shouldDispatch ? "Turn ready, cooldown active" : "Listening");
   }, [appendTranscriptLine, ask, autoAnswerEnabled, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence, preferredLanguage]);
 
   const stopLiveRecording = () => {
@@ -1304,6 +1304,20 @@ function App() {
     });
     return () => dispose?.();
   }, [ask, captureScreenshot, clearContext]);
+
+  React.useEffect(() => {
+    const disposeHeadline = window.callpilotDesktop?.onAnswerHeadline?.((payload) => {
+      const keywords = payload.keywords.length ? `\n\nKeywords: ${payload.keywords.join(", ")}` : "";
+      setAnswer(`${payload.headline}${keywords}`);
+    });
+    const disposeDetail = window.callpilotDesktop?.onAnswerDetailChunk?.((chunk) => {
+      setAnswer((current) => `${current}${chunk}`);
+    });
+    return () => {
+      disposeHeadline?.();
+      disposeDetail?.();
+    };
+  }, []);
 
   const updateScreenContext = (value: string) => {
     setScreenText(value);

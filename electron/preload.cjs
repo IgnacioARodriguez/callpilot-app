@@ -28,4 +28,14 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     ipcRenderer.on("shortcut", handler);
     return () => ipcRenderer.removeListener("shortcut", handler);
   },
+  onAnswerHeadline: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("answer:headline", handler);
+    return () => ipcRenderer.removeListener("answer:headline", handler);
+  },
+  onAnswerDetailChunk: (callback) => {
+    const handler = (_event, chunk) => callback(chunk);
+    ipcRenderer.on("answer:detail-chunk", handler);
+    return () => ipcRenderer.removeListener("answer:detail-chunk", handler);
+  },
 });

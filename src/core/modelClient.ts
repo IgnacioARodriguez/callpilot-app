@@ -1,4 +1,5 @@
 import type { BuiltPrompt } from "./promptBuilder.ts";
+import { STRUCTURED_ANSWER_JSON_SCHEMA } from "./answerSchema.ts";
 
 export type ModelProvider = "mock" | "openai" | "ollama";
 export type AudioTranscriptionModel = "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | "gpt-4o-transcribe-diarize" | "whisper-1";
@@ -106,6 +107,18 @@ export const buildOpenAIResponsesRequest = (prompt: BuiltPrompt, modelName: stri
   instructions: prompt.system,
   input: prompt.user,
   store: false,
+});
+
+export const buildOpenAIStructuredAnswerRequest = (prompt: BuiltPrompt, modelName: string) => ({
+  ...buildOpenAIResponsesRequest(prompt, modelName),
+  text: {
+    format: {
+      type: "json_schema",
+      name: STRUCTURED_ANSWER_JSON_SCHEMA.name,
+      strict: true,
+      schema: STRUCTURED_ANSWER_JSON_SCHEMA.schema,
+    },
+  },
 });
 
 export const normalizeOllamaBaseUrl = (baseUrl?: string): string => {

@@ -130,6 +130,8 @@ declare global {
       saveSettings: (settings: Partial<DesktopSettings>) => Promise<DesktopSettings>;
       getShortcutHealth: () => Promise<ShortcutHealth[]>;
       onShortcut: (callback: (action: DesktopShortcutAction) => void) => () => void;
+      onAnswerHeadline: (callback: (payload: { headline: string; keywords: string[] }) => void) => () => void;
+      onAnswerDetailChunk: (callback: (chunk: string) => void) => () => void;
     };
   }
 }

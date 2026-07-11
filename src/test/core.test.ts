@@ -143,10 +143,12 @@ test("live conversation detects interview questions in English and Spanish", () 
   const english = detectQuestionIntent("Can you walk me through why you chose SQL instead of NoSQL?", "english");
   const spanish = detectQuestionIntent("Podrias explicar por que elegiste SQL en ese proyecto?", "spanish");
   const filler = detectQuestionIntent("ok thanks", "auto");
+  const implicit = detectQuestionIntent("me interesaria que me cuentes tu approach aca", "spanish");
 
   assert.equal(english.shouldAnswer, true);
   assert.equal(spanish.shouldAnswer, true);
   assert.equal(filler.shouldAnswer, false);
+  assert.equal(implicit.shouldDispatch, true);
 });
 
 test("live conversation auto answer respects cooldown", () => {

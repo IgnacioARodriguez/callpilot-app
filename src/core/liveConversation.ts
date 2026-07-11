@@ -2,6 +2,7 @@ import type { PreferredLanguage } from "./context.ts";
 
 export interface QuestionDetection {
   shouldAnswer: boolean;
+  shouldDispatch: boolean;
   confidence: number;
   reason: string;
   normalizedText: string;
@@ -23,6 +24,7 @@ const spanishQuestionPatterns = [
 
 const fillerPatterns = [
   /^\s*(ok|okay|vale|bien|perfecto|gracias|thanks|thank you)\s*[.!?]?\s*$/i,
+  /^\s*(ok|okay)\s+(thanks|thank you)\s*[.!?]?\s*$/i,
   /^\s*(yes|no|si|sí)\s*[.!?]?\s*$/i,
 ];
 
@@ -34,10 +36,10 @@ export const detectQuestionIntent = (
 ): QuestionDetection => {
   const normalizedText = normalize(text);
   if (!normalizedText) {
-    return { shouldAnswer: false, confidence: 0, reason: "empty", normalizedText };
+    return { shouldAnswer: false, shouldDispatch: false, confidence: 0, reason: "empty", normalizedText };
   }
   if (normalizedText.length < 8 || fillerPatterns.some((pattern) => pattern.test(normalizedText))) {
-    return { shouldAnswer: false, confidence: 0.1, reason: "too_short_or_filler", normalizedText };
+    return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "too_short_or_filler", normalizedText };
   }
 
   const patterns =
@@ -50,7 +52,8 @@ export const detectQuestionIntent = (
   const confidence = Math.min(0.95, matches * 0.34 + (normalizedText.endsWith("?") ? 0.22 : 0));
 
   return {
-    shouldAnswer: confidence >= 0.45,
+    shouldAnswer: true,
+    shouldDispatch: true,
     confidence,
     reason: matches > 0 ? "question_pattern" : "no_question_pattern",
     normalizedText,
@@ -62,8 +65,7 @@ export const shouldAutoAnswer = (
   nowMs: number,
   lastAnsweredAtMs: number,
   cooldownMs = 12000,
-  minConfidence = 0.45,
+  _minConfidence = 0.45,
 ): boolean =>
-  detection.shouldAnswer
-  && detection.confidence >= minConfidence
+  detection.shouldDispatch
   && nowMs - lastAnsweredAtMs >= cooldownMs;

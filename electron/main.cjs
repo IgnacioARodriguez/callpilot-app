@@ -22,7 +22,8 @@ const stealthState = {
 
 const settingsDefaults = {
   modelProvider: "mock",
-  modelName: "gpt-5.5",
+  // ASSUMPTION: no OpenAI API key was available during implementation to verify /v1/models, so OpenAI model selection is user-configured instead of hardcoded.
+  modelName: "",
   ollamaBaseUrl: "http://localhost:11434",
   transcriptionModelName: "gpt-4o-transcribe",
   preferredLanguage: "auto",
@@ -127,6 +128,64 @@ const extractOpenAIResponseText = (response) => {
     .filter(Boolean)
     .join("\n")
     .trim();
+};
+
+const structuredAnswerJsonSchema = {
+  name: "structured_interview_answer",
+  schema: {
+    type: "object",
+    properties: {
+      headline: { type: "string" },
+      keywords: { type: "array", items: { type: "string" }, minItems: 3, maxItems: 5 },
+      detail: { type: "string" },
+    },
+    required: ["headline", "keywords", "detail"],
+    additionalProperties: false,
+  },
+};
+
+const parseStructuredAnswer = (text) => {
+  try {
+    const value = JSON.parse(String(text || ""));
+    return {
+      headline: typeof value.headline === "string" ? value.headline : "",
+      keywords: Array.isArray(value.keywords) ? value.keywords.filter((item) => typeof item === "string").slice(0, 5) : [],
+      detail: typeof value.detail === "string" ? value.detail : "",
+    };
+  } catch {
+    return { headline: "", keywords: [], detail: String(text || "") };
+  }
+};
+
+const readOpenAISseStream = async (response, onEvent) => {
+  if (!response.body) return "";
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = "";
+  let fullText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+    for (const rawEvent of events) {
+      const dataLines = rawEvent
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim());
+      for (const line of dataLines) {
+        if (!line || line === "[DONE]") continue;
+        const event = JSON.parse(line);
+        if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+          fullText += event.delta;
+        }
+        onEvent?.(event);
+      }
+    }
+  }
+  return fullText.trim();
 };
 
 const normalizeOllamaBaseUrl = (baseUrl) => {
@@ -604,40 +663,85 @@ ipcMain.handle("model:generate", async (_event, input) => {
   if (!apiKey) {
     return { ok: false, text: "", provider, modelName, error: "missing_openai_api_key" };
   }
+  if (!modelName) {
+    return { ok: false, text: "", provider, modelName, error: "missing_openai_model" };
+  }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const requestBase = {
+      model: modelName,
+      instructions: String(prompt?.system ?? ""),
+      input: String(prompt?.user ?? ""),
+      store: false,
+    };
+    const headlinePromise = fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: modelName,
-        instructions: String(prompt?.system ?? ""),
-        input: String(prompt?.user ?? ""),
-        store: false,
+        ...requestBase,
+        text: {
+          format: {
+            type: "json_schema",
+            name: structuredAnswerJsonSchema.name,
+            strict: true,
+            schema: structuredAnswerJsonSchema.schema,
+          },
+        },
       }),
+    }).then(async (headlineResponse) => {
+      const payload = await headlineResponse.json().catch(() => ({}));
+      if (!headlineResponse.ok) {
+        throw new Error(payload?.error?.message ?? `openai_headline_http_${headlineResponse.status}`);
+      }
+      const structured = parseStructuredAnswer(extractOpenAIResponseText(payload));
+      if (structured.headline || structured.keywords.length) {
+        _event.sender.send("answer:headline", {
+          headline: structured.headline,
+          keywords: structured.keywords,
+        });
+      }
+      return structured;
     });
 
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
+    const detailResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        ...requestBase,
+        stream: true,
+      }),
+    });
+    if (!detailResponse.ok) {
+      const payload = await detailResponse.json().catch(() => ({}));
+      await headlinePromise.catch(() => undefined);
       return {
         ok: false,
         text: "",
         provider,
         modelName,
-        error: payload?.error?.message ?? `openai_http_${response.status}`,
+        error: payload?.error?.message ?? `openai_http_${detailResponse.status}`,
       };
     }
 
-    const text = extractOpenAIResponseText(payload);
+    const text = await readOpenAISseStream(detailResponse, (event) => {
+      if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+        _event.sender.send("answer:detail-chunk", event.delta);
+      }
+    });
+    const headlineResult = await headlinePromise.catch((error) => ({ headline: "", keywords: [], detail: "", error: error.message }));
     return {
       ok: Boolean(text),
       text,
       provider,
       modelName,
-      error: text ? undefined : "empty_openai_response",
+      structured: headlineResult,
+      error: text ? undefined : headlineResult.error || "empty_openai_response",
     };
   } catch (error) {
     return {

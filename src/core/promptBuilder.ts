@@ -57,6 +57,7 @@ export const buildPrompt = (context: GlobalContext, userInput: string): BuiltPro
     "When asked why a technical choice was made, connect the answer to a relevant project, constraint, tradeoff, or business outcome from the resume or STAR stories. If no matching evidence exists, say the closest supported answer and label any assumption.",
     "Tailor wording to the company and role when company_name, role_title, or job_description are present.",
     "Keep answers concise, practical, and interview-ready.",
+    "For conversational modes, produce a natural spoken headline first: it should sound easy to say aloud, not like written prose. Keep keywords short and memorable.",
     mode.systemPromptFragment,
   ].join("\n");
   const user = sections.join("\n\n");
