@@ -10,6 +10,7 @@ import {
   TranscriptBuffer,
   browserRecognitionLanguage,
   buildPrompt,
+  buildPromptWithEvidence,
   classifyScreenText,
   createGlobalContext,
   createLatencyMetricRun,
@@ -24,6 +25,7 @@ import {
   ocrConfidenceLabel,
   modeById,
   parseSessionJson,
+  pickEvidenceWithEmbeddings,
   pruneRecentSpeech,
   reduceStealthState,
   shouldDropCandidateEcho,
@@ -31,6 +33,8 @@ import {
   serializeSession,
   upsertSession,
   type AssistantModeId,
+  type EvidenceEmbedder,
+  type EvidenceEmbedding,
   type GlobalContext,
   type LatencyMetricRun,
   type LiveAudioSource,
@@ -159,6 +163,8 @@ function App() {
   const localSegmentTimerRef = React.useRef<number | null>(null);
   const autoCheckRanRef = React.useRef(false);
   const localSttPipelineRef = React.useRef<Promise<unknown> | null>(null);
+  const evidenceEmbedderRef = React.useRef<Promise<EvidenceEmbedder> | null>(null);
+  const evidenceEmbeddingCacheRef = React.useRef(new Map<string, EvidenceEmbedding>());
   const activeLatencyRunIdRef = React.useRef<string | null>(null);
   const firstDetailChunkSeenRef = React.useRef(false);
 
@@ -380,7 +386,14 @@ function App() {
   const ask = React.useCallback(async (questionOverride?: string) => {
     const effectiveQuestion = questionOverride ?? question;
     if (questionOverride !== undefined) setQuestion(questionOverride);
-    const builtPrompt = buildPrompt(context, effectiveQuestion);
+    let builtPrompt = buildPrompt(context, effectiveQuestion);
+    try {
+      const embedder = await getEvidenceEmbedder();
+      const evidence = await pickEvidenceWithEmbeddings(context, effectiveQuestion, embedder, 4);
+      builtPrompt = buildPromptWithEvidence(context, effectiveQuestion, evidence);
+    } catch {
+      builtPrompt = buildPrompt(context, effectiveQuestion);
+    }
     setLastPrompt(builtPrompt);
     setIsGenerating(true);
     const latencyRun = markLatencyStage(createLatencyMetricRun("answer"), "model_call_start");
@@ -640,6 +653,48 @@ function App() {
       });
     }
     return localSttPipelineRef.current;
+  };
+
+  const getEvidenceEmbedder = async (): Promise<EvidenceEmbedder> => {
+    if (!evidenceEmbedderRef.current) {
+      setDesktopStatus("Loading local evidence embeddings...");
+      evidenceEmbedderRef.current = import("@huggingface/transformers").then(async ({ env, pipeline }) => {
+        env.allowLocalModels = false;
+        env.allowRemoteModels = true;
+        env.useBrowserCache = true;
+        env.useFS = false;
+        env.useFSCache = false;
+        env.remoteHost = "https://huggingface.co/";
+        env.remotePathTemplate = "{model}/resolve/{revision}/";
+        const extractor = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", { dtype: "q8" });
+        return async (texts: string[]) => {
+          const results: EvidenceEmbedding[] = [];
+          const missingTexts: string[] = [];
+          for (const text of texts) {
+            const key = text.replace(/\s+/g, " ").trim();
+            const cached = evidenceEmbeddingCacheRef.current.get(key);
+            if (cached) {
+              results.push(cached);
+            } else {
+              missingTexts.push(key);
+            }
+          }
+          for (const text of missingTexts) {
+            const output = await extractor(text, { pooling: "mean", normalize: true }) as { data?: ArrayLike<number> };
+            const embedding = {
+              text,
+              vector: Array.from(output.data ?? []),
+            };
+            evidenceEmbeddingCacheRef.current.set(text, embedding);
+          }
+          return texts.map((text) => {
+            const key = text.replace(/\s+/g, " ").trim();
+            return evidenceEmbeddingCacheRef.current.get(key) ?? { text: key, vector: [] };
+          });
+        };
+      });
+    }
+    return evidenceEmbedderRef.current;
   };
 
   const testLocalWhisper = async () => {

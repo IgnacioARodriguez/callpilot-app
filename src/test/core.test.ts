@@ -33,6 +33,7 @@ import {
   normalizeTranscriptionModelName,
   ocrConfidenceLabel,
   pickEvidence,
+  pickEvidenceWithEmbeddings,
   parseSessionJson,
   reduceStealthState,
   resetStealthState,
@@ -112,6 +113,22 @@ test("evidence picker selects STAR tradeoff evidence for SQL vs NoSQL questions"
   assert.equal(selection.items[0]?.source, "star_stories");
   assert.match(selection.items[0]?.text ?? "", /PostgreSQL|ACID|auditability|settlement/i);
   assert.ok(selection.items[0]?.matchedTerms.includes("sql"));
+});
+
+test("embedding evidence picker ranks semantic matches", async () => {
+  const context = createGlobalContext({
+    resumeText: "Built a payments reconciliation service with ledger audits.",
+    starStories: "Mentored two engineers through a stakeholder conflict.",
+  });
+  const embedder = async (texts: string[]) => texts.map((text) => ({
+    text,
+    vector: /payments|ledger|reconciliation|financial/i.test(text) ? [1, 0] : [0, 1],
+  }));
+
+  const selection = await pickEvidenceWithEmbeddings(context, "How did you handle financial consistency?", embedder, 1);
+
+  assert.equal(selection.debug.strategy, "embedding");
+  assert.equal(selection.items[0]?.source, "resume");
 });
 
 test("mode contracts include expected sections", () => {

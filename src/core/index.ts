@@ -1,7 +1,7 @@
 export { createGlobalContext, type GlobalContext, type PreferredLanguage } from "./context.ts";
 export { MODES, modeById, type AssistantModeId, type ModeDefinition } from "./modes.ts";
-export { formatEvidenceForPrompt, pickEvidence, type EvidenceItem, type EvidenceSelection, type EvidenceSource } from "./evidencePicker.ts";
-export { buildPrompt, type BuiltPrompt } from "./promptBuilder.ts";
+export { buildEvidenceCandidates, formatEvidenceForPrompt, pickEvidence, pickEvidenceWithEmbeddings, type EvidenceCandidate, type EvidenceEmbedder, type EvidenceEmbedding, type EvidenceItem, type EvidenceSelection, type EvidenceSource } from "./evidencePicker.ts";
+export { buildPrompt, buildPromptWithEvidence, type BuiltPrompt } from "./promptBuilder.ts";
 export { classifyScreenText, createEmptyScreenContext, type ScreenContext, type ScreenKind } from "./screenContext.ts";
 export {
   cleanOcrText,

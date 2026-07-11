@@ -1,6 +1,6 @@
 import { modeById, type AssistantModeId } from "./modes.ts";
 import { compactTranscript } from "./transcriptBuffer.ts";
-import { formatEvidenceForPrompt, pickEvidence, type EvidenceItem } from "./evidencePicker.ts";
+import { formatEvidenceForPrompt, pickEvidence, type EvidenceItem, type EvidenceSelection } from "./evidencePicker.ts";
 import type { GlobalContext } from "./context.ts";
 
 export interface BuiltPrompt {
@@ -18,12 +18,11 @@ export interface BuiltPrompt {
 
 const fenced = (name: string, value: string) => `<${name}>\n${value.trim()}\n</${name}>`;
 
-export const buildPrompt = (context: GlobalContext, userInput: string): BuiltPrompt => {
+export const buildPromptWithEvidence = (context: GlobalContext, userInput: string, evidence: EvidenceSelection): BuiltPrompt => {
   const mode = modeById(context.activeMode);
   const includedSections: string[] = ["mode", "output_format"];
   const omittedSections: Array<{ section: string; reason: string }> = [];
   const sections = [fenced("active_mode", mode.id), fenced("output_format", mode.defaultOutputFormat.join("\n"))];
-  const evidence = pickEvidence(context, userInput, 4);
   const add = (name: string, value: string) => {
     if (!value.trim()) {
       omittedSections.push({ section: name, reason: "empty" });
@@ -75,3 +74,6 @@ export const buildPrompt = (context: GlobalContext, userInput: string): BuiltPro
     },
   };
 };
+
+export const buildPrompt = (context: GlobalContext, userInput: string): BuiltPrompt =>
+  buildPromptWithEvidence(context, userInput, pickEvidence(context, userInput, 4));

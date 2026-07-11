@@ -16,8 +16,18 @@ export interface EvidenceSelection {
     queryTerms: string[];
     candidateCount: number;
     selectedCount: number;
+    strategy?: "lexical" | "embedding" | "embedding_fallback";
   };
 }
+
+export type EvidenceCandidate = Omit<EvidenceItem, "score" | "matchedTerms">;
+
+export interface EvidenceEmbedding {
+  text: string;
+  vector: number[];
+}
+
+export type EvidenceEmbedder = (texts: string[]) => Promise<EvidenceEmbedding[]>;
 
 const stopWords = new Set([
   "a", "an", "and", "are", "as", "at", "be", "because", "but", "by", "can", "did", "do", "does", "for", "from",
@@ -71,7 +81,7 @@ const sourceWeight: Record<EvidenceSource, number> = {
   transcript: 0.85,
 };
 
-const buildCandidates = (context: GlobalContext): Array<Omit<EvidenceItem, "score" | "matchedTerms">> => {
+export const buildEvidenceCandidates = (context: GlobalContext): EvidenceCandidate[] => {
   const sources: Array<{ source: EvidenceSource; label: string; text: string }> = [
     { source: "star_stories", label: "STAR story", text: context.starStories },
     { source: "resume", label: "CV", text: context.resumeText },
@@ -92,7 +102,7 @@ export const pickEvidence = (context: GlobalContext, query: string, maxItems = 4
     context.targetUseCase,
     context.screenContext.summary,
   ].join(" "));
-  const candidates = buildCandidates(context);
+  const candidates = buildEvidenceCandidates(context);
   const scored = candidates
     .map((candidate): EvidenceItem => {
       const candidateTerms = new Set(tokenize(candidate.text));
@@ -111,8 +121,92 @@ export const pickEvidence = (context: GlobalContext, query: string, maxItems = 4
       queryTerms: queryTerms.slice(0, 40),
       candidateCount: candidates.length,
       selectedCount: scored.length,
+      strategy: "lexical",
     },
   };
+};
+
+const cosineSimilarity = (left: number[], right: number[]): number => {
+  let dot = 0;
+  let leftMagnitude = 0;
+  let rightMagnitude = 0;
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = left[index] ?? 0;
+    const rightValue = right[index] ?? 0;
+    dot += leftValue * rightValue;
+    leftMagnitude += leftValue * leftValue;
+    rightMagnitude += rightValue * rightValue;
+  }
+  if (leftMagnitude === 0 || rightMagnitude === 0) return 0;
+  return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
+};
+
+export const pickEvidenceWithEmbeddings = async (
+  context: GlobalContext,
+  query: string,
+  embedder: EvidenceEmbedder,
+  maxItems = 4,
+): Promise<EvidenceSelection> => {
+  const candidates = buildEvidenceCandidates(context);
+  if (candidates.length === 0) {
+    return {
+      items: [],
+      debug: {
+        queryTerms: [],
+        candidateCount: 0,
+        selectedCount: 0,
+        strategy: "embedding",
+      },
+    };
+  }
+
+  try {
+    const queryText = [
+      query,
+      context.companyName,
+      context.roleTitle,
+      context.targetUseCase,
+      context.screenContext.summary,
+    ].join(" ");
+    const [queryEmbedding, ...candidateEmbeddings] = await embedder([
+      queryText,
+      ...candidates.map((candidate) => candidate.text),
+    ]);
+    const queryVector = queryEmbedding?.vector ?? [];
+    const lexicalTerms = tokenize(queryText).slice(0, 40);
+    const scored = candidates
+      .map((candidate, index): EvidenceItem => {
+        const vector = candidateEmbeddings[index]?.vector ?? [];
+        const semanticScore = Math.max(0, cosineSimilarity(queryVector, vector));
+        const candidateTerms = new Set(tokenize(candidate.text));
+        const matchedTerms = lexicalTerms.filter((term) => candidateTerms.has(term));
+        const score = (semanticScore * 10 + matchedTerms.length * 0.15) * sourceWeight[candidate.source];
+        return { ...candidate, score: Number(score.toFixed(3)), matchedTerms: matchedTerms.slice(0, 12) };
+      })
+      .filter((item) => item.score > 0)
+      .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label))
+      .slice(0, maxItems);
+
+    return {
+      items: scored,
+      debug: {
+        queryTerms: lexicalTerms,
+        candidateCount: candidates.length,
+        selectedCount: scored.length,
+        strategy: "embedding",
+      },
+    };
+  } catch {
+    const fallback = pickEvidence(context, query, maxItems);
+    return {
+      ...fallback,
+      debug: {
+        ...fallback.debug,
+        strategy: "embedding_fallback",
+      },
+    };
+  }
 };
 
 export const formatEvidenceForPrompt = (selection: EvidenceSelection): string =>
