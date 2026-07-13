@@ -25,7 +25,10 @@ const argValue = (name) => {
 
 const cliProvider = argValue("--provider");
 const cliModel = argValue("--model");
+const cliLimit = Number(argValue("--limit") || "0");
+const cliCategory = argValue("--category");
 const respectSettings = process.argv.includes("--respect-settings");
+const dryRun = process.argv.includes("--dry-run");
 
 const waitForHttp = async (url, timeoutMs = 25000) => {
   const started = Date.now();
@@ -125,10 +128,76 @@ const codingProblem = [
   "-10^9 <= nums[i] <= 10^9",
 ].join("\n");
 
+const makeTechnicalScenario = (id, text, expected, options = {}) => ({
+  id,
+  label: options.label || text,
+  category: options.category || "technical",
+  mode: "technical_qa",
+  transcript: options.transcript || [{ speaker: "interviewer", text }],
+  expected,
+  forbidden: options.forbidden || [],
+  maxChars: options.maxChars || 1000,
+  maxTokens: options.maxTokens || 220,
+  latencyTargetMs: options.latencyTargetMs || 3500,
+});
+
+const makeBehavioralScenario = (id, text, expected, transcript = undefined) => ({
+  id,
+  label: text,
+  category: "background",
+  mode: "behavioral",
+  transcript: transcript || [{ speaker: "interviewer", text }],
+  expected,
+  maxChars: 1150,
+  maxTokens: 240,
+  latencyTargetMs: 3500,
+});
+
+const makeCodingScenario = (id, label, screenText, transcript, expected, options = {}) => ({
+  id,
+  label,
+  category: options.category || "coding",
+  mode: "live_coding",
+  screenText,
+  transcript,
+  expected,
+  forbidden: options.forbidden || [],
+  maxChars: options.maxChars || 1650,
+  maxTokens: options.maxTokens || 380,
+  latencyTargetMs: options.latencyTargetMs || 4500,
+});
+
+const validParenthesesProblem = [
+  "LeetCode - Valid Parentheses",
+  "Given a string s containing just the characters '(', ')', '{', '}', '[' and ']', determine if the input string is valid.",
+  "Open brackets must be closed by the same type of brackets and in the correct order.",
+  "Example: Input: s = '()[]{}' Output: true",
+  "Example: Input: s = '(]' Output: false",
+].join("\n");
+
+const mergeIntervalsProblem = [
+  "LeetCode - Merge Intervals",
+  "Given an array of intervals where intervals[i] = [starti, endi], merge all overlapping intervals.",
+  "Example: Input: [[1,3],[2,6],[8,10],[15,18]] Output: [[1,6],[8,10],[15,18]]",
+].join("\n");
+
+const lruCacheProblem = [
+  "Design LRU Cache",
+  "Implement get and put in O(1). When capacity is exceeded, evict the least recently used key.",
+  "Example: put(1,1), put(2,2), get(1), put(3,3), get(2) -> -1",
+].join("\n");
+
+const binarySearchProblem = [
+  "Binary Search",
+  "Given a sorted array of integers nums and a target, return the index if found, otherwise return -1.",
+  "Example: nums = [-1,0,3,5,9,12], target = 9 Output: 4",
+].join("\n");
+
 const scenarioDefinitions = [
   {
     id: "technical_question_direct",
     label: "Pregunta tecnica directa",
+    category: "technical",
     mode: "technical_qa",
     transcript: [{ speaker: "interviewer", text: "Que es SQL y para que lo usarias en un sistema backend?" }],
     expected: ["sql", "base", "datos"],
@@ -139,6 +208,7 @@ const scenarioDefinitions = [
   {
     id: "technical_followup_correction",
     label: "Pregunta, mi respuesta y repregunta",
+    category: "candidate_error",
     mode: "technical_qa",
     transcript: [
       { speaker: "interviewer", text: "Que es SQL?" },
@@ -153,6 +223,7 @@ const scenarioDefinitions = [
   {
     id: "coding_exercise_solution",
     label: "Coding exercise y solucion",
+    category: "coding",
     mode: "live_coding",
     screenText: codingProblem,
     transcript: [{ speaker: "interviewer", text: "Resuelve este ejercicio y explicame la complejidad." }],
@@ -164,6 +235,7 @@ const scenarioDefinitions = [
   {
     id: "coding_followup_change",
     label: "Repregunta de coding",
+    category: "coding_followup",
     mode: "live_coding",
     screenText: codingProblem,
     transcript: [
@@ -176,6 +248,129 @@ const scenarioDefinitions = [
     maxTokens: 340,
     latencyTargetMs: 3500,
   },
+  makeTechnicalScenario("technical_sql_index", "Que es un indice en SQL y cuando puede empeorar una consulta?", ["indice", "lectura", "write", "escrit"]),
+  makeTechnicalScenario("technical_acid", "Explicame ACID como si estuvieramos hablando de pagos.", ["atomic", "consisten", "aisl", "durab"]),
+  makeTechnicalScenario("technical_transaction_isolation", "Que problemas resuelven los niveles de aislamiento de transacciones?", ["dirty", "read", "phantom", "aisl"]),
+  makeTechnicalScenario("technical_rest_idempotency", "Que significa que un endpoint sea idempotente?", ["mismo", "resultado", "retry", "post"]),
+  makeTechnicalScenario("technical_rate_limiting", "Puedes explicar rate limiting with token bucket?", ["token", "bucket", "rate", "limite"]),
+  makeTechnicalScenario("technical_cache_invalidation", "Como pensarias cache invalidation en un servicio backend?", ["ttl", "invalid", "consisten", "stale"]),
+  makeTechnicalScenario("technical_queue_vs_sync", "Cuando usarias una cola en vez de hacer todo sincronicamente?", ["cola", "asincron", "latencia", "retry"]),
+  makeTechnicalScenario("technical_eventual_consistency", "Que es consistencia eventual y que tradeoff tiene?", ["eventual", "consisten", "latencia", "dispon"]),
+  makeTechnicalScenario("technical_optimistic_locking", "Explain optimistic locking versus pessimistic locking.", ["optimistic", "pessimistic", "lock", "conflict"]),
+  makeTechnicalScenario("technical_n_plus_one", "Que es el problema N+1 en una API con base de datos?", ["n+1", "query", "join", "batch"]),
+  makeTechnicalScenario("technical_pagination", "Cursor pagination vs offset pagination, que preferis y por que?", ["cursor", "offset", "estab", "performance"]),
+  makeTechnicalScenario("technical_sql_nosql", "Cuando elegirias SQL sobre NoSQL?", ["sql", "nosql", "schema", "consisten"]),
+  makeTechnicalScenario("technical_deadlock", "Que es un deadlock y como lo mitigarias?", ["deadlock", "orden", "timeout", "retry"]),
+  makeTechnicalScenario("technical_api_versioning", "Como versionarias una API publica sin romper clientes?", ["version", "backward", "compat", "deprecat"]),
+  makeTechnicalScenario("technical_observability", "Que logs y metricas mirarias si sube la latencia de un endpoint?", ["latencia", "metric", "trace", "log"]),
+  makeTechnicalScenario("technical_auth_jwt", "JWT vs session server-side, que tradeoffs ves?", ["jwt", "session", "revoc", "state"]),
+  makeTechnicalScenario("technical_testing_contract", "Que son contract tests y cuando te ayudan?", ["contract", "consumer", "provider", "api"]),
+  makeTechnicalScenario("technical_migration", "Como harias una migracion de base de datos con cero downtime?", ["backfill", "compatible", "deploy", "rollback"]),
+  makeTechnicalScenario("technical_retries", "Como disenas retries sin duplicar operaciones?", ["retry", "idempot", "backoff", "duplic"]),
+  makeTechnicalScenario("technical_background_sql", "Veo SQL en tu background, que hiciste concretamente con eso?", ["concili", "postgres", "consulta", "auditor"]),
+  makeTechnicalScenario("followup_candidate_wrong_sql", "Entonces SQL no es para programar toda la aplicacion?", ["no", "base", "consulta", "relacional"], {
+    category: "candidate_error",
+    transcript: [
+      { speaker: "interviewer", text: "Que es SQL?" },
+      { speaker: "candidate", text: "Es como Python, sirve para programar cualquier logica de negocio completa." },
+      { speaker: "interviewer", text: "Entonces SQL no es para programar toda la aplicacion?" },
+    ],
+  }),
+  makeTechnicalScenario("followup_candidate_wrong_cache", "Pero si cacheas todo, como evitas datos viejos?", ["ttl", "invalid", "stale", "consisten"], {
+    category: "candidate_error",
+    transcript: [
+      { speaker: "interviewer", text: "Como mejorarias latencia?" },
+      { speaker: "candidate", text: "Pondria cache para todo y asi siempre seria correcto." },
+      { speaker: "interviewer", text: "Pero si cacheas todo, como evitas datos viejos?" },
+    ],
+  }),
+  makeTechnicalScenario("followup_candidate_wrong_queue", "Que pasa si el mensaje se procesa dos veces?", ["idempot", "duplic", "dedup", "retry"], {
+    category: "candidate_error",
+    transcript: [
+      { speaker: "interviewer", text: "Usarias colas?" },
+      { speaker: "candidate", text: "Si, una cola garantiza que cada mensaje se procesa exactamente una vez siempre." },
+      { speaker: "interviewer", text: "Que pasa si el mensaje se procesa dos veces?" },
+    ],
+  }),
+  makeTechnicalScenario("followup_candidate_partial", "Podrias completar la respuesta con un ejemplo concreto?", ["ejemplo", "sql", "consulta", "tradeoff"], {
+    category: "followup",
+    transcript: [
+      { speaker: "interviewer", text: "Como usas SQL?" },
+      { speaker: "candidate", text: "Lo uso para datos." },
+      { speaker: "interviewer", text: "Podrias completar la respuesta con un ejemplo concreto?" },
+    ],
+  }),
+  makeTechnicalScenario("followup_why_choice", "Por que elegiste esa solucion y no otra?", ["tradeoff", "consisten", "latencia", "manten"], {
+    category: "followup",
+    transcript: [
+      { speaker: "interviewer", text: "Como resolviste conciliacion de pagos?" },
+      { speaker: "candidate", text: "Use consultas SQL auditables y jobs asincronicos." },
+      { speaker: "interviewer", text: "Por que elegiste esa solucion y no otra?" },
+    ],
+  }),
+  makeBehavioralScenario("background_incident", "Tell me about a time you handled a production incident.", ["incidente", "runbook", "resultado", "aprendi"]),
+  makeBehavioralScenario("background_conflict", "Contame de una vez que tuviste desacuerdo tecnico con alguien.", ["desacuerdo", "tradeoff", "evidencia", "aline"]),
+  makeBehavioralScenario("background_failure", "Tell me about a time you made a technical mistake.", ["error", "aprendi", "accion", "resultado"]),
+  makeBehavioralScenario("background_pressure", "Como priorizas cuando hay una fecha limite y deuda tecnica?", ["prior", "riesgo", "impacto", "tradeoff"]),
+  makeBehavioralScenario("background_payments_project", "Que proyecto de tu CV representa mejor tu experiencia backend?", ["concili", "pagos", "python", "postgres"]),
+  makeBehavioralScenario("background_star_sql", "Dame un ejemplo STAR usando SQL.", ["situacion", "tarea", "accion", "resultado"]),
+  makeBehavioralScenario("background_ownership", "Describe a time you took ownership beyond your assigned task.", ["ownership", "accion", "resultado", "equipo"]),
+  makeBehavioralScenario("background_learning", "Como aprendes una tecnologia nueva rapido?", ["document", "pract", "feedback", "aplicar"]),
+  makeTechnicalScenario("no_answer_chitchat", "Bueno, dame un segundo que estoy abriendo el repo.", ["esperar", "contexto", "listo"], {
+    category: "no_answer",
+    forbidden: ["sql", "hash", "codigo", "acid"],
+    maxChars: 450,
+  }),
+  makeTechnicalScenario("no_answer_noise", "Si, si, perfecto, ahora vemos.", ["no", "neces", "esper"], {
+    category: "no_answer",
+    forbidden: ["sql", "base de datos", "python"],
+    maxChars: 450,
+  }),
+  makeTechnicalScenario("no_answer_personal_comment", "A mi tambien me gustan los juegos, despues seguimos.", ["breve", "cordial", "retomar"], {
+    category: "no_answer",
+    forbidden: ["sql", "arquitectura", "codigo"],
+    maxChars: 500,
+  }),
+  makeTechnicalScenario("no_answer_audio_fragment", "eh entonces por ahi no se si", ["fragment", "esper", "context"], {
+    category: "no_answer",
+    forbidden: ["sql", "respuesta directa", "def "],
+    maxChars: 500,
+  }),
+  makeCodingScenario("coding_valid_parentheses", "Valid Parentheses solution", validParenthesesProblem, [
+    { speaker: "interviewer", text: "Resuelve Valid Parentheses y explicame el approach." },
+  ], ["stack", "pila", "o(n)", "parent"]),
+  makeCodingScenario("coding_merge_intervals", "Merge Intervals solution", mergeIntervalsProblem, [
+    { speaker: "interviewer", text: "Como resolverias Merge Intervals?" },
+  ], ["sort", "orden", "merge", "o(n)"]),
+  { category: "coding", id: "coding_lru_cache", label: "LRU Cache design", mode: "live_coding", screenText: lruCacheProblem, transcript: [{ speaker: "interviewer", text: "Implementa LRU Cache con get y put O(1)." }], expected: ["hash", "lista", "o(1)", "evict"], maxChars: 1800, maxTokens: 420, latencyTargetMs: 5000 },
+  makeCodingScenario("coding_binary_search", "Binary Search solution", binarySearchProblem, [
+    { speaker: "interviewer", text: "Implementa binary search y explicame edge cases." },
+  ], ["left", "right", "mid", "o(log"]),
+  makeCodingScenario("coding_two_sum_no_solution", "Two Sum no solution follow-up", codingProblem, [
+    { speaker: "interviewer", text: "Resuelve Two Sum." },
+    { speaker: "candidate", text: "Uso hashmap y retorno cuando encuentro complemento." },
+    { speaker: "interviewer", text: "Ahora cambia el codigo para devolver [] si no existe solucion." },
+  ], ["return", "[]", "sin solucion", "hash"], { category: "coding_followup" }),
+  makeCodingScenario("coding_two_sum_duplicates", "Two Sum duplicates follow-up", codingProblem, [
+    { speaker: "interviewer", text: "Resuelve Two Sum." },
+    { speaker: "candidate", text: "Uso un diccionario numero a indice." },
+    { speaker: "interviewer", text: "Y si nums tiene [3,3] y target 6?" },
+  ], ["duplic", "antes", "insert", "complement"], { category: "coding_followup" }),
+  makeCodingScenario("coding_valid_parentheses_followup", "Valid Parentheses invalid chars", validParenthesesProblem, [
+    { speaker: "interviewer", text: "Resuelve Valid Parentheses." },
+    { speaker: "candidate", text: "Uso una pila para brackets." },
+    { speaker: "interviewer", text: "Que harias si aparecen caracteres que no son brackets?" },
+  ], ["ignorar", "validar", "caracter", "pila"], { category: "coding_followup" }),
+  makeCodingScenario("coding_merge_intervals_followup", "Merge touching intervals follow-up", mergeIntervalsProblem, [
+    { speaker: "interviewer", text: "Resuelve Merge Intervals." },
+    { speaker: "candidate", text: "Ordeno por inicio y mergeo overlaps." },
+    { speaker: "interviewer", text: "Si [1,4] y [4,5] cuentan como overlap, cambia algo?" },
+  ], ["<=", "overlap", "merge", "orden"], { category: "coding_followup" }),
+  makeCodingScenario("coding_lru_capacity_one", "LRU capacity one follow-up", lruCacheProblem, [
+    { speaker: "interviewer", text: "Disena LRU Cache." },
+    { speaker: "candidate", text: "Uso hashmap y lista doblemente enlazada." },
+    { speaker: "interviewer", text: "Que edge case hay con capacity 1?" },
+  ], ["capacity", "evict", "o(1)", "lista"], { category: "coding_followup" }),
 ];
 
 const buildScenario = (definition) => {
@@ -192,6 +387,23 @@ const buildScenario = (definition) => {
   const prompt = buildPrompt(context, userInput);
   return { ...definition, context, prompt };
 };
+
+const selectScenarioDefinitions = () => scenarioDefinitions
+  .filter((scenario) => !cliCategory || scenario.category === cliCategory)
+  .slice(0, cliLimit > 0 ? cliLimit : undefined);
+
+const summarizeCorpus = (selectedDefinitions) => ({
+  totalAvailable: scenarioDefinitions.length,
+  selected: selectedDefinitions.length,
+  category: cliCategory || "all",
+  limit: cliLimit || null,
+  categories: scenarioDefinitions.reduce((acc, item) => {
+    const category = item.category || "uncategorized";
+    acc[category] = (acc[category] || 0) + 1;
+    return acc;
+  }, {}),
+  selectedIds: selectedDefinitions.map((scenario) => scenario.id),
+});
 
 const chooseProvider = (settings, credentialStatus) => {
   if (cliProvider) return { provider: cliProvider, reason: "CLI override" };
@@ -218,21 +430,28 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
   const text = structured ? formatStructuredAnswerPayload(structured) : rawText;
   const lower = text.toLowerCase();
   const missingExpected = scenario.expected.filter((term) => !lower.includes(term));
+  const forbiddenPresent = (scenario.forbidden || []).filter((term) => lower.includes(String(term).toLowerCase()));
+  const expectsNoAnswer = scenario.category === "no_answer";
+  const structuredNoAnswer = structured?.kind === "interview" && structured.payload.intent === "no_answer";
   const forbiddenRoleLabels = /\b(interviewer|entrevistador)\s*:/i.test(text);
   const forcedCompanyContext = scenario.mode === "live_coding" && /\b(mercado\s+pago|pagos?|financier[oa]s?|conciliaci[oó]n|pipelines?)\b/i.test(text);
   const hugeParagraph = text.split(/\n{2,}/).some((block) => block.length > 650);
   const codeBlockCount = (text.match(/```/g) || []).length / 2;
   const checks = {
     providerOk: Boolean(result?.ok),
-    nonEmpty: text.trim().length > 40,
+    nonEmpty: expectsNoAnswer ? text.trim().length > 15 : text.trim().length > 40,
     conciseEnough: text.length <= scenario.maxChars,
     latencyWithinTarget: !scenario.latencyTargetMs || elapsedMs <= scenario.latencyTargetMs,
-    expectedTermsPresent: missingExpected.length <= Math.max(0, scenario.expected.length - 2),
+    expectedTermsPresent: expectsNoAnswer
+      ? missingExpected.length <= Math.max(0, scenario.expected.length - 1)
+      : missingExpected.length <= Math.max(0, scenario.expected.length - 2),
     readableFormat: /\*\*[^*]+:\*\*/.test(text) || /\n[-*]\s+/.test(text) || text.split(/\n+/).length >= 2,
     noConfusingRoleLabels: !forbiddenRoleLabels,
     noForcedCompanyContext: !forcedCompanyContext,
     noHugeParagraphs: !hugeParagraph,
     limitedCodeBlocks: scenario.mode !== "live_coding" || codeBlockCount <= 1,
+    forbiddenTermsAbsent: forbiddenPresent.length === 0,
+    noAnswerDoesNotOverExplain: !expectsNoAnswer || structuredNoAnswer || text.length <= scenario.maxChars,
   };
   return {
     ok: Object.values(checks).every(Boolean),
@@ -241,6 +460,7 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     renderedText: text,
     checks,
     missingExpected,
+    forbiddenPresent,
     structured: structured?.kind,
   };
 };
@@ -268,6 +488,12 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
 };
 
 const run = async () => {
+  const selectedForDryRun = selectScenarioDefinitions();
+  if (dryRun) {
+    console.log(JSON.stringify(summarizeCorpus(selectedForDryRun), null, 2));
+    return;
+  }
+
   const childEnv = { ...process.env };
   delete childEnv.ELECTRON_RUN_AS_NODE;
 
@@ -312,7 +538,11 @@ const run = async () => {
     const credentialStatus = await evaluate(client, "window.callpilotDesktop.getCredentialStatus()");
     const providerChoice = chooseProvider(settings, credentialStatus);
     const modelName = defaultModelName(providerChoice.provider, settings.modelName);
-    const scenarios = scenarioDefinitions.map(buildScenario);
+    const selectedDefinitions = selectScenarioDefinitions();
+    if (selectedDefinitions.length === 0) {
+      throw new Error(`No scenarios selected for category=${cliCategory || "all"}`);
+    }
+    const scenarios = selectedDefinitions.map(buildScenario);
     const coldProbeScenario = { ...scenarios[0], id: "technical_question_direct_cold_probe", label: "Pregunta tecnica directa cold probe", latencyTargetMs: undefined };
     const coldProbe = await runScenario({
       client,
@@ -353,6 +583,7 @@ const run = async () => {
         warmTechnicalQuestionMs: results.find((item) => item.id === "technical_question_direct")?.metrics.latencyMs,
         coldToWarmDeltaMs: coldProbe.metrics.latencyMs - (results.find((item) => item.id === "technical_question_direct")?.metrics.latencyMs ?? coldProbe.metrics.latencyMs),
       },
+      corpus: summarizeCorpus(selectedDefinitions),
       results,
     };
     const passed = results.every((item) => item.metrics.ok);
@@ -374,6 +605,7 @@ const run = async () => {
         warmTechnicalQuestionMs: report.latencyDiagnostics.warmTechnicalQuestionMs,
         coldToWarmDeltaMs: report.latencyDiagnostics.coldToWarmDeltaMs,
       },
+      corpus: report.corpus,
       scenarios: results.map((item) => ({
         id: item.id,
         ok: item.metrics.ok,

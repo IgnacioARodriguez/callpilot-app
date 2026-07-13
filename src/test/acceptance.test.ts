@@ -160,6 +160,20 @@ test("acceptance: manual answer falls back to context when no question is detect
   assert.match(promptBuilder, /If the latest interviewer turn is not a question/);
 });
 
+test("acceptance: LLM quality runner has a broad scenario corpus", () => {
+  const runner = read("scripts/run-llm-scenarios.mjs");
+  const scenarioLikeEntries = (runner.match(/(?:id:\s*"|makeTechnicalScenario\("|makeBehavioralScenario\("|makeCodingScenario\(")/g) ?? []).length;
+
+  assert.ok(scenarioLikeEntries >= 50, `expected at least 50 LLM scenarios, found ${scenarioLikeEntries}`);
+  for (const category of ["technical", "background", "followup", "candidate_error", "no_answer", "coding", "coding_followup"]) {
+    assert.match(runner, new RegExp(`category:\\s*"${category}"|category:\\s*options\\.category\\s*\\|\\|\\s*"${category}"`));
+  }
+  assert.match(runner, /--category/);
+  assert.match(runner, /--limit/);
+  assert.match(runner, /--dry-run/);
+  assert.match(runner, /forbiddenTermsAbsent/);
+});
+
 test("acceptance: live coding prompt includes problem, solution intent, and coding screen context", () => {
   const visibleText = [
     "Two Sum",
