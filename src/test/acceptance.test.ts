@@ -103,6 +103,16 @@ test("acceptance: live STT chunks are queued instead of dropped while busy", () 
   assert.doesNotMatch(app, /channels\.slice\(1\).*stop/s);
 });
 
+test("acceptance: Natively partial auto-answer waits for turn stability", () => {
+  const app = read("src/main.tsx");
+  const stability = app.indexOf("assessPartialTurnStability");
+  const askPartial = app.indexOf("Auto answering stable partial");
+
+  assert.ok(stability > 0, "Natively partials must be assessed for stability");
+  assert.ok(askPartial > stability, "partial auto-answer must happen after stability assessment");
+  assert.doesNotMatch(app, /Auto answering partial \(/);
+});
+
 test("acceptance: realistic interview exchange preserves roles and asks for correction", () => {
   const transcript = new TranscriptBuffer();
   transcript.append("What is SQL?", "stt", 1000, "interviewer");

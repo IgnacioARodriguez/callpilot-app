@@ -26,6 +26,7 @@ import {
   extractOpenAIResponseText,
   extractOpenAITranscriptionText,
   formatConversationWindow,
+  assessPartialTurnStability,
   isSupportedAudioMimeType,
   liveTranscriptionPlan,
   mergeAppSettings,
@@ -236,8 +237,19 @@ test("live conversation detects interview questions in English and Spanish", () 
   assert.equal(shortSpanish.shouldDispatch, true);
   assert.equal(shortEnglish.shouldDispatch, true);
   assert.equal(partialSpanish.shouldDispatch, true);
+  assert.equal(assessPartialTurnStability("Que es S", "Que es S", 1000, 2200).stable, false);
   assert.equal(filler.shouldAnswer, false);
   assert.equal(implicit.shouldDispatch, true);
+});
+
+test("partial turn stability requires unchanged non-truncated text", () => {
+  assert.deepEqual(
+    assessPartialTurnStability("Que es SQL exactamente", "Que es SQL exactamente", 1000, 2200),
+    { stable: true, reason: "stable_partial" },
+  );
+  assert.equal(assessPartialTurnStability("Que es S", "Que es S", 1000, 2200).reason, "truncated_definition");
+  assert.equal(assessPartialTurnStability("Que es SQL exactamente", "Que es SQ", 1000, 2200).reason, "changed_recently");
+  assert.equal(assessPartialTurnStability("Que es SQL exactamente", "Que es SQL exactamente", 1000, 1200).reason, "changed_recently");
 });
 
 test("live conversation auto answer respects cooldown", () => {

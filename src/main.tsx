@@ -18,6 +18,7 @@ import {
   defaultStealthState,
   formatConversationWindow,
   assessPrivacyState,
+  assessPartialTurnStability,
   detectQuestionIntent,
   liveTranscriptionPlan,
   markLatencyStage,
@@ -196,6 +197,7 @@ function App() {
   const localSttQueueByIdRef = React.useRef(new Map<string, Array<{ blob: Blob; speaker: TranscriptSpeaker }>>());
   const recentSpeechRef = React.useRef<RecentSpeech[]>([]);
   const lastNativelyPartialAnswerRef = React.useRef<{ text: string; timestamp: number }>({ text: "", timestamp: 0 });
+  const nativelyPartialStabilityRef = React.useRef<Record<string, { text: string; timestamp: number }>>({});
   const nativelyLiveDraftBySpeakerRef = React.useRef<Partial<Record<TranscriptSpeaker, { text: string; timestamp: number }>>>({});
   const lastSystemAudioSignalAtRef = React.useRef(0);
   const liveChunkBusyByIdRef = React.useRef(new Set<string>());
@@ -708,18 +710,28 @@ function App() {
         });
         if (speaker === "interviewer" && autoAnswerEnabledRef.current) {
           const now = Date.now();
+          const previousPartial = nativelyPartialStabilityRef.current[payload.streamId] ?? { text: "", timestamp: 0 };
+          const stability = assessPartialTurnStability(liveText, previousPartial.text, previousPartial.timestamp, now);
+          nativelyPartialStabilityRef.current[payload.streamId] = { text: liveText, timestamp: now };
           const detection = detectQuestionIntent(liveText, preferredLanguage);
           const previous = lastNativelyPartialAnswerRef.current;
           const isNewEnough = speechSimilarity(previous.text, detection.normalizedText) < 0.82 || now - previous.timestamp > 8000;
-          if (isNewEnough && shouldAutoAnswer(detection, now, lastAutoAnsweredAtRef.current, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence)) {
+          if (
+            stability.stable
+            && isNewEnough
+            && shouldAutoAnswer(detection, now, lastAutoAnsweredAtRef.current, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence)
+          ) {
             lastAutoAnsweredAtRef.current = now;
             lastNativelyPartialAnswerRef.current = { text: detection.normalizedText, timestamp: now };
-            setLiveAssistStatus(`Auto answering partial (${detection.reason})`);
+            setLiveAssistStatus(`Auto answering stable partial (${detection.reason})`);
             void ask(detection.normalizedText);
+          } else if (detection.shouldDispatch) {
+            setLiveAssistStatus(`Transcribing (${stability.reason})`);
           }
         }
         return;
       }
+      delete nativelyPartialStabilityRef.current[payload.streamId];
       const finalText = mergeNativelyLiveDraft(speaker, normalized, true);
       handleFinalTranscript(finalText, "stt", speaker);
       setDesktopStatus("Natively STT transcribed audio");
@@ -760,6 +772,7 @@ function App() {
     liveChunkQueueByIdRef.current.clear();
     localSegmentChunksRef.current = [];
     nativelyLiveDraftBySpeakerRef.current = {};
+    nativelyPartialStabilityRef.current = {};
     nativelySessionsRef.current.forEach((session) => {
       session.processor.disconnect();
       session.source.disconnect();

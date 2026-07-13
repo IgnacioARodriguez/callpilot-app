@@ -8,6 +8,11 @@ export interface QuestionDetection {
   normalizedText: string;
 }
 
+export interface PartialTurnStability {
+  stable: boolean;
+  reason: "stable_partial" | "changed_recently" | "too_short" | "truncated_definition";
+}
+
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
 const normalizeForPatterns = (text: string): string =>
@@ -39,6 +44,7 @@ const spanishPatterns = [
 ];
 
 const shortDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}][\p{L}\p{N} .+#/-]{0,40}\??$/iu;
+const truncatedDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}]$/iu;
 
 export const detectQuestionIntent = (
   text: string,
@@ -83,3 +89,22 @@ export const shouldAutoAnswer = (
   detection.shouldDispatch
   && detection.confidence >= minConfidence
   && nowMs - lastAnsweredAtMs >= cooldownMs;
+
+export const assessPartialTurnStability = (
+  currentText: string,
+  previousText: string,
+  previousUpdatedAtMs: number,
+  nowMs: number,
+  stableMs = 900,
+): PartialTurnStability => {
+  const current = normalize(currentText);
+  const previous = normalize(previousText);
+  if (truncatedDefinitionQuestion.test(normalizeForPatterns(current))) {
+    return { stable: false, reason: "truncated_definition" };
+  }
+  if (current.length < 12) return { stable: false, reason: "too_short" };
+  if (!previous || previous !== current || nowMs - previousUpdatedAtMs < stableMs) {
+    return { stable: false, reason: "changed_recently" };
+  }
+  return { stable: true, reason: "stable_partial" };
+};

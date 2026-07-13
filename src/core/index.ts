@@ -12,8 +12,10 @@ export {
 } from "./ocr.ts";
 export { TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, formatConversationWindow, type TranscriptSnapshot, type TranscriptSpeaker } from "./transcriptBuffer.ts";
 export {
+  assessPartialTurnStability,
   detectQuestionIntent,
   shouldAutoAnswer,
+  type PartialTurnStability,
   type QuestionDetection,
 } from "./liveConversation.ts";
 export {
