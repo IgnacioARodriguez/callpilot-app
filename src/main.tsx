@@ -657,6 +657,23 @@ function App() {
     return lastInterviewerTurn?.text.trim() ? `interviewer: ${lastInterviewerTurn.text.trim()}` : question.trim();
   }, [question]);
 
+  const getManualAnswerPrompt = React.useCallback(() => {
+    const latestPrompt = getLatestInterviewPrompt().trim();
+    if (latestPrompt) return latestPrompt;
+
+    const screen = screenText.trim();
+    const notesText = notes.trim();
+    const fallbackLines = [
+      "user_request: The candidate pressed Answer. There may not be a clean question mark in the transcript.",
+      activeMode === "live_coding"
+        ? "task: Use the latest transcript and visible coding context to provide the next useful coding help, solution, explanation, or correction."
+        : "task: Use the latest transcript and interview context to provide the next useful thing to say, or a brief clarification if no answer is needed.",
+      screen ? `visible_screen: ${screen.slice(-1800)}` : "",
+      notesText ? `notes: ${notesText.slice(-1200)}` : "",
+    ];
+    return fallbackLines.filter(Boolean).join("\n");
+  }, [activeMode, getLatestInterviewPrompt, notes, screenText]);
+
   const clearContext = React.useCallback(() => {
     const next = new TranscriptBuffer(transcript);
     setTranscript(next.clear());
@@ -1873,8 +1890,7 @@ function App() {
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onShortcut((action) => {
       if (action.type === "ask") {
-        const latestPrompt = getLatestInterviewPrompt();
-        void ask(latestPrompt || undefined);
+        void ask(getManualAnswerPrompt());
       }
       if (action.type === "clear_context") clearContext();
       if (action.type === "capture_screenshot") captureScreenshot();
@@ -1882,26 +1898,15 @@ function App() {
       if (action.type === "stealth") setStealth(action.state);
     });
     return () => dispose?.();
-  }, [ask, captureScreenshot, clearContext, getLatestInterviewPrompt]);
+  }, [ask, captureScreenshot, clearContext, getManualAnswerPrompt]);
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onManualAnswerRequest?.(() => {
-      const latestPrompt = getLatestInterviewPrompt();
-      if (!latestPrompt) {
-        setLiveAssistStatus("No interviewer question detected yet");
-        void window.callpilotDesktop?.publishLiveTranscript?.({
-          id: `answer-status-${Date.now()}`,
-          speaker: "assistant",
-          text: "No interviewer question detected yet",
-          timestamp: Date.now(),
-        });
-        return;
-      }
       setLiveAssistStatus("Manual answer requested");
-      void ask(latestPrompt);
+      void ask(getManualAnswerPrompt());
     });
     return () => dispose?.();
-  }, [ask, getLatestInterviewPrompt]);
+  }, [ask, getManualAnswerPrompt]);
 
   React.useEffect(() => {
     const disposeHeadline = window.callpilotDesktop?.onAnswerHeadline?.((payload) => {

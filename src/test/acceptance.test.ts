@@ -145,6 +145,18 @@ test("acceptance: realistic interview exchange preserves roles and asks for corr
   assert.match(prompt.system, /Do not answer stale topics/i);
 });
 
+test("acceptance: manual answer falls back to context when no question is detected", () => {
+  const app = read("src/main.tsx");
+  const promptBuilder = read("src/core/promptBuilder.ts");
+
+  assert.match(app, /getManualAnswerPrompt/);
+  assert.match(app, /The candidate pressed Answer/);
+  assert.match(app, /next useful coding help/);
+  assert.match(app, /next useful thing to say/);
+  assert.doesNotMatch(app, /No interviewer question detected yet/);
+  assert.match(promptBuilder, /If the latest interviewer turn is not a question/);
+});
+
 test("acceptance: live coding prompt includes problem, solution intent, and coding screen context", () => {
   const visibleText = [
     "Two Sum",
