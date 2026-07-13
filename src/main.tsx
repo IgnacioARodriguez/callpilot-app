@@ -212,6 +212,7 @@ function App() {
   const evidenceEmbedderRef = React.useRef<Promise<EvidenceEmbedder> | null>(null);
   const evidenceEmbeddingCacheRef = React.useRef(new Map<string, EvidenceEmbedding>());
   const activeLatencyRunIdRef = React.useRef<string | null>(null);
+  const activeAnswerRequestIdRef = React.useRef<string | null>(null);
   const firstDetailChunkSeenRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -541,6 +542,8 @@ function App() {
 
   const ask = React.useCallback(async (questionOverride?: string) => {
     const effectiveQuestion = questionOverride ?? question;
+    const requestId = `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activeAnswerRequestIdRef.current = requestId;
     if (questionOverride !== undefined) setQuestion(questionOverride);
     let builtPrompt = buildPrompt(context, effectiveQuestion);
     try {
@@ -576,6 +579,7 @@ function App() {
       const result = await window.callpilotDesktop.generateAnswer({
         provider: modelProvider,
         modelName,
+        requestId,
         prompt: builtPrompt,
         apiKey: sessionApiKey,
         nativelyApiKey,
@@ -583,8 +587,10 @@ function App() {
         maxTokens: context.activeMode === "live_coding" ? 360 : 220,
       });
       const text = result.ok ? result.text : `Generation failed: ${result.error ?? "unknown error"}`;
-      setAnswer(text);
-      appendAssistantTranscriptLine(text);
+      if (activeAnswerRequestIdRef.current === requestId) {
+        setAnswer(text);
+        appendAssistantTranscriptLine(text);
+      }
     } finally {
       const activeRunId = activeLatencyRunIdRef.current;
       if (activeRunId) {
@@ -592,7 +598,7 @@ function App() {
           run.id === activeRunId ? markLatencyStage(run, "response_complete") : run,
         ));
       }
-      setIsGenerating(false);
+      if (activeAnswerRequestIdRef.current === requestId) setIsGenerating(false);
     }
   }, [appendAssistantTranscriptLine, context, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, providerLabel, question, sessionApiKey]);
 
@@ -604,6 +610,7 @@ function App() {
       const result = await window.callpilotDesktop.generateAnswer({
         provider: modelProvider,
         modelName,
+        requestId: `warmup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         prompt: warmPrompt,
         apiKey: sessionApiKey,
         nativelyApiKey,

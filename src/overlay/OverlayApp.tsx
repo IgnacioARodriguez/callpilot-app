@@ -4,12 +4,27 @@ type OverlayMessageRole = "candidate" | "recruiter" | "assistant";
 
 interface OverlayMessage {
   id: string;
+  requestId?: string;
   role: OverlayMessageRole;
   text?: string;
   headline?: string;
   keywords?: string[];
   detail?: string;
   isStreaming?: boolean;
+}
+
+interface AnswerHeadlinePayload {
+  requestId?: string;
+  headline: string;
+  keywords: string[];
+}
+
+interface AnswerDetailPayload {
+  requestId?: string;
+  sequence?: number;
+  text?: string;
+  done?: boolean;
+  error?: string;
 }
 
 interface LiveTranscriptState {
@@ -91,6 +106,8 @@ export default function OverlayApp() {
     updatedAt: 0,
   });
   const activeAssistantId = React.useRef<string | null>(null);
+  const assistantIdByRequest = React.useRef<Record<string, string>>({});
+  const lastSequenceByRequest = React.useRef<Record<string, number>>({});
   const liveTranscriptByRole = React.useRef<Partial<Record<OverlayMessageRole, LiveTranscriptState>>>({});
   const messagesRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -191,13 +208,24 @@ export default function OverlayApp() {
         updatedAt: Date.now(),
       });
     });
-    const disposeHeadline = window.callpilotDesktop?.onAnswerHeadline?.((payload) => {
+    const ensureAssistantMessage = (requestId?: string): string => {
+      if (requestId && assistantIdByRequest.current[requestId]) {
+        activeAssistantId.current = assistantIdByRequest.current[requestId];
+        return assistantIdByRequest.current[requestId];
+      }
+      const id = `assistant-${requestId || Date.now()}`;
+      activeAssistantId.current = id;
+      if (requestId) assistantIdByRequest.current[requestId] = id;
+      return id;
+    };
+
+    const disposeHeadline = window.callpilotDesktop?.onAnswerHeadline?.((payload: AnswerHeadlinePayload) => {
       const keywords = (payload.keywords ?? []).filter((keyword) => keyword.trim());
       if (!payload.headline?.trim() && keywords.length === 0) return;
-      const id = `assistant-${Date.now()}`;
-      activeAssistantId.current = id;
+      const id = ensureAssistantMessage(payload.requestId);
       const assistantMessage: OverlayMessage = {
         id,
+        requestId: payload.requestId,
         role: "assistant",
         headline: payload.headline,
         keywords,
@@ -205,15 +233,37 @@ export default function OverlayApp() {
         isStreaming: true,
       };
       if (!visibleAssistantContent(assistantMessage)) return;
-      setMessages((current) => [...current, assistantMessage].filter(hasMessageContent).slice(-80));
+      setMessages((current) => {
+        const exists = current.some((message) => message.id === id);
+        if (exists) {
+          return current.map((message) => message.id === id ? { ...message, ...assistantMessage } : message)
+            .filter(hasMessageContent)
+            .slice(-80);
+        }
+        return [...current, assistantMessage].filter(hasMessageContent).slice(-80);
+      });
     });
-    const disposeChunk = window.callpilotDesktop?.onAnswerDetailChunk?.((chunk) => {
-      if (!chunk.trim()) return;
-      let id = activeAssistantId.current;
+    const disposeChunk = window.callpilotDesktop?.onAnswerDetailChunk?.((payload: AnswerDetailPayload | string) => {
+      const normalized: AnswerDetailPayload = typeof payload === "string" ? { text: payload } : payload;
+      const chunk = normalized.text ?? "";
+      if (normalized.requestId && typeof normalized.sequence === "number") {
+        const previous = lastSequenceByRequest.current[normalized.requestId] ?? 0;
+        if (normalized.sequence <= previous) return;
+        lastSequenceByRequest.current[normalized.requestId] = normalized.sequence;
+      }
+      let id = normalized.requestId
+        ? assistantIdByRequest.current[normalized.requestId]
+        : activeAssistantId.current;
       if (!id) {
-        const newId = `assistant-${Date.now()}`;
+        const newId = ensureAssistantMessage(normalized.requestId);
         activeAssistantId.current = newId;
-        const assistantMessage: OverlayMessage = { id: newId, role: "assistant", detail: chunk, isStreaming: true };
+        const assistantMessage: OverlayMessage = {
+          id: newId,
+          requestId: normalized.requestId,
+          role: "assistant",
+          detail: normalized.error ? `Generation failed: ${normalized.error}` : chunk,
+          isStreaming: !normalized.done,
+        };
         if (!visibleAssistantContent(assistantMessage)) return;
         setMessages((current) => [
           ...current,
@@ -221,11 +271,21 @@ export default function OverlayApp() {
         ].filter(hasMessageContent).slice(-80));
         return;
       }
+      if (!chunk.trim() && !normalized.done && !normalized.error) return;
       setMessages((current) => current.map((message) =>
         message.id === id
-          ? { ...message, detail: `${message.detail ?? ""}${chunk}`, isStreaming: true }
+          ? {
+            ...message,
+            detail: normalized.error ? `${message.detail ?? ""}\nGeneration failed: ${normalized.error}` : `${message.detail ?? ""}${chunk}`,
+            isStreaming: !normalized.done,
+          }
           : message,
       ).filter((message) => message.role === "assistant" ? visibleAssistantContent(message) : hasMessageContent(message)));
+      if (normalized.done && normalized.requestId) {
+        delete assistantIdByRequest.current[normalized.requestId];
+        delete lastSequenceByRequest.current[normalized.requestId];
+        if (activeAssistantId.current === id) activeAssistantId.current = null;
+      }
     });
     return () => {
       disposeTranscript?.();

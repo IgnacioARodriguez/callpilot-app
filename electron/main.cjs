@@ -334,9 +334,15 @@ const resolveAnswerModel = (provider, input) => {
   return value || provider.defaultModel || "";
 };
 
+const createAnswerRequestId = (input) => {
+  const requested = typeof input?.requestId === "string" && input.requestId.trim() ? input.requestId.trim() : "";
+  return requested || `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+};
+
 const generateWithOllamaChat = async ({ provider, input, prompt, modelName }) => {
   const baseUrl = normalizeOllamaBaseUrl(input?.ollamaBaseUrl || provider.baseUrl?.());
   const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
+  const requestId = input.requestId;
   try {
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
@@ -353,20 +359,21 @@ const generateWithOllamaChat = async ({ provider, input, prompt, modelName }) =>
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return { ok: false, text: "", provider: provider.id, modelName, error: payload?.error ?? `ollama_http_${response.status}` };
+      return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error ?? `ollama_http_${response.status}` };
     }
     const text = extractOllamaResponseText(payload);
-    return { ok: Boolean(text), text, provider: provider.id, modelName, error: text ? undefined : "empty_ollama_response" };
+    return { ok: Boolean(text), text, provider: provider.id, modelName, requestId, error: text ? undefined : "empty_ollama_response" };
   } catch (error) {
-    return { ok: false, text: "", provider: provider.id, modelName, error: error instanceof Error ? `ollama_unavailable: ${error.message}` : "ollama_unavailable" };
+    return { ok: false, text: "", provider: provider.id, modelName, requestId, error: error instanceof Error ? `ollama_unavailable: ${error.message}` : "ollama_unavailable" };
   }
 };
 
 const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, modelName }) => {
   const apiKey = provider.apiKey?.(input) ?? "";
   const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
+  const requestId = input.requestId;
   if (provider.auth === "bearer" && !apiKey) {
-    return { ok: false, text: "", provider: provider.id, modelName, error: `missing_${provider.id}_api_key` };
+    return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_api_key` };
   }
   try {
     const response = await fetch(provider.chatUrl(), {
@@ -387,19 +394,20 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return { ok: false, text: "", provider: provider.id, modelName, error: payload?.error?.message ?? payload?.error ?? `${provider.id}_http_${response.status}` };
+      return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? payload?.error ?? `${provider.id}_http_${response.status}` };
     }
     const text = extractOpenAICompatibleChatText(payload);
-    return { ok: Boolean(text), text, provider: provider.id, modelName, error: text ? undefined : `empty_${provider.id}_response` };
+    return { ok: Boolean(text), text, provider: provider.id, modelName, requestId, error: text ? undefined : `empty_${provider.id}_response` };
   } catch (error) {
-    return { ok: false, text: "", provider: provider.id, modelName, error: error instanceof Error ? `${provider.id}_unavailable: ${error.message}` : `${provider.id}_unavailable` };
+    return { ok: false, text: "", provider: provider.id, modelName, requestId, error: error instanceof Error ? `${provider.id}_unavailable: ${error.message}` : `${provider.id}_unavailable` };
   }
 };
 
 const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName, event }) => {
   const apiKey = provider.apiKey?.(input) ?? "";
-  if (!apiKey) return { ok: false, text: "", provider: provider.id, modelName, error: `missing_${provider.id}_api_key` };
-  if (!modelName) return { ok: false, text: "", provider: provider.id, modelName, error: `missing_${provider.id}_model` };
+  const requestId = input.requestId;
+  if (!apiKey) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_api_key` };
+  if (!modelName) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_model` };
 
   try {
     const requestBase = {
@@ -411,9 +419,12 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
     };
     let headlineDelivered = false;
     const pendingDetailChunks = [];
+    let detailSequence = 0;
     const sendDetailChunk = (chunk) => {
-      event.sender.send("answer:detail-chunk", chunk);
-      sendToOverlay("answer:detail-chunk", chunk);
+      detailSequence += 1;
+      const payload = { requestId, sequence: detailSequence, text: chunk, done: false };
+      event.sender.send("answer:detail-chunk", payload);
+      sendToOverlay("answer:detail-chunk", payload);
     };
     const flushPendingDetailChunks = () => {
       while (pendingDetailChunks.length > 0) {
@@ -445,10 +456,12 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
       const structured = parseStructuredAnswer(extractOpenAIResponseText(payload));
       if (structured.headline || structured.keywords.length) {
         event.sender.send("answer:headline", {
+          requestId,
           headline: structured.headline,
           keywords: structured.keywords,
         });
         sendToOverlay("answer:headline", {
+          requestId,
           headline: structured.headline,
           keywords: structured.keywords,
         });
@@ -472,7 +485,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
     if (!detailResponse.ok) {
       const payload = await detailResponse.json().catch(() => ({}));
       await headlinePromise.catch(() => undefined);
-      return { ok: false, text: "", provider: provider.id, modelName, error: payload?.error?.message ?? `${provider.id}_http_${detailResponse.status}` };
+      return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? `${provider.id}_http_${detailResponse.status}` };
     }
 
     const text = await readOpenAISseStream(detailResponse, (streamEvent) => {
@@ -487,16 +500,23 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
     const headlineResult = await headlinePromise.catch((error) => ({ headline: "", keywords: [], detail: "", error: error.message }));
     headlineDelivered = true;
     flushPendingDetailChunks();
+    const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
+    event.sender.send("answer:detail-chunk", completedPayload);
+    sendToOverlay("answer:detail-chunk", completedPayload);
     return {
       ok: Boolean(text),
       text,
       provider: provider.id,
       modelName,
+      requestId,
       structured: headlineResult,
       error: text ? undefined : headlineResult.error || `empty_${provider.id}_response`,
     };
   } catch (error) {
-    return { ok: false, text: "", provider: provider.id, modelName, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
+    const failedPayload = { requestId, sequence: 0, text: "", done: true, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
+    event.sender.send("answer:detail-chunk", failedPayload);
+    sendToOverlay("answer:detail-chunk", failedPayload);
+    return { ok: false, text: "", provider: provider.id, modelName, requestId, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
   }
 };
 
@@ -1144,19 +1164,21 @@ ipcMain.handle("ollama:list-models", async (_event, input) => {
 ipcMain.handle("model:generate", async (_event, input) => {
   const provider = resolveAnswerProvider(input);
   const modelName = resolveAnswerModel(provider, input);
+  const requestId = createAnswerRequestId(input);
+  const normalizedInput = { ...(input || {}), requestId };
   const prompt = input?.prompt;
 
   let result;
   if (provider.protocol === "mock") {
-    result = { ok: true, text: createMockAnswer(prompt), provider: provider.id, modelName };
+    result = { ok: true, text: createMockAnswer(prompt), provider: provider.id, modelName, requestId };
   } else if (provider.protocol === "ollama_chat") {
-    result = await generateWithOllamaChat({ provider, input, prompt, modelName });
+    result = await generateWithOllamaChat({ provider, input: normalizedInput, prompt, modelName });
   } else if (provider.protocol === "openai_chat") {
-    result = await generateWithOpenAICompatibleChat({ provider, input, prompt, modelName });
+    result = await generateWithOpenAICompatibleChat({ provider, input: normalizedInput, prompt, modelName });
   } else if (provider.protocol === "openai_responses") {
-    result = await generateWithOpenAIResponses({ provider, input, prompt, modelName, event: _event });
+    result = await generateWithOpenAIResponses({ provider, input: normalizedInput, prompt, modelName, event: _event });
   } else {
-    result = { ok: false, text: "", provider: provider.id, modelName, error: `unsupported_provider_protocol:${provider.protocol}` };
+    result = { ok: false, text: "", provider: provider.id, modelName, requestId, error: `unsupported_provider_protocol:${provider.protocol}` };
   }
   return result;
 });

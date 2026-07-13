@@ -207,6 +207,21 @@ test("prompt tells model not to answer stale topics or non-questions", () => {
   assert.match(prompt.system, /at most two compact/i);
 });
 
+test("prompt excludes previous assistant suggestions from factual transcript", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("What is SQL?", "stt", 1000, "interviewer");
+  transcript.append("SQL is a relational query language.", "manual", 2000, "assistant");
+  transcript.append("Can you expand?", "stt", 3000, "interviewer");
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "technical_qa", transcript: transcript.snapshot() }),
+    "interviewer: Can you expand?",
+  );
+
+  assert.match(prompt.user, /interviewer: What is SQL\?/);
+  assert.match(prompt.user, /interviewer: Can you expand\?/);
+  assert.doesNotMatch(prompt.user, /assistant: SQL is a relational query language/);
+});
+
 test("live conversation detects interview questions in English and Spanish", () => {
   const english = detectQuestionIntent("Can you walk me through why you chose SQL instead of NoSQL?", "english");
   const spanish = detectQuestionIntent("Podrias explicar por que elegiste SQL en ese proyecto?", "spanish");

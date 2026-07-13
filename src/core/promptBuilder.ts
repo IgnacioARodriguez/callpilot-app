@@ -21,7 +21,22 @@ const fenced = (name: string, value: string) => `<${name}>\n${value.trim()}\n</$
 const asksForExperienceContext = (value: string): boolean =>
   /\b(experience|background|resume|cv|project|worked|used before|why did you choose|tradeoff in your experience|experiencia|proyecto|trabajaste|usaste antes|por que elegiste|por qué elegiste)\b/i.test(value);
 
+const withoutAssistantTurns = (context: GlobalContext): GlobalContext => ({
+  ...context,
+  transcript: {
+    ...context.transcript,
+    messages: context.transcript.messages.filter((message) => message.speaker !== "assistant"),
+  },
+});
+
+const withoutAssistantEvidence = (evidence: EvidenceSelection): EvidenceSelection => ({
+  ...evidence,
+  items: evidence.items.filter((item) => item.source !== "transcript" || !/\bassistant\s*:/i.test(item.text)),
+});
+
 export const buildPromptWithEvidence = (context: GlobalContext, userInput: string, evidence: EvidenceSelection): BuiltPrompt => {
+  const factualContext = withoutAssistantTurns(context);
+  const factualEvidence = withoutAssistantEvidence(evidence);
   const mode = modeById(context.activeMode);
   const includePersonalContext = context.activeMode !== "live_coding" || asksForExperienceContext(userInput);
   const includedSections: string[] = ["mode", "output_format"];
@@ -38,31 +53,31 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
 
   // Stable context stays before transcript, screen context, and current user input so provider prompt caching can reuse exact prefixes when available.
   if (includePersonalContext) {
-    add("user_profile", context.userProfile);
-    add("company_name", context.companyName);
-    add("role_title", context.roleTitle);
-    add("resume", context.resumeText);
-    add("star_stories", context.starStories);
-    add("job_description", context.jobDescription);
+    add("user_profile", factualContext.userProfile);
+    add("company_name", factualContext.companyName);
+    add("role_title", factualContext.roleTitle);
+    add("resume", factualContext.resumeText);
+    add("star_stories", factualContext.starStories);
+    add("job_description", factualContext.jobDescription);
   } else {
     for (const section of ["user_profile", "company_name", "role_title", "resume", "star_stories", "job_description"]) {
       omittedSections.push({ section, reason: "not needed for live coding problem solving" });
     }
   }
-  add("target_use_case", context.targetUseCase);
-  add("interview_type", context.interviewType);
-  add("preferred_language", context.preferredLanguage);
-  add("coding_language_preference", context.codingLanguagePreference);
-  add("user_notes", context.userNotes);
-  add("response_constraints", context.responseConstraints.join("\n"));
+  add("target_use_case", factualContext.targetUseCase);
+  add("interview_type", factualContext.interviewType);
+  add("preferred_language", factualContext.preferredLanguage);
+  add("coding_language_preference", factualContext.codingLanguagePreference);
+  add("user_notes", factualContext.userNotes);
+  add("response_constraints", factualContext.responseConstraints.join("\n"));
   add("selected_evidence", includePersonalContext
-    ? formatEvidenceForPrompt(evidence)
+    ? formatEvidenceForPrompt(factualEvidence)
     : formatEvidenceForPrompt({
-      ...evidence,
-      items: evidence.items.filter((item) => item.source === "screen_context" || item.source === "notes"),
+      ...factualEvidence,
+      items: factualEvidence.items.filter((item) => item.source === "screen_context" || item.source === "notes"),
     }));
-  add("transcript", compactTranscript(context.transcript, 6000, 80));
-  add("screen_context", `kind: ${context.screenContext.kind}\nconfidence: ${context.screenContext.confidence}\n${context.screenContext.visibleText}`);
+  add("transcript", compactTranscript(factualContext.transcript, 6000, 80));
+  add("screen_context", `kind: ${factualContext.screenContext.kind}\nconfidence: ${factualContext.screenContext.confidence}\n${factualContext.screenContext.visibleText}`);
   add("user_input", userInput);
 
   const system = [
@@ -94,8 +109,8 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
       includedSections,
       omittedSections,
       approximateChars: system.length + user.length,
-      selectedEvidence: evidence.items,
-      evidenceQueryTerms: evidence.debug.queryTerms,
+      selectedEvidence: factualEvidence.items,
+      evidenceQueryTerms: factualEvidence.debug.queryTerms,
     },
   };
 };

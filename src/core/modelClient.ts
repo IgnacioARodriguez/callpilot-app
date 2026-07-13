@@ -23,6 +23,7 @@ export interface GenerateAnswerInput {
   provider: ModelProvider;
   modelName: string;
   prompt: BuiltPrompt;
+  requestId?: string;
   apiKey?: string;
   nativelyApiKey?: string;
   ollamaBaseUrl?: string;
@@ -34,6 +35,7 @@ export interface GenerateAnswerResult {
   text: string;
   provider: ModelProvider;
   modelName: string;
+  requestId?: string;
   error?: string;
 }
 

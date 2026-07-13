@@ -152,8 +152,8 @@ declare global {
       onShortcut: (callback: (action: DesktopShortcutAction) => void) => () => void;
       onManualAnswerRequest: (callback: () => void) => () => void;
       onManualAnswerStatus: (callback: (payload: { ok: boolean; status: string; error?: string }) => void) => () => void;
-      onAnswerHeadline: (callback: (payload: { headline: string; keywords: string[] }) => void) => () => void;
-      onAnswerDetailChunk: (callback: (chunk: string) => void) => () => void;
+      onAnswerHeadline: (callback: (payload: { requestId?: string; headline: string; keywords: string[] }) => void) => () => void;
+      onAnswerDetailChunk: (callback: (payload: { requestId?: string; sequence?: number; text?: string; done?: boolean; error?: string } | string) => void) => () => void;
       onTranscriptMessage: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onLiveTranscript: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onNativelyTranscript: (callback: (payload: { streamId: string; text: string; isFinal: boolean; confidence: number }) => void) => () => void;

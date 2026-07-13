@@ -68,6 +68,10 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   assert.match(overlay, /requestAnswer/);
   assert.match(overlay, /renderFormattedText/);
   assert.match(overlay, /cp-rich-text/);
+  assert.match(overlay, /assistantIdByRequest/);
+  assert.match(overlay, /lastSequenceByRequest/);
+  assert.match(main, /requestId/);
+  assert.match(main, /sequence/);
   assert.match(main, /pendingDetailChunks/);
   assert.match(codingOverlay, /cp-code-panel/);
   assert.match(codingOverlay, /cp-reasoning-panel/);
