@@ -10,7 +10,7 @@ export {
   type OcrLanguage,
   type OcrResult,
 } from "./ocr.ts";
-export { TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, type TranscriptSnapshot, type TranscriptSpeaker } from "./transcriptBuffer.ts";
+export { TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, formatConversationWindow, type TranscriptSnapshot, type TranscriptSpeaker } from "./transcriptBuffer.ts";
 export {
   detectQuestionIntent,
   shouldAutoAnswer,
@@ -45,8 +45,10 @@ export {
   createMockAnswer,
   extractOllamaModels,
   extractOllamaResponseText,
+  extractOpenAICompatibleChatText,
   extractOpenAIResponseText,
   extractOpenAITranscriptionText,
+  buildOpenAICompatibleChatRequest,
   isSupportedAudioMimeType,
   normalizeOllamaBaseUrl,
   normalizeTranscriptionModelName,

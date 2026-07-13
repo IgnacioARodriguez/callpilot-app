@@ -10,8 +10,10 @@ if (process.env.CALLPILOT_REMOTE_DEBUG_PORT) {
 
 let mainWindow = null;
 let overlayWindow = null;
+let codingWindow = null;
 let shortcutHealth = [];
 const ocrWorkers = new Map();
+const nativelyStreams = new Map();
 
 const stealthState = {
   callPrivacyAllowed: false,
@@ -35,12 +37,15 @@ const settingsDefaults = {
   liveTranscriptionProvider: "local",
   liveLatencyPreset: "balanced",
   liveAudioSource: "both",
+  nativelyApiKeyHint: "",
   autoAnswerCooldownMs: 12000,
   autoAnswerMinConfidence: 0.45,
 };
 
 const openAITranscriptionMaxBytes = 25 * 1024 * 1024;
 const openAIBaseUrl = () => (process.env.CALLPILOT_OPENAI_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
+const nativelyTranscriptionUrl = () => (process.env.CALLPILOT_NATIVELY_STT_URL || "wss://api.natively.software/v1/transcribe").trim();
+const nativelyLLMUrl = () => (process.env.CALLPILOT_NATIVELY_LLM_URL || "https://api.natively.software/v1/chat/completions").trim();
 const supportedAudioMimeTypes = new Set([
   "audio/mp3",
   "audio/mpeg",
@@ -94,15 +99,26 @@ const getStoredOpenAIKey = () => {
   }
 };
 
+const getStoredNativelyKey = () => {
+  const encrypted = readCredentials().nativelyApiKey;
+  if (!encrypted || typeof encrypted !== "string" || !safeStorage.isEncryptionAvailable()) return "";
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+  } catch {
+    return "";
+  }
+};
+
 const credentialStatus = () => ({
   ok: true,
   hasOpenAIKey: Boolean(getStoredOpenAIKey()),
+  hasNativelyKey: Boolean(getStoredNativelyKey()),
   encryptionAvailable: safeStorage.isEncryptionAvailable(),
 });
 
 const saveStoredOpenAIKey = (apiKey) => {
   if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, hasOpenAIKey: false, encryptionAvailable: false, error: "safe_storage_unavailable" };
+    return { ok: false, hasOpenAIKey: false, hasNativelyKey: Boolean(getStoredNativelyKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
   }
   const key = typeof apiKey === "string" ? apiKey.trim() : "";
   if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
@@ -110,14 +126,54 @@ const saveStoredOpenAIKey = (apiKey) => {
     ...readCredentials(),
     openaiApiKey: safeStorage.encryptString(key).toString("base64"),
   });
-  return { ok: true, hasOpenAIKey: true, encryptionAvailable: true };
+  return { ...credentialStatus(), ok: true };
+};
+
+const saveStoredNativelyKey = (apiKey) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: false, encryptionAvailable: false, error: "safe_storage_unavailable" };
+  }
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
+  saveCredentials({
+    ...readCredentials(),
+    nativelyApiKey: safeStorage.encryptString(key).toString("base64"),
+  });
+  return { ...credentialStatus(), ok: true };
 };
 
 const clearStoredOpenAIKey = () => {
   const credentials = readCredentials();
   delete credentials.openaiApiKey;
   saveCredentials(credentials);
-  return { ok: true, hasOpenAIKey: false, encryptionAvailable: safeStorage.isEncryptionAvailable() };
+  return { ...credentialStatus(), ok: true };
+};
+
+const clearStoredNativelyKey = () => {
+  const credentials = readCredentials();
+  delete credentials.nativelyApiKey;
+  saveCredentials(credentials);
+  return { ...credentialStatus(), ok: true };
+};
+
+const nativelyLanguageForPreference = (language) => {
+  if (language === "spanish") return { language: "es-ES", alternates: ["es-ES", "en-US"] };
+  if (language === "english") return { language: "en-US", alternates: ["en-US", "es-ES"] };
+  return { language: "auto", alternates: ["es-ES", "en-US"] };
+};
+
+const emitNativelyStatus = (streamId, status, detail) => {
+  mainWindow?.webContents.send("natively:status", { streamId, status, detail });
+};
+
+const stopNativelyStream = (streamId) => {
+  const stream = nativelyStreams.get(streamId);
+  if (!stream) return { ok: true };
+  nativelyStreams.delete(streamId);
+  try {
+    stream.ws?.close();
+  } catch {}
+  return { ok: true };
 };
 
 const extractOpenAIResponseText = (response) => {
@@ -208,6 +264,240 @@ const extractOllamaResponseText = (response) => {
   if (typeof response?.message?.content === "string") return response.message.content.trim();
   if (typeof response?.response === "string") return response.response.trim();
   return "";
+};
+
+const extractOpenAICompatibleChatText = (response) => {
+  if (Array.isArray(response?.choices)) {
+    const text = response.choices
+      .map((choice) => {
+        if (typeof choice?.message?.content === "string") return choice.message.content;
+        if (typeof choice?.text === "string") return choice.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (text) return text;
+  }
+  if (typeof response?.text === "string" && response.text.trim()) return response.text.trim();
+  if (typeof response?.output_text === "string") return response.output_text.trim();
+  return "";
+};
+
+const providerPresets = {
+  mock: {
+    id: "mock",
+    protocol: "mock",
+    defaultModel: "mock-local",
+    auth: "none",
+  },
+  ollama: {
+    id: "ollama",
+    protocol: "ollama_chat",
+    defaultModel: "llama3.1",
+    auth: "none",
+    baseUrl: () => normalizeOllamaBaseUrl(readSettings().ollamaBaseUrl),
+  },
+  openai: {
+    id: "openai",
+    protocol: "openai_responses",
+    defaultModel: "",
+    auth: "bearer",
+    baseUrl: () => openAIBaseUrl(),
+    apiKey: (input) => (typeof input?.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim() : process.env.OPENAI_API_KEY || getStoredOpenAIKey()),
+  },
+  natively: {
+    id: "natively",
+    protocol: "openai_chat",
+    defaultModel: "default",
+    auth: "bearer",
+    chatUrl: () => nativelyLLMUrl(),
+    apiKey: (input) => (typeof input?.nativelyApiKey === "string" && input.nativelyApiKey.trim() ? input.nativelyApiKey.trim() : getStoredNativelyKey()),
+  },
+  nvidia: {
+    id: "nvidia",
+    protocol: "openai_chat",
+    defaultModel: "nvidia-default",
+    auth: "bearer",
+    chatUrl: () => (process.env.CALLPILOT_NVIDIA_LLM_URL || "https://integrate.api.nvidia.com/v1/chat/completions").trim(),
+    apiKey: (input) => (typeof input?.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim() : process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || ""),
+  },
+};
+
+const resolveAnswerProvider = (input) => {
+  const requested = typeof input?.provider === "string" ? input.provider : "mock";
+  return providerPresets[requested] ?? providerPresets.mock;
+};
+
+const resolveAnswerModel = (provider, input) => {
+  const value = typeof input?.modelName === "string" && input.modelName.trim() ? input.modelName.trim() : "";
+  return value || provider.defaultModel || "";
+};
+
+const generateWithOllamaChat = async ({ provider, input, prompt, modelName }) => {
+  const baseUrl = normalizeOllamaBaseUrl(input?.ollamaBaseUrl || provider.baseUrl?.());
+  const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
+  try {
+    const response = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: modelName,
+        stream: false,
+        ...(maxTokens ? { options: { num_predict: maxTokens } } : {}),
+        messages: [
+          { role: "system", content: String(prompt?.system ?? "") },
+          { role: "user", content: String(prompt?.user ?? "") },
+        ],
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, text: "", provider: provider.id, modelName, error: payload?.error ?? `ollama_http_${response.status}` };
+    }
+    const text = extractOllamaResponseText(payload);
+    return { ok: Boolean(text), text, provider: provider.id, modelName, error: text ? undefined : "empty_ollama_response" };
+  } catch (error) {
+    return { ok: false, text: "", provider: provider.id, modelName, error: error instanceof Error ? `ollama_unavailable: ${error.message}` : "ollama_unavailable" };
+  }
+};
+
+const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, modelName }) => {
+  const apiKey = provider.apiKey?.(input) ?? "";
+  const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
+  if (provider.auth === "bearer" && !apiKey) {
+    return { ok: false, text: "", provider: provider.id, modelName, error: `missing_${provider.id}_api_key` };
+  }
+  try {
+    const response = await fetch(provider.chatUrl(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: modelName,
+        stream: false,
+        ...(maxTokens ? { max_tokens: maxTokens } : {}),
+        messages: [
+          { role: "system", content: String(prompt?.system ?? "") },
+          { role: "user", content: String(prompt?.user ?? "") },
+        ],
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, text: "", provider: provider.id, modelName, error: payload?.error?.message ?? payload?.error ?? `${provider.id}_http_${response.status}` };
+    }
+    const text = extractOpenAICompatibleChatText(payload);
+    return { ok: Boolean(text), text, provider: provider.id, modelName, error: text ? undefined : `empty_${provider.id}_response` };
+  } catch (error) {
+    return { ok: false, text: "", provider: provider.id, modelName, error: error instanceof Error ? `${provider.id}_unavailable: ${error.message}` : `${provider.id}_unavailable` };
+  }
+};
+
+const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName, event }) => {
+  const apiKey = provider.apiKey?.(input) ?? "";
+  if (!apiKey) return { ok: false, text: "", provider: provider.id, modelName, error: `missing_${provider.id}_api_key` };
+  if (!modelName) return { ok: false, text: "", provider: provider.id, modelName, error: `missing_${provider.id}_model` };
+
+  try {
+    const requestBase = {
+      model: modelName,
+      instructions: String(prompt?.system ?? ""),
+      input: String(prompt?.user ?? ""),
+      prompt_cache_key: createPromptCacheKey(prompt),
+      store: false,
+    };
+    let headlineDelivered = false;
+    const pendingDetailChunks = [];
+    const sendDetailChunk = (chunk) => {
+      event.sender.send("answer:detail-chunk", chunk);
+      sendToOverlay("answer:detail-chunk", chunk);
+    };
+    const flushPendingDetailChunks = () => {
+      while (pendingDetailChunks.length > 0) {
+        sendDetailChunk(pendingDetailChunks.shift());
+      }
+    };
+    const headlinePromise = fetch(`${provider.baseUrl()}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        ...requestBase,
+        text: {
+          format: {
+            type: "json_schema",
+            name: structuredAnswerJsonSchema.name,
+            strict: true,
+            schema: structuredAnswerJsonSchema.schema,
+          },
+        },
+      }),
+    }).then(async (headlineResponse) => {
+      const payload = await headlineResponse.json().catch(() => ({}));
+      if (!headlineResponse.ok) {
+        throw new Error(payload?.error?.message ?? `${provider.id}_headline_http_${headlineResponse.status}`);
+      }
+      const structured = parseStructuredAnswer(extractOpenAIResponseText(payload));
+      if (structured.headline || structured.keywords.length) {
+        event.sender.send("answer:headline", {
+          headline: structured.headline,
+          keywords: structured.keywords,
+        });
+        sendToOverlay("answer:headline", {
+          headline: structured.headline,
+          keywords: structured.keywords,
+        });
+        headlineDelivered = true;
+        flushPendingDetailChunks();
+      }
+      return structured;
+    });
+
+    const detailResponse = await fetch(`${provider.baseUrl()}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        ...requestBase,
+        stream: true,
+      }),
+    });
+    if (!detailResponse.ok) {
+      const payload = await detailResponse.json().catch(() => ({}));
+      await headlinePromise.catch(() => undefined);
+      return { ok: false, text: "", provider: provider.id, modelName, error: payload?.error?.message ?? `${provider.id}_http_${detailResponse.status}` };
+    }
+
+    const text = await readOpenAISseStream(detailResponse, (streamEvent) => {
+      if (streamEvent.type === "response.output_text.delta" && typeof streamEvent.delta === "string") {
+        if (headlineDelivered) {
+          sendDetailChunk(streamEvent.delta);
+        } else {
+          pendingDetailChunks.push(streamEvent.delta);
+        }
+      }
+    });
+    const headlineResult = await headlinePromise.catch((error) => ({ headline: "", keywords: [], detail: "", error: error.message }));
+    headlineDelivered = true;
+    flushPendingDetailChunks();
+    return {
+      ok: Boolean(text),
+      text,
+      provider: provider.id,
+      modelName,
+      structured: headlineResult,
+      error: text ? undefined : headlineResult.error || `empty_${provider.id}_response`,
+    };
+  } catch (error) {
+    return { ok: false, text: "", provider: provider.id, modelName, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
+  }
 };
 
 const extractOllamaModels = (response) => {
@@ -338,10 +628,11 @@ const normalizeStealthState = () => {
 
 const applyShareSafeState = () => {
   stealthState.callPrivacyAllowed = true;
-  stealthState.overlayVisible = false;
+  stealthState.overlayVisible = true;
   stealthState.contentProtectionEnabled = true;
-  stealthState.mousePassthroughEnabled = true;
-  stealthState.focusMode = "passthrough";
+  stealthState.mousePassthroughEnabled = false;
+  stealthState.focusMode = "interactive";
+  stealthState.shortcutLayerActive = true;
   normalizeStealthState();
 };
 
@@ -381,7 +672,7 @@ const configureMediaCapture = () => {
     } catch {
       callback({});
     }
-  });
+  }, { useSystemPicker: false });
 };
 
 const assessPrivacyState = async () => {
@@ -426,12 +717,14 @@ const assessPrivacyState = async () => {
     findings.push(`Local capture source check failed: ${error instanceof Error ? error.message : "unknown error"}.`);
   }
 
-  const status = !stealthState.overlayVisible && stealthState.contentProtectionEnabled ? "safe" : "risk";
+  const status = stealthState.overlayVisible && stealthState.contentProtectionEnabled ? "safe" : "risk";
   return {
     status,
     summary: status === "safe"
-      ? "Local privacy posture is share-safe, pending platform observer check."
-      : "Local privacy posture has visible or unprotected elements.",
+      ? "Protected sharing mode is active. CallPilot stays visible to you while using best-effort capture protection."
+      : stealthState.overlayVisible
+        ? "CallPilot is visible locally, but capture protection is not enabled."
+        : "CallPilot is hidden locally; protected interview overlays should stay visible to you.",
     findings,
     checkedAt: new Date().toISOString(),
   };
@@ -439,7 +732,7 @@ const assessPrivacyState = async () => {
 
 const syncWindowState = () => {
   normalizeStealthState();
-  for (const windowRef of [mainWindow, overlayWindow]) {
+  for (const windowRef of [mainWindow, overlayWindow, codingWindow]) {
     if (!windowRef) continue;
     windowRef.setAlwaysOnTop(true, "screen-saver");
     windowRef.setContentProtection(Boolean(stealthState.contentProtectionEnabled));
@@ -474,6 +767,7 @@ const createOverlayWindow = async () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: false,
     },
   });
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -495,6 +789,50 @@ const closeOverlayWindow = () => {
   overlayWindow = null;
 };
 
+const createCodingWindow = async () => {
+  if (codingWindow) {
+    codingWindow.showInactive();
+    return;
+  }
+  codingWindow = new BrowserWindow({
+    width: 780,
+    height: 520,
+    minWidth: 560,
+    minHeight: 360,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false,
+    },
+  });
+  codingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  syncWindowState();
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) {
+    await codingWindow.loadURL(`${devUrl}#/coding`);
+  } else {
+    await codingWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"), { hash: "/coding" });
+  }
+  codingWindow.on("closed", () => {
+    codingWindow = null;
+  });
+};
+
+const closeCodingWindow = () => {
+  if (!codingWindow) return;
+  codingWindow.close();
+  codingWindow = null;
+};
+
 const sendToOverlay = (channel, payload) => {
   overlayWindow?.webContents.send(channel, payload);
 };
@@ -514,6 +852,7 @@ const createWindow = async () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: false,
     },
   });
 
@@ -606,18 +945,37 @@ ipcMain.handle("stealth:reset-privacy", () => {
   return { ...stealthState };
 });
 ipcMain.handle("privacy:check", () => assessPrivacyState());
-ipcMain.handle("session:start", async () => {
+ipcMain.handle("session:start", async (_event, options = {}) => {
   await createOverlayWindow();
+  if (options.mode === "live_coding") {
+    await createCodingWindow();
+  } else {
+    closeCodingWindow();
+  }
   mainWindow?.hide();
   return { ok: true };
 });
 ipcMain.handle("session:end", () => {
   closeOverlayWindow();
+  closeCodingWindow();
   mainWindow?.show();
+  return { ok: true };
+});
+ipcMain.handle("answer:request", () => {
+  if (!mainWindow || mainWindow.webContents.isDestroyed()) {
+    sendToOverlay("answer:manual-status", { ok: false, status: "main_window_unavailable" });
+    return { ok: false, error: "main_window_unavailable" };
+  }
+  mainWindow.webContents.send("answer:manual-request");
+  sendToOverlay("answer:manual-status", { ok: true, status: "sent_to_main" });
   return { ok: true };
 });
 ipcMain.handle("transcript:publish", (_event, message) => {
   sendToOverlay("transcript:message", message);
+  return { ok: true };
+});
+ipcMain.handle("transcript:publish-live", (_event, message) => {
+  sendToOverlay("transcript:live", message);
   return { ok: true };
 });
 ipcMain.handle("settings:get", () => readSettings());
@@ -625,7 +983,113 @@ ipcMain.handle("settings:save", (_event, settings) => writeSettings(settings));
 ipcMain.handle("shortcuts:health", () => shortcutHealth.map((item) => ({ ...item })));
 ipcMain.handle("credentials:status", () => credentialStatus());
 ipcMain.handle("credentials:save-openai-key", (_event, apiKey) => saveStoredOpenAIKey(apiKey));
+ipcMain.handle("credentials:save-natively-key", (_event, apiKey) => saveStoredNativelyKey(apiKey));
 ipcMain.handle("credentials:clear-openai-key", () => clearStoredOpenAIKey());
+ipcMain.handle("credentials:clear-natively-key", () => clearStoredNativelyKey());
+ipcMain.handle("natively:start", async (_event, input) => {
+  const WebSocketCtor = globalThis.WebSocket;
+  if (typeof WebSocketCtor !== "function") {
+    return { ok: false, error: "websocket_unavailable" };
+  }
+  const streamId = typeof input?.streamId === "string" && input.streamId.trim() ? input.streamId.trim() : `natively-${Date.now()}`;
+  stopNativelyStream(streamId);
+  const apiKey = typeof input?.apiKey === "string" && input.apiKey.trim()
+    ? input.apiKey.trim()
+    : process.env.NATIVELY_API_KEY || getStoredNativelyKey();
+  if (!apiKey) return { ok: false, error: "missing_natively_api_key" };
+  const sampleRate = Number.isFinite(input?.sampleRate) ? Math.max(8000, Math.min(48000, Math.round(Number(input.sampleRate)))) : 16000;
+  const channel = input?.channel === "mic" ? "mic" : "system";
+  const language = nativelyLanguageForPreference(input?.language);
+  const ws = new WebSocketCtor(nativelyTranscriptionUrl());
+  nativelyStreams.set(streamId, {
+    ws,
+    queue: [],
+    connected: false,
+    closed: false,
+  });
+
+  ws.binaryType = "arraybuffer";
+  ws.addEventListener("open", () => {
+    const stream = nativelyStreams.get(streamId);
+    if (!stream) return;
+    stream.connected = true;
+    ws.send(JSON.stringify({
+      key: apiKey,
+      sample_rate: sampleRate,
+      audio_channels: 1,
+      language: language.language,
+      language_alternates: language.alternates,
+      channel,
+    }));
+    for (const chunk of stream.queue.splice(0)) ws.send(chunk);
+    emitNativelyStatus(streamId, "connected", `Natively ${channel} stream connected`);
+  });
+  ws.addEventListener("message", async (event) => {
+    let raw = "";
+    if (typeof event.data === "string") raw = event.data;
+    else if (event.data instanceof ArrayBuffer) raw = Buffer.from(event.data).toString("utf8");
+    else if (event.data && typeof event.data.text === "function") raw = await event.data.text().catch(() => "");
+    if (!raw) return;
+    try {
+      const message = JSON.parse(raw);
+      if (message?.error) {
+        emitNativelyStatus(streamId, "error", String(message.error));
+        if (["auth_timeout", "invalid_key_format", "trial_expired", "transcription_quota_exceeded"].includes(message.error)) {
+          stopNativelyStream(streamId);
+        }
+        return;
+      }
+      if (message?.language_detected) {
+        emitNativelyStatus(streamId, "language", `Detected ${message.language_detected}`);
+      }
+      if (typeof message?.text === "string" && message.text.trim()) {
+        const payload = {
+          streamId,
+          text: message.text.trim(),
+          isFinal: Boolean(message.is_final),
+          confidence: typeof message.confidence === "number" ? message.confidence : 1,
+        };
+        mainWindow?.webContents.send("natively:transcript", payload);
+      }
+    } catch {
+      emitNativelyStatus(streamId, "message", raw.slice(0, 200));
+    }
+  });
+  ws.addEventListener("error", () => {
+    emitNativelyStatus(streamId, "error", "Natively WebSocket error");
+  });
+  ws.addEventListener("close", () => {
+    const stream = nativelyStreams.get(streamId);
+    if (stream) stream.closed = true;
+    emitNativelyStatus(streamId, "closed", "Natively stream closed");
+  });
+  return { ok: true, streamId };
+});
+ipcMain.handle("natively:audio", (_event, input) => {
+  const streamId = typeof input?.streamId === "string" ? input.streamId : "";
+  const stream = nativelyStreams.get(streamId);
+  if (!stream || stream.closed) return { ok: false, error: "natively_stream_not_started" };
+  const rawAudio = input?.arrayBuffer;
+  const audioBuffer = rawAudio instanceof ArrayBuffer
+    ? Buffer.from(rawAudio)
+    : ArrayBuffer.isView(rawAudio)
+      ? Buffer.from(rawAudio.buffer, rawAudio.byteOffset, rawAudio.byteLength)
+      : Buffer.alloc(0);
+  if (audioBuffer.length === 0) return { ok: false, error: "empty_audio_chunk" };
+  if (stream.connected && stream.ws?.readyState === globalThis.WebSocket.OPEN) {
+    stream.ws.send(audioBuffer);
+  } else {
+    stream.queue.push(audioBuffer);
+    if (stream.queue.length > 500) stream.queue.shift();
+  }
+  return { ok: true };
+});
+ipcMain.handle("natively:stop", (_event, input) => {
+  const streamId = typeof input?.streamId === "string" ? input.streamId : "";
+  if (streamId) return stopNativelyStream(streamId);
+  for (const id of [...nativelyStreams.keys()]) stopNativelyStream(id);
+  return { ok: true };
+});
 ipcMain.handle("session:export-file", async (_event, session) => {
   const title = typeof session?.title === "string" && session.title.trim() ? session.title.trim() : "callpilot-session";
   const safeTitle = title.replace(/[^a-z0-9-_]+/gi, "-").slice(0, 80) || "callpilot-session";
@@ -678,180 +1142,26 @@ ipcMain.handle("ollama:list-models", async (_event, input) => {
   }
 });
 ipcMain.handle("model:generate", async (_event, input) => {
-  const provider = input?.provider === "openai" || input?.provider === "ollama" ? input.provider : "mock";
-  const modelName = typeof input?.modelName === "string" && input.modelName.trim() ? input.modelName.trim() : settingsDefaults.modelName;
+  const provider = resolveAnswerProvider(input);
+  const modelName = resolveAnswerModel(provider, input);
   const prompt = input?.prompt;
 
-  if (provider === "mock") {
-    return { ok: true, text: createMockAnswer(prompt), provider, modelName: "mock-local" };
+  let result;
+  if (provider.protocol === "mock") {
+    result = { ok: true, text: createMockAnswer(prompt), provider: provider.id, modelName };
+  } else if (provider.protocol === "ollama_chat") {
+    result = await generateWithOllamaChat({ provider, input, prompt, modelName });
+  } else if (provider.protocol === "openai_chat") {
+    result = await generateWithOpenAICompatibleChat({ provider, input, prompt, modelName });
+  } else if (provider.protocol === "openai_responses") {
+    result = await generateWithOpenAIResponses({ provider, input, prompt, modelName, event: _event });
+  } else {
+    result = { ok: false, text: "", provider: provider.id, modelName, error: `unsupported_provider_protocol:${provider.protocol}` };
   }
-
-  if (provider === "ollama") {
-    const ollamaBaseUrl = normalizeOllamaBaseUrl(input?.ollamaBaseUrl || readSettings().ollamaBaseUrl);
-    const ollamaModel = modelName === settingsDefaults.modelName ? "llama3.1" : modelName;
-    try {
-      const response = await fetch(`${ollamaBaseUrl}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: ollamaModel,
-          stream: false,
-          messages: [
-            { role: "system", content: String(prompt?.system ?? "") },
-            { role: "user", content: String(prompt?.user ?? "") },
-          ],
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        return {
-          ok: false,
-          text: "",
-          provider,
-          modelName: ollamaModel,
-          error: payload?.error ?? `ollama_http_${response.status}`,
-        };
-      }
-      const text = extractOllamaResponseText(payload);
-      return {
-        ok: Boolean(text),
-        text,
-        provider,
-        modelName: ollamaModel,
-        error: text ? undefined : "empty_ollama_response",
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        text: "",
-        provider,
-        modelName: ollamaModel,
-        error: error instanceof Error ? `ollama_unavailable: ${error.message}` : "ollama_unavailable",
-      };
-    }
-  }
-
-  const apiKey = typeof input?.apiKey === "string" && input.apiKey.trim()
-    ? input.apiKey.trim()
-    : process.env.OPENAI_API_KEY || getStoredOpenAIKey();
-  if (!apiKey) {
-    return { ok: false, text: "", provider, modelName, error: "missing_openai_api_key" };
-  }
-  if (!modelName) {
-    return { ok: false, text: "", provider, modelName, error: "missing_openai_model" };
-  }
-
-  try {
-    const requestBase = {
-      model: modelName,
-      instructions: String(prompt?.system ?? ""),
-      input: String(prompt?.user ?? ""),
-      prompt_cache_key: createPromptCacheKey(prompt),
-      store: false,
-    };
-    let headlineDelivered = false;
-    const pendingDetailChunks = [];
-    const sendDetailChunk = (chunk) => {
-      _event.sender.send("answer:detail-chunk", chunk);
-      sendToOverlay("answer:detail-chunk", chunk);
-    };
-    const flushPendingDetailChunks = () => {
-      while (pendingDetailChunks.length > 0) {
-        sendDetailChunk(pendingDetailChunks.shift());
-      }
-    };
-    const headlinePromise = fetch(`${openAIBaseUrl()}/v1/responses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        ...requestBase,
-        text: {
-          format: {
-            type: "json_schema",
-            name: structuredAnswerJsonSchema.name,
-            strict: true,
-            schema: structuredAnswerJsonSchema.schema,
-          },
-        },
-      }),
-    }).then(async (headlineResponse) => {
-      const payload = await headlineResponse.json().catch(() => ({}));
-      if (!headlineResponse.ok) {
-        throw new Error(payload?.error?.message ?? `openai_headline_http_${headlineResponse.status}`);
-      }
-      const structured = parseStructuredAnswer(extractOpenAIResponseText(payload));
-      if (structured.headline || structured.keywords.length) {
-        _event.sender.send("answer:headline", {
-          headline: structured.headline,
-          keywords: structured.keywords,
-        });
-        sendToOverlay("answer:headline", {
-          headline: structured.headline,
-          keywords: structured.keywords,
-        });
-        headlineDelivered = true;
-        flushPendingDetailChunks();
-      }
-      return structured;
-    });
-
-    const detailResponse = await fetch(`${openAIBaseUrl()}/v1/responses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        ...requestBase,
-        stream: true,
-      }),
-    });
-    if (!detailResponse.ok) {
-      const payload = await detailResponse.json().catch(() => ({}));
-      await headlinePromise.catch(() => undefined);
-      return {
-        ok: false,
-        text: "",
-        provider,
-        modelName,
-        error: payload?.error?.message ?? `openai_http_${detailResponse.status}`,
-      };
-    }
-
-    const text = await readOpenAISseStream(detailResponse, (event) => {
-      if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-        if (headlineDelivered) {
-          sendDetailChunk(event.delta);
-        } else {
-          pendingDetailChunks.push(event.delta);
-        }
-      }
-    });
-    const headlineResult = await headlinePromise.catch((error) => ({ headline: "", keywords: [], detail: "", error: error.message }));
-    headlineDelivered = true;
-    flushPendingDetailChunks();
-    return {
-      ok: Boolean(text),
-      text,
-      provider,
-      modelName,
-      structured: headlineResult,
-      error: text ? undefined : headlineResult.error || "empty_openai_response",
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      text: "",
-      provider,
-      modelName,
-      error: error instanceof Error ? error.message : "openai_request_failed",
-    };
-  }
+  return result;
 });
 ipcMain.handle("audio:transcribe", async (_event, input) => {
+  const provider = input?.provider === "natively" ? "natively" : "openai";
   const modelName = typeof input?.modelName === "string" && input.modelName.trim()
     ? input.modelName.trim()
     : readSettings().transcriptionModelName || settingsDefaults.transcriptionModelName;
@@ -859,9 +1169,13 @@ ipcMain.handle("audio:transcribe", async (_event, input) => {
   const fileName = typeof input?.fileName === "string" && input.fileName.trim()
     ? input.fileName.trim()
     : `callpilot-audio.${audioExtensionForMimeType(mimeType)}`;
-  const apiKey = typeof input?.apiKey === "string" && input.apiKey.trim()
+  const apiKey = provider === "natively"
+    ? (typeof input?.nativelyApiKey === "string" && input.nativelyApiKey.trim()
+      ? input.nativelyApiKey.trim()
+      : process.env.NATIVELY_API_KEY || getStoredNativelyKey())
+    : (typeof input?.apiKey === "string" && input.apiKey.trim()
     ? input.apiKey.trim()
-    : process.env.OPENAI_API_KEY || getStoredOpenAIKey();
+    : process.env.OPENAI_API_KEY || getStoredOpenAIKey());
 
   const rawAudio = input?.arrayBuffer;
   const audioBuffer = rawAudio instanceof ArrayBuffer
@@ -870,7 +1184,15 @@ ipcMain.handle("audio:transcribe", async (_event, input) => {
       ? Buffer.from(rawAudio.buffer, rawAudio.byteOffset, rawAudio.byteLength)
       : Buffer.alloc(0);
 
-  if (!apiKey) return { ok: false, text: "", modelName, error: "missing_openai_api_key" };
+  if (!apiKey) return { ok: false, text: "", modelName, error: provider === "natively" ? "missing_natively_api_key" : "missing_openai_api_key" };
+  if (provider === "natively") {
+    return {
+      ok: false,
+      text: "",
+      modelName: "natively-stt",
+      error: "natively_pcm_streaming_not_configured",
+    };
+  }
   if (!supportedAudioMimeTypes.has(mimeType)) return { ok: false, text: "", modelName, error: "unsupported_audio_type" };
   if (audioBuffer.length === 0) return { ok: false, text: "", modelName, error: "empty_audio_file" };
   if (audioBuffer.length > openAITranscriptionMaxBytes) return { ok: false, text: "", modelName, error: "audio_file_too_large" };

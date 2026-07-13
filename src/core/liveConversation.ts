@@ -8,54 +8,67 @@ export interface QuestionDetection {
   normalizedText: string;
 }
 
-const englishQuestionPatterns = [
-  /\?$/,
-  /\b(can|could|would|will|do|does|did|are|is|was|were|have|has|had)\s+you\b/i,
-  /\b(what|why|how|when|where|which)\b/i,
-  /\b(tell me|walk me through|explain|describe)\b/i,
-];
+const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
-const spanishQuestionPatterns = [
-  /\?$/,
-  /[¿?]/,
-  /\b(que|qué|por que|por qué|como|cómo|cuando|cuándo|donde|dónde|cual|cuál)\b/i,
-  /\b(puedes|podrias|podrías|explica|contame|cuentame|cuéntame)\b/i,
-];
+const normalizeForPatterns = (text: string): string =>
+  normalize(text)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[¿¡]/g, "")
+    .toLowerCase();
 
 const fillerPatterns = [
   /^\s*(ok|okay|vale|bien|perfecto|gracias|thanks|thank you)\s*[.!?]?\s*$/i,
   /^\s*(ok|okay)\s+(thanks|thank you)\s*[.!?]?\s*$/i,
-  /^\s*(yes|no|si|sí)\s*[.!?]?\s*$/i,
+  /^\s*(yes|no|si)\s*[.!?]?\s*$/i,
 ];
 
-const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+const englishPatterns = [
+  /\?$/,
+  /\b(can|could|would|will|do|does|did|are|is|was|were|have|has|had)\s+(you|we|i|it|this|that|they)\b/i,
+  /\b(what|why|how|when|where|which|who)\b/i,
+  /\b(tell me|walk me through|explain|describe|elaborate|clarify)\b/i,
+];
+
+const spanishPatterns = [
+  /\?$/,
+  /\b(que|por que|como|cuando|donde|cual|quien)\b/i,
+  /\b(puedes|podrias|podriamos|deberias|deberiamos)\b/i,
+  /\b(explica|explicame|describe|describeme|contame|cuentame|aclara|aclarame)\b/i,
+  /\b(me interesa|me interesaria|quisiera|quiero)\s+que\s+me\s+(cuentes|expliques|describas)\b/i,
+];
+
+const shortDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}][\p{L}\p{N} .+#/-]{0,40}\??$/iu;
 
 export const detectQuestionIntent = (
   text: string,
   preferredLanguage: PreferredLanguage = "auto",
 ): QuestionDetection => {
   const normalizedText = normalize(text);
+  const patternText = normalizeForPatterns(normalizedText);
   if (!normalizedText) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0, reason: "empty", normalizedText };
   }
-  if (normalizedText.length < 8 || fillerPatterns.some((pattern) => pattern.test(normalizedText))) {
+  if (normalizedText.length < 5 || fillerPatterns.some((pattern) => pattern.test(patternText))) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "too_short_or_filler", normalizedText };
   }
 
   const patterns =
     preferredLanguage === "spanish"
-      ? spanishQuestionPatterns
+      ? spanishPatterns
       : preferredLanguage === "english"
-        ? englishQuestionPatterns
-        : [...englishQuestionPatterns, ...spanishQuestionPatterns];
-  const matches = patterns.filter((pattern) => pattern.test(normalizedText)).length;
-  const confidence = Math.min(0.95, matches * 0.34 + (normalizedText.endsWith("?") ? 0.22 : 0));
+        ? englishPatterns
+        : [...englishPatterns, ...spanishPatterns];
+  const matches = patterns.filter((pattern) => pattern.test(patternText)).length;
+  const hasQuestionMark = /[?¿]/.test(normalizedText);
+  const isDefinition = shortDefinitionQuestion.test(patternText);
+  const confidence = Math.min(0.95, matches * 0.5 + (hasQuestionMark ? 0.28 : 0) + (isDefinition ? 0.35 : 0));
 
   return {
-    shouldAnswer: true,
-    shouldDispatch: true,
+    shouldAnswer: confidence >= 0.35,
+    shouldDispatch: confidence >= 0.35,
     confidence,
-    reason: matches > 0 ? "question_pattern" : "no_question_pattern",
+    reason: isDefinition ? "definition_question" : matches > 0 ? "question_pattern" : "no_question_pattern",
     normalizedText,
   };
 };
@@ -65,7 +78,8 @@ export const shouldAutoAnswer = (
   nowMs: number,
   lastAnsweredAtMs: number,
   cooldownMs = 12000,
-  _minConfidence = 0.45,
+  minConfidence = 0.45,
 ): boolean =>
   detection.shouldDispatch
+  && detection.confidence >= minConfidence
   && nowMs - lastAnsweredAtMs >= cooldownMs;

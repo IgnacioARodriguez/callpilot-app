@@ -18,6 +18,8 @@
     "benchmark:core": "node --experimental-strip-types scripts/benchmark-core.ts",
     "verify:acceptance": "npm test && npm run benchmark:core",
     "verify:user-journey": "npm run build && node scripts/verify-user-journey.cjs",
+    "verify:llm-scenarios": "node --experimental-strip-types scripts/run-llm-scenarios.mjs",
+    "verify:app": "npm test && npm run build && npm run verify:privacy && npm run verify:isolation && node scripts/verify-user-journey.cjs",
     "test:privacy": "node --experimental-strip-types --test \"src/test/privacy.test.ts\"",
     "verify:local-stt": "node scripts/verify-local-stt.cjs",
     "verify:renderer-stt": "node scripts/verify-renderer-local-stt.cjs",

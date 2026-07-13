@@ -43,6 +43,22 @@ export const compactTranscript = (
   return lines.join("\n");
 };
 
+export const formatConversationWindow = (
+  snapshot: TranscriptSnapshot,
+  liveInterviewerText = "",
+  maxMessages = 8,
+): string => {
+  const recent = snapshot.messages
+    .filter((message) => message.speaker === "interviewer" || message.speaker === "candidate")
+    .slice(-Math.max(0, maxMessages));
+  const lines = recent.map((message) => `${message.speaker}: ${message.text.trim()}`);
+  const liveText = liveInterviewerText.trim();
+  if (liveText && !recent.some((message) => message.speaker === "interviewer" && message.text.trim() === liveText)) {
+    lines.push(`interviewer_partial: ${liveText}`);
+  }
+  return lines.join("\n");
+};
+
 export class TranscriptBuffer {
   private messages: TranscriptMessage[];
   private paused: boolean;

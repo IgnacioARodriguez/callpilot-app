@@ -1,0 +1,653 @@
+{
+  "generatedAt": "2026-07-13T15:16:34.773Z",
+  "provider": "natively",
+  "providerReason": "Saved settings",
+  "modelName": "hhao/qwen2.5-coder-tools:7b",
+  "savedSettings": {
+    "modelProvider": "natively",
+    "modelName": "hhao/qwen2.5-coder-tools:7b",
+    "liveTranscriptionProvider": "local"
+  },
+  "credentialStatus": {
+    "hasOpenAIKey": false,
+    "hasNativelyKey": true,
+    "encryptionAvailable": true
+  },
+  "results": [
+    {
+      "id": "technical_question_direct",
+      "label": "Pregunta tecnica directa",
+      "mode": "technical_qa",
+      "promptDebug": {
+        "modeId": "technical_qa",
+        "includedSections": [
+          "mode",
+          "output_format",
+          "user_profile",
+          "company_name",
+          "role_title",
+          "resume",
+          "star_stories",
+          "job_description",
+          "target_use_case",
+          "preferred_language",
+          "coding_language_preference",
+          "response_constraints",
+          "selected_evidence",
+          "transcript",
+          "screen_context",
+          "user_input"
+        ],
+        "omittedSections": [
+          {
+            "section": "interview_type",
+            "reason": "empty"
+          },
+          {
+            "section": "user_notes",
+            "reason": "empty"
+          }
+        ],
+        "approximateChars": 6264,
+        "selectedEvidence": [
+          {
+            "source": "star_stories",
+            "label": "STAR story 1",
+            "text": "En un proyecto de conciliacion, habia diferencias entre proveedores de pago. Cree consultas SQL auditables, agregaciones por estado y reportes reproducibles. Resultado: redujimos el tiempo de investigacion manual.",
+            "score": 22.275,
+            "matchedTerms": [
+              "sql",
+              "postgres",
+              "postgresql",
+              "mysql",
+              "relational",
+              "joins",
+              "join",
+              "transaction",
+              "transactions",
+              "acid",
+              "consistency",
+              "auditability"
+            ]
+          },
+          {
+            "source": "resume",
+            "label": "CV 1",
+            "text": "Experiencia creando pipelines de conciliacion de pagos con Python, PostgreSQL y jobs asincronicos. Trabajo frecuente con SQL para joins, agregaciones, auditoria de transacciones y analisis de inconsistencias. Experiencia explicando tradeoffs entre consistencia, latencia y mantenibilidad en servicios backend.",
+            "score": 18.975,
+            "matchedTerms": [
+              "sql",
+              "postgres",
+              "postgresql",
+              "mysql",
+              "relational",
+              "joins",
+              "join",
+              "transaction",
+              "transactions",
+              "acid",
+              "consistency",
+              "auditability"
+            ]
+          },
+          {
+            "source": "star_stories",
+            "label": "STAR story 2",
+            "text": "En una migracion de API, priorice cambios incrementales, tests de contrato y rollback simple para reducir riesgo operacional.",
+            "score": 3.375,
+            "matchedTerms": [
+              "para",
+              "en"
+            ]
+          },
+          {
+            "source": "job_description",
+            "label": "Job description 1",
+            "text": "Backend role focused on APIs, databases, distributed systems, pragmatic debugging, and clear technical communication.",
+            "score": 2.625,
+            "matchedTerms": [
+              "backend",
+              "technical"
+            ]
+          }
+        ],
+        "evidenceQueryTerms": [
+          "interviewer",
+          "que",
+          "es",
+          "sql",
+          "postgres",
+          "postgresql",
+          "mysql",
+          "relational",
+          "joins",
+          "join",
+          "transaction",
+          "transactions",
+          "acid",
+          "consistency",
+          "auditability",
+          "reconciliation",
+          "para",
+          "lo",
+          "usarias",
+          "en",
+          "un",
+          "sistema",
+          "backend",
+          "mercado",
+          "pago",
+          "engineer",
+          "technical",
+          "interview",
+          "preparation"
+        ]
+      },
+      "metrics": {
+        "ok": true,
+        "latencyMs": 8458,
+        "chars": 759,
+        "checks": {
+          "providerOk": true,
+          "nonEmpty": true,
+          "conciseEnough": true,
+          "expectedTermsPresent": true,
+          "readableFormat": true,
+          "noConfusingRoleLabels": true,
+          "noForcedCompanyContext": true,
+          "noHugeParagraphs": true,
+          "limitedCodeBlocks": true
+        },
+        "missingExpected": [
+          "base"
+        ]
+      },
+      "response": {
+        "ok": true,
+        "text": "**Respuesta:** SQL es un lenguaje estándar para definir y manipular datos en sistemas relacionales, garantizando integridad mediante propiedades ACID. En backend, es fundamental para modelar entidades transaccionales, realizar agregaciones complejas y asegurar la consistencia.\n\n**Uso práctico:** Lo uso principalmente para la auditoría de transacciones y conciliación, optimizando consultas mediante joins y filtros para detectar inconsistencias entre proveedores de pago.\n\n**Para decir:** \"SQL es mi herramienta principal para gestionar datos relacionales de forma consistente. En mi experiencia en conciliación, lo utilizo para crear reportes auditables y analizar discrepancias entre sistemas, asegurando que las transacciones sean trazables y correctas.\"",
+        "provider": "natively",
+        "modelName": "hhao/qwen2.5-coder-tools:7b"
+      }
+    },
+    {
+      "id": "technical_followup_correction",
+      "label": "Pregunta, mi respuesta y repregunta",
+      "mode": "technical_qa",
+      "promptDebug": {
+        "modeId": "technical_qa",
+        "includedSections": [
+          "mode",
+          "output_format",
+          "user_profile",
+          "company_name",
+          "role_title",
+          "resume",
+          "star_stories",
+          "job_description",
+          "target_use_case",
+          "preferred_language",
+          "coding_language_preference",
+          "response_constraints",
+          "selected_evidence",
+          "transcript",
+          "screen_context",
+          "user_input"
+        ],
+        "omittedSections": [
+          {
+            "section": "interview_type",
+            "reason": "empty"
+          },
+          {
+            "section": "user_notes",
+            "reason": "empty"
+          }
+        ],
+        "approximateChars": 6634,
+        "selectedEvidence": [
+          {
+            "source": "star_stories",
+            "label": "STAR story 1",
+            "text": "En un proyecto de conciliacion, habia diferencias entre proveedores de pago. Cree consultas SQL auditables, agregaciones por estado y reportes reproducibles. Resultado: redujimos el tiempo de investigacion manual.",
+            "score": 23.625,
+            "matchedTerms": [
+              "sql",
+              "postgres",
+              "postgresql",
+              "mysql",
+              "relational",
+              "joins",
+              "join",
+              "transaction",
+              "transactions",
+              "acid",
+              "consistency",
+              "auditability"
+            ]
+          },
+          {
+            "source": "resume",
+            "label": "CV 1",
+            "text": "Experiencia creando pipelines de conciliacion de pagos con Python, PostgreSQL y jobs asincronicos. Trabajo frecuente con SQL para joins, agregaciones, auditoria de transacciones y analisis de inconsistencias. Experiencia explicando tradeoffs entre consistencia, latencia y mantenibilidad en servicios backend.",
+            "score": 18.975,
+            "matchedTerms": [
+              "sql",
+              "postgres",
+              "postgresql",
+              "mysql",
+              "relational",
+              "joins",
+              "join",
+              "transaction",
+              "transactions",
+              "acid",
+              "consistency",
+              "auditability"
+            ]
+          },
+          {
+            "source": "star_stories",
+            "label": "STAR story 2",
+            "text": "En una migracion de API, priorice cambios incrementales, tests de contrato y rollback simple para reducir riesgo operacional.",
+            "score": 3.375,
+            "matchedTerms": [
+              "de",
+              "para"
+            ]
+          },
+          {
+            "source": "job_description",
+            "label": "Job description 1",
+            "text": "Backend role focused on APIs, databases, distributed systems, pragmatic debugging, and clear technical communication.",
+            "score": 2.625,
+            "matchedTerms": [
+              "backend",
+              "technical"
+            ]
+          }
+        ],
+        "evidenceQueryTerms": [
+          "interviewer",
+          "que",
+          "es",
+          "sql",
+          "postgres",
+          "postgresql",
+          "mysql",
+          "relational",
+          "joins",
+          "join",
+          "transaction",
+          "transactions",
+          "acid",
+          "consistency",
+          "auditability",
+          "reconciliation",
+          "candidate",
+          "un",
+          "lenguaje",
+          "de",
+          "programacion",
+          "general",
+          "para",
+          "crear",
+          "aplicaciones",
+          "completas",
+          "manejar",
+          "cualquier",
+          "tipo",
+          "logica",
+          "por",
+          "lo",
+          "describirias",
+          "esa",
+          "manera",
+          "hay",
+          "algo",
+          "corregirias",
+          "mercado",
+          "pago"
+        ]
+      },
+      "metrics": {
+        "ok": true,
+        "latencyMs": 1812,
+        "chars": 740,
+        "checks": {
+          "providerOk": true,
+          "nonEmpty": true,
+          "conciseEnough": true,
+          "expectedTermsPresent": true,
+          "readableFormat": true,
+          "noConfusingRoleLabels": true,
+          "noForcedCompanyContext": true,
+          "noHugeParagraphs": true,
+          "limitedCodeBlocks": true
+        },
+        "missingExpected": []
+      },
+      "response": {
+        "ok": true,
+        "text": "**Corrección:**\nSQL no es un lenguaje de propósito general, sino un lenguaje declarativo diseñado específicamente para gestionar y manipular bases de datos relacionales.\n\n**Respuesta:**\nMe gustaría corregir mi afirmación anterior: SQL es un lenguaje declarativo enfocado en la gestión de datos, no de propósito general. Es especializado en la definición, consulta y manipulación de estructuras relacionales.\n\n**Para decir:**\n\"Disculpa, me expresé mal. SQL es un lenguaje declarativo para bases de datos relacionales. Lo uso frecuentemente en mi trabajo en conciliación de pagos para realizar agregaciones y auditorías de transacciones, aprovechando su capacidad para expresar qué datos obtener sin definir el flujo lógico de la aplicación.\"",
+        "provider": "natively",
+        "modelName": "hhao/qwen2.5-coder-tools:7b"
+      }
+    },
+    {
+      "id": "coding_exercise_solution",
+      "label": "Coding exercise y solucion",
+      "mode": "live_coding",
+      "promptDebug": {
+        "modeId": "live_coding",
+        "includedSections": [
+          "mode",
+          "output_format",
+          "user_profile",
+          "company_name",
+          "role_title",
+          "resume",
+          "star_stories",
+          "job_description",
+          "target_use_case",
+          "preferred_language",
+          "coding_language_preference",
+          "response_constraints",
+          "selected_evidence",
+          "transcript",
+          "screen_context",
+          "user_input"
+        ],
+        "omittedSections": [
+          {
+            "section": "interview_type",
+            "reason": "empty"
+          },
+          {
+            "section": "user_notes",
+            "reason": "empty"
+          }
+        ],
+        "approximateChars": 6829,
+        "selectedEvidence": [
+          {
+            "source": "screen_context",
+            "label": "Screen context 1",
+            "text": "LeetCode - Two Sum Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target. You may assume that each input would have exactly one solution, and you may not use the same element twice. Example 1: Input: nums = [2,7,11,15], target = 9 Output: [0,1] Constraints: 2 <= nums.length <= 10^4 -10^9 <= nums[i] <= 10^9",
+            "score": 22.95,
+            "matchedTerms": [
+              "leetcode",
+              "two",
+              "sum",
+              "given",
+              "array",
+              "integers",
+              "nums",
+              "integer",
+              "target",
+              "return",
+              "indices",
+              "numbers"
+            ]
+          },
+          {
+            "source": "job_description",
+            "label": "Job description 1",
+            "text": "Backend role focused on APIs, databases, distributed systems, pragmatic debugging, and clear technical communication.",
+            "score": 2.625,
+            "matchedTerms": [
+              "backend",
+              "technical"
+            ]
+          },
+          {
+            "source": "star_stories",
+            "label": "STAR story 1",
+            "text": "En un proyecto de conciliacion, habia diferencias entre proveedores de pago. Cree consultas SQL auditables, agregaciones por estado y reportes reproducibles. Resultado: redujimos el tiempo de investigacion manual.",
+            "score": 2.025,
+            "matchedTerms": [
+              "pago"
+            ]
+          },
+          {
+            "source": "resume",
+            "label": "CV 1",
+            "text": "Experiencia creando pipelines de conciliacion de pagos con Python, PostgreSQL y jobs asincronicos. Trabajo frecuente con SQL para joins, agregaciones, auditoria de transacciones y analisis de inconsistencias. Experiencia explicando tradeoffs entre consistencia, latencia y mantenibilidad en servicios backend.",
+            "score": 1.725,
+            "matchedTerms": [
+              "backend"
+            ]
+          }
+        ],
+        "evidenceQueryTerms": [
+          "interviewer",
+          "resuelve",
+          "este",
+          "ejercicio",
+          "explicame",
+          "la",
+          "complejidad",
+          "mercado",
+          "pago",
+          "backend",
+          "engineer",
+          "technical",
+          "interview",
+          "preparation",
+          "leetcode",
+          "two",
+          "sum",
+          "given",
+          "array",
+          "integers",
+          "nums",
+          "integer",
+          "target",
+          "return",
+          "indices",
+          "numbers",
+          "such",
+          "they",
+          "add",
+          "up",
+          "may",
+          "assume",
+          "each",
+          "input",
+          "would",
+          "exactly",
+          "one",
+          "solution",
+          "same",
+          "elemen"
+        ]
+      },
+      "metrics": {
+        "ok": true,
+        "latencyMs": 2152,
+        "chars": 645,
+        "checks": {
+          "providerOk": true,
+          "nonEmpty": true,
+          "conciseEnough": true,
+          "expectedTermsPresent": true,
+          "readableFormat": true,
+          "noConfusingRoleLabels": true,
+          "noForcedCompanyContext": true,
+          "noHugeParagraphs": true,
+          "limitedCodeBlocks": true
+        },
+        "missingExpected": [
+          "indices"
+        ]
+      },
+      "response": {
+        "ok": true,
+        "text": "**Approach:**\nUtilizaré un diccionario (`hash map`) para almacenar los valores visitados y sus índices, permitiendo una búsqueda única en una sola pasada.\n\n**Code:**\n```python\ndef twoSum(nums, target):\n    seen = {}\n    for i, num in enumerate(nums):\n        diff = target - num\n        if diff in seen:\n            return [seen[diff], i]\n        seen[num] = i\n```\n\n**Complejidad:**\nLa complejidad temporal es **O(n)** porque recorremos el arreglo una vez; la espacial es **O(n)** para el diccionario en el peor caso.\n\n**Edge cases:**\nEl código maneja correctamente números negativos y garantiza una única solución según las restricciones dadas.",
+        "provider": "natively",
+        "modelName": "hhao/qwen2.5-coder-tools:7b"
+      }
+    },
+    {
+      "id": "coding_followup_change",
+      "label": "Repregunta de coding",
+      "mode": "live_coding",
+      "promptDebug": {
+        "modeId": "live_coding",
+        "includedSections": [
+          "mode",
+          "output_format",
+          "user_profile",
+          "company_name",
+          "role_title",
+          "resume",
+          "star_stories",
+          "job_description",
+          "target_use_case",
+          "preferred_language",
+          "coding_language_preference",
+          "response_constraints",
+          "selected_evidence",
+          "transcript",
+          "screen_context",
+          "user_input"
+        ],
+        "omittedSections": [
+          {
+            "section": "interview_type",
+            "reason": "empty"
+          },
+          {
+            "section": "user_notes",
+            "reason": "empty"
+          }
+        ],
+        "approximateChars": 7220,
+        "selectedEvidence": [
+          {
+            "source": "screen_context",
+            "label": "Screen context 1",
+            "text": "LeetCode - Two Sum Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target. You may assume that each input would have exactly one solution, and you may not use the same element twice. Example 1: Input: nums = [2,7,11,15], target = 9 Output: [0,1] Constraints: 2 <= nums.length <= 10^4 -10^9 <= nums[i] <= 10^9",
+            "score": 22.95,
+            "matchedTerms": [
+              "two",
+              "sum",
+              "leetcode",
+              "given",
+              "array",
+              "integers",
+              "nums",
+              "integer",
+              "target",
+              "return",
+              "indices",
+              "numbers"
+            ]
+          },
+          {
+            "source": "star_stories",
+            "label": "STAR story 1",
+            "text": "En un proyecto de conciliacion, habia diferencias entre proveedores de pago. Cree consultas SQL auditables, agregaciones por estado y reportes reproducibles. Resultado: redujimos el tiempo de investigacion manual.",
+            "score": 6.075,
+            "matchedTerms": [
+              "un",
+              "el",
+              "en",
+              "pago"
+            ]
+          },
+          {
+            "source": "star_stories",
+            "label": "STAR story 2",
+            "text": "En una migracion de API, priorice cambios incrementales, tests de contrato y rollback simple para reducir riesgo operacional.",
+            "score": 4.725,
+            "matchedTerms": [
+              "para",
+              "en",
+              "una"
+            ]
+          },
+          {
+            "source": "resume",
+            "label": "CV 1",
+            "text": "Experiencia creando pipelines de conciliacion de pagos con Python, PostgreSQL y jobs asincronicos. Trabajo frecuente con SQL para joins, agregaciones, auditoria de transacciones y analisis de inconsistencias. Experiencia explicando tradeoffs entre consistencia, latencia y mantenibilidad en servicios backend.",
+            "score": 4.025,
+            "matchedTerms": [
+              "para",
+              "en",
+              "backend"
+            ]
+          }
+        ],
+        "evidenceQueryTerms": [
+          "interviewer",
+          "resuelve",
+          "two",
+          "sum",
+          "candidate",
+          "usaria",
+          "un",
+          "diccionario",
+          "para",
+          "guardar",
+          "numero",
+          "indice",
+          "buscar",
+          "el",
+          "complemento",
+          "en",
+          "una",
+          "sola",
+          "pasada",
+          "que",
+          "cambiarias",
+          "si",
+          "puede",
+          "no",
+          "existir",
+          "solucion",
+          "hay",
+          "numeros",
+          "duplicados",
+          "mercado",
+          "pago",
+          "backend",
+          "engineer",
+          "technical",
+          "interview",
+          "preparation",
+          "leetcode",
+          "given",
+          "array",
+          "integers"
+        ]
+      },
+      "metrics": {
+        "ok": true,
+        "latencyMs": 2147,
+        "chars": 782,
+        "checks": {
+          "providerOk": true,
+          "nonEmpty": true,
+          "conciseEnough": true,
+          "expectedTermsPresent": true,
+          "readableFormat": true,
+          "noConfusingRoleLabels": true,
+          "noForcedCompanyContext": true,
+          "noHugeParagraphs": true,
+          "limitedCodeBlocks": true
+        },
+        "missingExpected": [
+          "sin solucion",
+          "empty",
+          "excepcion"
+        ]
+      },
+      "response": {
+        "ok": true,
+        "text": "**Enfoque:**\nManejaría la falta de solución retornando `None` o una lista vacía, y los duplicados ya están cubiertos por el hash map al iterar, pues cada elemento se procesa individualmente.\n\n**Código:**\n```python\ndef two_sum(nums, target):\n    seen = {}\n    for i, num in enumerate(nums):\n        complement = target - num\n        if complement in seen:\n            return [seen[complement], i]\n        seen[num] = i\n    return None\n```\n\n**Complejidad:**\nTiempo **O(n)** y espacio **O(n)**, lo cual es óptimo considerando mi experiencia optimizando consultas de auditoría en PostgreSQL para reducir latencia.\n\n**Casos borde:**\nSi `nums` tiene elementos duplicados, el diccionario almacenará el índice más reciente; como buscamos cualquier par válido, la lógica se mantiene robusta.",
+        "provider": "natively",
+        "modelName": "hhao/qwen2.5-coder-tools:7b"
+      }
+    }
+  ]
+}

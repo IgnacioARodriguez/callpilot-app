@@ -10,6 +10,7 @@ import {
   buildOllamaChatRequest,
   buildRealtimeTranscriptionSessionUpdate,
   buildOpenAIImageAnalysisRequest,
+  buildOpenAICompatibleChatRequest,
   buildOpenAIResponsesRequest,
   buildPrompt,
   classifyScreenText,
@@ -21,8 +22,10 @@ import {
   cleanOcrText,
   extractOllamaModels,
   extractOllamaResponseText,
+  extractOpenAICompatibleChatText,
   extractOpenAIResponseText,
   extractOpenAITranscriptionText,
+  formatConversationWindow,
   isSupportedAudioMimeType,
   liveTranscriptionPlan,
   mergeAppSettings,
@@ -167,14 +170,57 @@ test("transcript compaction includes conversation participants", () => {
   assert.match(compacted, /assistant: Use a STAR story/);
 });
 
+test("conversation window preserves interviewer and candidate roles", () => {
+  const buffer = new TranscriptBuffer();
+  buffer.append("What is SQL?", "stt", 1000, "interviewer");
+  buffer.append("It is a programming language for apps.", "stt", 2000, "candidate");
+  buffer.append("Why would you describe it that way?", "stt", 3000, "interviewer");
+
+  const conversation = formatConversationWindow(buffer.snapshot(), "Can you clarify?");
+
+  assert.match(conversation, /^interviewer: What is SQL\?/);
+  assert.match(conversation, /candidate: It is a programming language for apps\./);
+  assert.match(conversation, /interviewer: Why would you describe it that way\?/);
+  assert.match(conversation, /interviewer_partial: Can you clarify\?/);
+});
+
+test("prompt instructs model to correct candidate answers using role-prefixed conversation", () => {
+  const prompt = buildPrompt(
+    createGlobalContext(),
+    "interviewer: What is SQL?\ncandidate: It is a programming language for apps.\ninterviewer: Why?",
+  );
+
+  assert.match(prompt.system, /candidate as the user/i);
+  assert.match(prompt.system, /technically wrong/i);
+  assert.match(prompt.user, /candidate: It is a programming language/);
+});
+
+test("prompt tells model not to answer stale topics or non-questions", () => {
+  const prompt = buildPrompt(
+    createGlobalContext(),
+    "interviewer: Bueno, ya no se cuantas personas hay aqui.",
+  );
+
+  assert.match(prompt.system, /latest interviewer turn is not a question/i);
+  assert.match(prompt.system, /Do not answer stale topics/i);
+  assert.match(prompt.system, /do not invent a technical answer/i);
+  assert.match(prompt.system, /at most two compact/i);
+});
+
 test("live conversation detects interview questions in English and Spanish", () => {
   const english = detectQuestionIntent("Can you walk me through why you chose SQL instead of NoSQL?", "english");
   const spanish = detectQuestionIntent("Podrias explicar por que elegiste SQL en ese proyecto?", "spanish");
+  const shortSpanish = detectQuestionIntent("¿Qué es SQL?", "spanish");
+  const shortEnglish = detectQuestionIntent("What is SQL?", "english");
+  const partialSpanish = detectQuestionIntent("Que es S", "spanish");
   const filler = detectQuestionIntent("ok thanks", "auto");
   const implicit = detectQuestionIntent("me interesaria que me cuentes tu approach aca", "spanish");
 
   assert.equal(english.shouldAnswer, true);
   assert.equal(spanish.shouldAnswer, true);
+  assert.equal(shortSpanish.shouldDispatch, true);
+  assert.equal(shortEnglish.shouldDispatch, true);
+  assert.equal(partialSpanish.shouldDispatch, true);
   assert.equal(filler.shouldAnswer, false);
   assert.equal(implicit.shouldDispatch, true);
 });
@@ -249,6 +295,52 @@ test("settings merge keeps defaults and normalizes blanks", () => {
   assert.equal(settings.liveAudioSource, "both");
 });
 
+test("settings and sessions accept Natively as an answer provider", () => {
+  const settings = mergeAppSettings({ modelProvider: "natively", modelName: "default" });
+  const session = createSessionSnapshot({
+    activeMode: "technical_qa",
+    transcript: new TranscriptBuffer().snapshot(),
+    screenText: "",
+    notes: "",
+    profile: "",
+    targetUseCase: "technical interview preparation",
+    preferredLanguage: "auto",
+    codingLanguage: "Python",
+    answerVerbosity: "short",
+    modelProvider: "natively",
+    modelName: "default",
+    question: "",
+    answer: "",
+  });
+  const parsed = parseSessionJson(serializeSession(session));
+
+  assert.equal(settings.modelProvider, "natively");
+  assert.equal(parsed?.modelProvider, "natively");
+});
+
+test("settings and sessions accept NVIDIA as an OpenAI-compatible answer provider", () => {
+  const settings = mergeAppSettings({ modelProvider: "nvidia", modelName: "nvidia-default" });
+  const session = createSessionSnapshot({
+    activeMode: "technical_qa",
+    transcript: new TranscriptBuffer().snapshot(),
+    screenText: "",
+    notes: "",
+    profile: "",
+    targetUseCase: "technical interview preparation",
+    preferredLanguage: "auto",
+    codingLanguage: "Python",
+    answerVerbosity: "short",
+    modelProvider: "nvidia",
+    modelName: "nvidia-default",
+    question: "",
+    answer: "",
+  });
+  const parsed = parseSessionJson(serializeSession(session));
+
+  assert.equal(settings.modelProvider, "nvidia");
+  assert.equal(parsed?.modelProvider, "nvidia");
+});
+
 test("Ollama request helpers build local chat payloads", () => {
   const prompt = buildPrompt(createGlobalContext(), "Why SQL?");
   const request = buildOllamaChatRequest(prompt, "llama3.1");
@@ -274,6 +366,18 @@ test("Ollama model list helper extracts installed model names", () => {
   assert.deepEqual(models.map((model) => model.name), ["llama3.1:8b", "qwen2.5-coder:7b"]);
   assert.equal(models[0]?.modifiedAt, "2026-07-03T10:00:00Z");
   assert.equal(models[0]?.size, 123);
+});
+
+test("OpenAI-compatible chat helpers support provider-agnostic LLMs", () => {
+  const prompt = buildPrompt(createGlobalContext(), "interviewer: What is SQL?");
+  const request = buildOpenAICompatibleChatRequest(prompt, "default");
+
+  assert.equal(request.model, "default");
+  assert.equal(request.stream, false);
+  assert.equal(request.messages[0]?.role, "system");
+  assert.equal(request.messages[1]?.content, prompt.user);
+  assert.equal(extractOpenAICompatibleChatText({ choices: [{ message: { content: " answer " } }] }), "answer");
+  assert.equal(extractOpenAICompatibleChatText({ text: "plain answer" }), "plain answer");
 });
 
 test("live transcription settings expose professional provider plan", () => {

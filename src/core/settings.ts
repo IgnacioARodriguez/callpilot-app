@@ -21,6 +21,7 @@ export interface AppSettings {
   liveTranscriptionProvider: LiveTranscriptionProvider;
   liveLatencyPreset: LiveLatencyPreset;
   liveAudioSource: LiveAudioSource;
+  nativelyApiKeyHint: string;
   autoAnswerCooldownMs: number;
   autoAnswerMinConfidence: number;
 }
@@ -38,12 +39,13 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   liveTranscriptionProvider: DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.provider,
   liveLatencyPreset: DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.latencyPreset,
   liveAudioSource: DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.audioSource,
+  nativelyApiKeyHint: "",
   autoAnswerCooldownMs: DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.autoAnswerCooldownMs,
   autoAnswerMinConfidence: DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.autoAnswerMinConfidence,
 };
 
 const modeIds = new Set<AssistantModeId>(["live_coding", "system_design", "behavioral", "technical_qa", "meeting_notes"]);
-const providers = new Set<ModelProvider>(["mock", "openai", "ollama"]);
+const providers = new Set<ModelProvider>(["mock", "openai", "ollama", "natively", "nvidia"]);
 const languages = new Set<PreferredLanguage>(["english", "spanish", "auto"]);
 const verbosity = new Set<AppSettings["answerVerbosity"]>(["short", "medium", "detailed"]);
 
@@ -69,6 +71,7 @@ export const mergeAppSettings = (input: Partial<AppSettings> = {}): AppSettings 
       liveTranscriptionProvider: live.provider,
       liveLatencyPreset: live.latencyPreset,
       liveAudioSource: live.audioSource,
+      nativelyApiKeyHint: input.nativelyApiKeyHint?.trim() || DEFAULT_APP_SETTINGS.nativelyApiKeyHint,
       autoAnswerCooldownMs: live.autoAnswerCooldownMs,
       autoAnswerMinConfidence: live.autoAnswerMinConfidence,
     };

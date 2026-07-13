@@ -62,10 +62,11 @@ export const applyShareSafeState = (state: StealthState = defaultStealthState): 
   normalizeStealthState({
     ...state,
     callPrivacyAllowed: true,
-    overlayVisible: false,
+    overlayVisible: true,
     contentProtectionEnabled: true,
-    mousePassthroughEnabled: true,
-    focusMode: "passthrough",
+    mousePassthroughEnabled: false,
+    focusMode: "interactive",
+    shortcutLayerActive: true,
   });
 
 export const resetPrivacyState = (): StealthState => resetStealthState();
@@ -103,10 +104,10 @@ export const assessPrivacyState = (
     findings.push("Mouse passthrough is enabled.");
   }
 
-  if (!normalized.overlayVisible && normalized.contentProtectionEnabled) {
+  if (normalized.overlayVisible && normalized.contentProtectionEnabled) {
     return {
       status: "safe",
-      summary: "Local privacy posture is share-safe, pending platform observer check.",
+      summary: "Protected sharing mode is active. CallPilot stays visible to you while using best-effort capture protection.",
       findings,
       checkedAt,
     };
@@ -114,7 +115,9 @@ export const assessPrivacyState = (
 
   return {
     status: "risk",
-    summary: "Local privacy posture has visible or unprotected elements.",
+    summary: normalized.overlayVisible
+      ? "CallPilot is visible locally, but capture protection is not enabled."
+      : "CallPilot is hidden locally; protected interview overlays should stay visible to you.",
     findings,
     checkedAt,
   };

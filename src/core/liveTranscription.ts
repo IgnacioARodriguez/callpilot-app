@@ -1,6 +1,6 @@
 import type { PreferredLanguage } from "./context.ts";
 
-export type LiveTranscriptionProvider = "browser" | "openai_realtime" | "local";
+export type LiveTranscriptionProvider = "browser" | "openai_realtime" | "natively" | "local";
 export type LiveLatencyPreset = "fast" | "balanced" | "accurate";
 export type LiveAudioSource = "microphone" | "system" | "both";
 
@@ -32,7 +32,7 @@ export const DEFAULT_LIVE_TRANSCRIPTION_SETTINGS: LiveTranscriptionSettings = {
   autoAnswerMinConfidence: 0.45,
 };
 
-const providers = new Set<LiveTranscriptionProvider>(["browser", "openai_realtime", "local"]);
+const providers = new Set<LiveTranscriptionProvider>(["browser", "openai_realtime", "natively", "local"]);
 const presets = new Set<LiveLatencyPreset>(["fast", "balanced", "accurate"]);
 const audioSources = new Set<LiveAudioSource>(["microphone", "system", "both"]);
 const languages = new Set<PreferredLanguage>(["english", "spanish", "auto"]);
@@ -77,6 +77,17 @@ export const liveTranscriptionPlan = (settings: LiveTranscriptionSettings): Live
       engineLabel: "Local Whisper",
       expectedLatency: settings.latencyPreset === "fast" ? "medium" : "higher",
       quality: settings.latencyPreset === "accurate" ? "medium-high" : "medium",
+      requiresDesktopBridge: true,
+      implemented: true,
+    };
+  }
+  if (settings.provider === "natively") {
+    return {
+      provider: settings.provider,
+      latencyPreset: settings.latencyPreset,
+      engineLabel: "Natively STT",
+      expectedLatency: settings.latencyPreset === "fast" ? "low" : settings.latencyPreset === "accurate" ? "higher" : "medium",
+      quality: "high",
       requiresDesktopBridge: true,
       implemented: true,
     };

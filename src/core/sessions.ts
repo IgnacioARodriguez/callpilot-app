@@ -105,7 +105,7 @@ export const sanitizeSessionImport = (value: unknown): SavedSession | null => {
     answerVerbosity: ["short", "medium", "detailed"].includes(String(value.answerVerbosity))
       ? value.answerVerbosity as "short" | "medium" | "detailed"
       : "medium",
-    modelProvider: value.modelProvider === "openai" || value.modelProvider === "ollama" ? value.modelProvider : "mock",
+    modelProvider: value.modelProvider === "openai" || value.modelProvider === "ollama" || value.modelProvider === "natively" || value.modelProvider === "nvidia" ? value.modelProvider : "mock",
     modelName: typeof value.modelName === "string" ? value.modelName : "",
     question: typeof value.question === "string" ? value.question : "",
     answer: typeof value.answer === "string" ? value.answer : "",

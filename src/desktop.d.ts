@@ -19,6 +19,7 @@ export interface DesktopSettings {
   liveTranscriptionProvider: LiveTranscriptionProvider;
   liveLatencyPreset: LiveLatencyPreset;
   liveAudioSource: LiveAudioSource;
+  nativelyApiKeyHint: string;
   autoAnswerCooldownMs: number;
   autoAnswerMinConfidence: number;
 }
@@ -39,6 +40,7 @@ export interface ScreenAnalysisResult {
 export interface CredentialStatus {
   ok: boolean;
   hasOpenAIKey: boolean;
+  hasNativelyKey: boolean;
   encryptionAvailable: boolean;
   error?: string;
 }
@@ -112,9 +114,11 @@ declare global {
       captureScreenshot: () => Promise<ScreenshotResult>;
       recognizeScreenText: (input: { path: string; language?: OcrLanguage | "auto" | "english" | "spanish" }) => Promise<OcrResult>;
       analyzeScreenshot: (input: { path: string; modelName: string; apiKey?: string }) => Promise<ScreenAnalysisResult>;
-      startSession: () => Promise<{ ok: boolean; error?: string }>;
+      startSession: (options?: { mode?: AssistantModeId }) => Promise<{ ok: boolean; error?: string }>;
       endSession: () => Promise<{ ok: boolean; error?: string }>;
+      requestAnswer: () => Promise<{ ok: boolean; error?: string }>;
       publishTranscriptMessage: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
+      publishLiveTranscript: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       listOllamaModels: (input?: { ollamaBaseUrl?: string }) => Promise<OllamaModelListResult>;
       generateAnswer: (input: GenerateAnswerInput) => Promise<GenerateAnswerResult>;
       transcribeAudio: (input: {
@@ -123,19 +127,37 @@ declare global {
         mimeType: string;
         modelName?: string;
         apiKey?: string;
+        provider?: "openai" | "natively";
+        nativelyApiKey?: string;
       }) => Promise<AudioTranscriptionResult>;
+      startNativelyTranscription: (input: {
+        streamId: string;
+        channel: "system" | "mic";
+        sampleRate: number;
+        language: "english" | "spanish" | "auto";
+        apiKey?: string;
+      }) => Promise<{ ok: boolean; streamId?: string; error?: string }>;
+      sendNativelyAudio: (input: { streamId: string; arrayBuffer: ArrayBuffer }) => Promise<{ ok: boolean; error?: string }>;
+      stopNativelyTranscription: (input?: { streamId?: string }) => Promise<{ ok: boolean; error?: string }>;
       getCredentialStatus: () => Promise<CredentialStatus>;
       saveOpenAIKey: (apiKey: string) => Promise<CredentialStatus>;
+      saveNativelyKey: (apiKey: string) => Promise<CredentialStatus>;
       clearOpenAIKey: () => Promise<CredentialStatus>;
+      clearNativelyKey: () => Promise<CredentialStatus>;
       exportSessionFile: (session: SavedSession) => Promise<SessionFileResult>;
       importSessionFile: () => Promise<SessionFileResult>;
       getSettings: () => Promise<DesktopSettings>;
       saveSettings: (settings: Partial<DesktopSettings>) => Promise<DesktopSettings>;
       getShortcutHealth: () => Promise<ShortcutHealth[]>;
       onShortcut: (callback: (action: DesktopShortcutAction) => void) => () => void;
+      onManualAnswerRequest: (callback: () => void) => () => void;
+      onManualAnswerStatus: (callback: (payload: { ok: boolean; status: string; error?: string }) => void) => () => void;
       onAnswerHeadline: (callback: (payload: { headline: string; keywords: string[] }) => void) => () => void;
       onAnswerDetailChunk: (callback: (chunk: string) => void) => () => void;
       onTranscriptMessage: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
+      onLiveTranscript: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
+      onNativelyTranscript: (callback: (payload: { streamId: string; text: string; isFinal: boolean; confidence: number }) => void) => () => void;
+      onNativelyStatus: (callback: (payload: { streamId: string; status: string; detail?: string }) => void) => () => void;
     };
   }
 }

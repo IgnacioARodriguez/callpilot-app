@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BriefcaseBusiness, Copy, Eye, EyeOff, FileText, Mic, MonitorUp, MousePointer2, Pause, Play, Radar, RefreshCw, RotateCcw, ScanText, Send, Shield, ShieldCheck, Sparkles, Square, Trash2 } from "lucide-react";
+import { BriefcaseBusiness, Eye, EyeOff, FileText, Mic, MonitorUp, MousePointer2, Radar, RefreshCw, RotateCcw, ScanText, Shield, ShieldCheck, Sparkles, Square, Trash2 } from "lucide-react";
 import {
   CURRENT_SESSION_KEY,
   DEFAULT_OLLAMA_BASE_URL,
@@ -16,6 +16,7 @@ import {
   createLatencyMetricRun,
   createSessionSnapshot,
   defaultStealthState,
+  formatConversationWindow,
   assessPrivacyState,
   detectQuestionIntent,
   liveTranscriptionPlan,
@@ -30,6 +31,7 @@ import {
   reduceStealthState,
   shouldDropCandidateEcho,
   shouldAutoAnswer,
+  speechSimilarity,
   serializeSession,
   upsertSession,
   type AssistantModeId,
@@ -50,7 +52,36 @@ import {
   type TranscriptSnapshot,
 } from "./core";
 import OverlayApp from "./overlay/OverlayApp";
+import CodingOverlayApp from "./overlay/CodingOverlayApp";
 import "./styles.css";
+
+type InterviewSetupId = "interview" | "live_coding";
+
+const INTERVIEW_SETUPS: Array<{
+  id: InterviewSetupId;
+  title: string;
+  description: string;
+  mode: AssistantModeId;
+  answerVerbosity: "short" | "medium" | "detailed";
+  latencyPreset: LiveLatencyPreset;
+}> = [
+  {
+    id: "interview",
+    title: "Technical Interview",
+    description: "Background-aware technical answers for your experience, tradeoffs, and general knowledge questions.",
+    mode: "technical_qa",
+    answerVerbosity: "short",
+    latencyPreset: "fast",
+  },
+  {
+    id: "live_coding",
+    title: "Live Coding",
+    description: "Problem solving, complexity, edge cases, and what to say while coding.",
+    mode: "live_coding",
+    answerVerbosity: "medium",
+    latencyPreset: "balanced",
+  },
+];
 
 const loadSavedSession = (): Partial<SavedSession> => {
   try {
@@ -93,13 +124,16 @@ function App() {
   const savedSession = React.useMemo(loadSavedSession, []);
   type AutoCheck = { label: string; status: "ok" | "warn" | "fail"; detail: string };
   const [activeTab, setActiveTab] = React.useState<"meeting" | "context" | "config">("meeting");
+  const [selectedSetup, setSelectedSetup] = React.useState<InterviewSetupId>("interview");
   const [activeMode, setActiveMode] = React.useState<AssistantModeId>(savedSession.activeMode ?? "live_coding");
+  const answerProviderTouchedRef = React.useRef(false);
   const [transcript, setTranscript] = React.useState<TranscriptSnapshot>(() => savedSession.transcript ?? new TranscriptBuffer().snapshot());
   const [screenText, setScreenText] = React.useState(savedSession.screenText ?? "");
   const [screenContext, setScreenContext] = React.useState<ScreenContext>(() => classifyScreenText(savedSession.screenText ?? ""));
   const [transcriptDraft, setTranscriptDraft] = React.useState("");
   const [isDictating, setIsDictating] = React.useState(false);
   const [autoAnswerEnabled, setAutoAnswerEnabled] = React.useState(false);
+  const autoAnswerEnabledRef = React.useRef(false);
   const [liveAssistStatus, setLiveAssistStatus] = React.useState("Live assist idle");
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
   const lastAutoAnsweredAtRef = React.useRef(0);
@@ -126,7 +160,9 @@ function App() {
   const [autoAnswerCooldownMs, setAutoAnswerCooldownMs] = React.useState(12000);
   const [autoAnswerMinConfidence, setAutoAnswerMinConfidence] = React.useState(0.45);
   const [sessionApiKey, setSessionApiKey] = React.useState("");
+  const [nativelyApiKey, setNativelyApiKey] = React.useState("");
   const [hasStoredOpenAIKey, setHasStoredOpenAIKey] = React.useState(false);
+  const [hasStoredNativelyKey, setHasStoredNativelyKey] = React.useState(false);
   const [credentialMessage, setCredentialMessage] = React.useState("");
   const [isRecordingMic, setIsRecordingMic] = React.useState(false);
   const [recordingStatus, setRecordingStatus] = React.useState("");
@@ -146,6 +182,7 @@ function App() {
   const [stealth, setStealth] = React.useState<StealthState>(defaultStealthState);
   const [privacyCheck, setPrivacyCheck] = React.useState<PrivacyCheckResult | null>(null);
   const transcriptBuffer = React.useMemo(() => new TranscriptBuffer(transcript), [transcript]);
+  const transcriptRef = React.useRef(transcript);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const recordingChunksRef = React.useRef<BlobPart[]>([]);
   const recordingStreamRef = React.useRef<MediaStream | null>(null);
@@ -157,16 +194,33 @@ function App() {
   const localSegmentChunksByIdRef = React.useRef(new Map<string, BlobPart[]>());
   const localSttBusyByIdRef = React.useRef(new Set<string>());
   const recentSpeechRef = React.useRef<RecentSpeech[]>([]);
+  const lastNativelyPartialAnswerRef = React.useRef<{ text: string; timestamp: number }>({ text: "", timestamp: 0 });
+  const nativelyLiveDraftBySpeakerRef = React.useRef<Partial<Record<TranscriptSpeaker, { text: string; timestamp: number }>>>({});
+  const lastSystemAudioSignalAtRef = React.useRef(0);
   const liveChunkBusyRef = React.useRef(false);
   const liveContinueRef = React.useRef(false);
   const localSegmentChunksRef = React.useRef<BlobPart[]>([]);
   const localSegmentTimerRef = React.useRef<number | null>(null);
+  const nativelySessionsRef = React.useRef<Array<{
+    streamId: string;
+    context: AudioContext;
+    source: MediaStreamAudioSourceNode;
+    processor: ScriptProcessorNode;
+  }>>([]);
   const autoCheckRanRef = React.useRef(false);
   const localSttPipelineRef = React.useRef<Promise<unknown> | null>(null);
   const evidenceEmbedderRef = React.useRef<Promise<EvidenceEmbedder> | null>(null);
   const evidenceEmbeddingCacheRef = React.useRef(new Map<string, EvidenceEmbedding>());
   const activeLatencyRunIdRef = React.useRef<string | null>(null);
   const firstDetailChunkSeenRef = React.useRef(false);
+
+  React.useEffect(() => {
+    autoAnswerEnabledRef.current = autoAnswerEnabled;
+  }, [autoAnswerEnabled]);
+
+  React.useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
 
   const context = React.useMemo(
     () =>
@@ -205,16 +259,77 @@ function App() {
 
   const livePlan = React.useMemo(() => liveTranscriptionPlan(liveSettings), [liveSettings]);
 
-  const providerLabel = modelProvider === "ollama" ? "Local" : modelProvider === "openai" ? "OpenAI" : "Demo";
+  const providerLabel = modelProvider === "ollama" ? "Local" : modelProvider === "openai" ? "OpenAI" : modelProvider === "natively" ? "Natively" : modelProvider === "nvidia" ? "NVIDIA" : "Demo";
   const languageLabel = preferredLanguage === "spanish" ? "Spanish" : preferredLanguage === "english" ? "English" : "Auto";
   const listeningLabel = isDictating ? "Listening" : "Stopped";
   const privacyLabel = stealth.callPrivacyAllowed ? "Approved" : "Not approved";
   const hasOpenAITranscriptionKey = hasStoredOpenAIKey || Boolean(sessionApiKey.trim());
+  const hasNativelyTranscriptionKey = hasStoredNativelyKey || Boolean(nativelyApiKey.trim());
   const speakerLabel = (speaker?: TranscriptSpeaker) => {
     if (speaker === "candidate") return "Me";
     if (speaker === "assistant") return "CallPilot";
     if (speaker === "interviewer") return "Interviewer";
     return "Unknown";
+  };
+
+  const normalizeTechnicalTranscript = (text: string): string =>
+    text
+      .replace(/\bese\s*cu\s*ele\b/gi, "SQL")
+      .replace(/\besecoele\b/gi, "SQL")
+      .replace(/\bsequel\b/gi, "SQL")
+      .replace(/\ba\s*pi\b/gi, "API")
+      .replace(/\bapis\b/gi, "APIs");
+
+  const stripKnownTranscriptHistory = (text: string, speaker: TranscriptSpeaker): string => {
+    let candidate = text.trim();
+    if (!candidate) return "";
+    const previous = transcriptRef.current.messages
+      .filter((message) => message.speaker === speaker)
+      .slice(-6)
+      .sort((left, right) => left.timestamp - right.timestamp);
+    for (const message of previous) {
+      const haystack = candidate.toLowerCase();
+      const needle = message.text.trim().toLowerCase();
+      if (needle.length < 80) continue;
+      const index = haystack.lastIndexOf(needle);
+      if (index >= 0) {
+        const suffix = candidate.slice(index + needle.length).replace(/^[\s.,;:!?¿¡—-]+/, "").trim();
+        if (suffix) candidate = suffix;
+      }
+    }
+    return candidate;
+  };
+
+  const mergeNativelyLiveDraft = (speaker: TranscriptSpeaker, text: string, isFinal: boolean): string => {
+    const clean = text.trim();
+    if (!clean) return "";
+    if (isFinal) {
+      nativelyLiveDraftBySpeakerRef.current[speaker] = { text: "", timestamp: 0 };
+      return clean;
+    }
+    const now = Date.now();
+    const previous = nativelyLiveDraftBySpeakerRef.current[speaker];
+    if (!previous || now - previous.timestamp > 5000) {
+      nativelyLiveDraftBySpeakerRef.current[speaker] = { text: clean, timestamp: now };
+      return clean;
+    }
+    const prev = previous.text.trim();
+    const prevLower = prev.toLowerCase();
+    const cleanLower = clean.toLowerCase();
+    let next = clean;
+    if (cleanLower.startsWith(prevLower)) {
+      next = clean;
+    } else if (prevLower.includes(cleanLower)) {
+      next = prev;
+    } else if (clean.length > prev.length && speechSimilarity(prev, clean) >= 0.55) {
+      next = clean;
+    } else if (clean.length < prev.length * 0.55 && !/[?Â¿.!]$/.test(prev)) {
+      next = `${prev} ${clean}`;
+    } else {
+      next = clean;
+    }
+    nativelyLiveDraftBySpeakerRef.current[speaker] = { text: next, timestamp: now };
+    return next;
   };
 
   const appendTranscript = () => {
@@ -228,6 +343,10 @@ function App() {
   const appendTranscriptLine = React.useCallback((text: string, source: "manual" | "stt" = "manual", speaker: TranscriptSpeaker = "interviewer") => {
     if (!text.trim()) return;
     setTranscript((current) => {
+      const lastSameSpeaker = [...current.messages].reverse().find((message) => message.speaker === speaker);
+      if (lastSameSpeaker && source === "stt" && speechSimilarity(lastSameSpeaker.text, text) >= 0.9) {
+        return current;
+      }
       const next = new TranscriptBuffer(current);
       const message = next.append(text, source, Date.now(), speaker);
       if (message) void window.callpilotDesktop?.publishTranscriptMessage?.(message);
@@ -245,13 +364,21 @@ function App() {
     });
   }, []);
 
-  const startSession = React.useCallback(async () => {
-    if (!window.callpilotDesktop?.startSession) {
-      setDesktopStatus("Overlay requires desktop mode");
-      return;
-    }
-    const result = await window.callpilotDesktop.startSession();
-    setDesktopStatus(result.ok ? "Overlay session started" : `Overlay failed: ${result.error ?? "unknown"}`);
+  const applyInterviewSetup = React.useCallback((setupId: InterviewSetupId) => {
+    const setup = INTERVIEW_SETUPS.find((item) => item.id === setupId) ?? INTERVIEW_SETUPS[0];
+    setSelectedSetup(setup.id);
+    setActiveMode(setup.mode);
+    setAnswerVerbosity(setup.answerVerbosity);
+    setLiveLatencyPreset(setup.latencyPreset);
+    setLiveAudioSource("both");
+    setAutoAnswerEnabled(true);
+    setDesktopStatus(`${setup.title} setup ready`);
+    void window.callpilotDesktop?.saveSettings?.({
+      activeMode: setup.mode,
+      answerVerbosity: setup.answerVerbosity,
+      liveLatencyPreset: setup.latencyPreset,
+      liveAudioSource: "both",
+    });
   }, []);
 
   React.useEffect(() => {
@@ -286,6 +413,7 @@ function App() {
     window.callpilotDesktop?.getCredentialStatus()
       .then((status) => {
         setHasStoredOpenAIKey(status.hasOpenAIKey);
+        setHasStoredNativelyKey(status.hasNativelyKey);
         setCredentialMessage(status.encryptionAvailable ? "Encrypted key storage ready" : "Encrypted key storage unavailable");
       })
       .catch(() => {});
@@ -323,6 +451,27 @@ function App() {
     }
   }, [hasOpenAITranscriptionKey, liveTranscriptionProvider]);
 
+  React.useEffect(() => {
+    if (!hasNativelyTranscriptionKey && liveTranscriptionProvider === "natively") {
+      setLiveAssistStatus("Natively STT selected, but no Natively key is saved yet");
+    }
+  }, [hasNativelyTranscriptionKey, liveTranscriptionProvider]);
+
+  React.useEffect(() => {
+    if (
+      liveTranscriptionProvider === "natively"
+      && hasNativelyTranscriptionKey
+      && !answerProviderTouchedRef.current
+      && (modelProvider === "ollama" || modelProvider === "mock")
+    ) {
+      setModelProvider("natively");
+      if (!modelName || modelName === "llama3.1" || modelName.startsWith("llama3.1:") || modelName === "mock-local") {
+        setModelName("default");
+      }
+      setLiveAssistStatus("Answer engine switched to Natively for this STT test");
+    }
+  }, [hasNativelyTranscriptionKey, liveTranscriptionProvider, modelName, modelProvider]);
+
   React.useEffect(() => () => {
     liveContinueRef.current = false;
     if (localSegmentTimerRef.current !== null) window.clearTimeout(localSegmentTimerRef.current);
@@ -335,6 +484,13 @@ function App() {
     liveStreamsRef.current.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
     liveRecorderRef.current?.stop();
     liveStreamRef.current?.getTracks().forEach((track) => track.stop());
+    nativelySessionsRef.current.forEach((session) => {
+      session.processor.disconnect();
+      session.source.disconnect();
+      void session.context.close().catch(() => {});
+      void window.callpilotDesktop?.stopNativelyTranscription?.({ streamId: session.streamId });
+    });
+    nativelySessionsRef.current = [];
   }, []);
 
   React.useEffect(() => {
@@ -402,6 +558,7 @@ function App() {
     setLatencyRuns((current) => [...current, latencyRun].slice(-12));
 
     try {
+      setLiveAssistStatus(`Answering with ${providerLabel}`);
       if (modelProvider === "mock") {
         const text = formatMockAnswer(context, effectiveQuestion);
         setAnswer(text);
@@ -421,7 +578,9 @@ function App() {
         modelName,
         prompt: builtPrompt,
         apiKey: sessionApiKey,
+        nativelyApiKey,
         ollamaBaseUrl,
+        maxTokens: context.activeMode === "live_coding" ? 360 : 220,
       });
       const text = result.ok ? result.text : `Generation failed: ${result.error ?? "unknown error"}`;
       setAnswer(text);
@@ -435,7 +594,38 @@ function App() {
       }
       setIsGenerating(false);
     }
-  }, [appendAssistantTranscriptLine, context, modelName, modelProvider, ollamaBaseUrl, question, sessionApiKey]);
+  }, [appendAssistantTranscriptLine, context, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, providerLabel, question, sessionApiKey]);
+
+  const warmAnswerModel = React.useCallback(async () => {
+    if (modelProvider === "mock" || !window.callpilotDesktop?.generateAnswer) return;
+    const warmPrompt = buildPrompt(context, "warmup: responde solo OK");
+    try {
+      setLiveAssistStatus(`Warming ${providerLabel}`);
+      const result = await window.callpilotDesktop.generateAnswer({
+        provider: modelProvider,
+        modelName,
+        prompt: warmPrompt,
+        apiKey: sessionApiKey,
+        nativelyApiKey,
+        ollamaBaseUrl,
+        maxTokens: 64,
+      });
+      setLiveAssistStatus(result.ok ? "Listening" : `Warmup skipped: ${result.error ?? "unknown"}`);
+    } catch {
+      setLiveAssistStatus("Listening");
+    }
+  }, [context, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, providerLabel, sessionApiKey]);
+
+  const getLatestInterviewPrompt = React.useCallback(() => {
+    const liveInterviewerText = nativelyLiveDraftBySpeakerRef.current.interviewer?.text.trim();
+    const conversationWindow = formatConversationWindow(transcriptRef.current, liveInterviewerText, 10);
+    if (conversationWindow) return conversationWindow;
+    if (liveInterviewerText) return `interviewer_partial: ${liveInterviewerText}`;
+    const lastInterviewerTurn = [...transcriptRef.current.messages]
+      .reverse()
+      .find((message) => message.speaker === "interviewer");
+    return lastInterviewerTurn?.text.trim() ? `interviewer: ${lastInterviewerTurn.text.trim()}` : question.trim();
+  }, [question]);
 
   const clearContext = React.useCallback(() => {
     const next = new TranscriptBuffer(transcript);
@@ -455,7 +645,7 @@ function App() {
   }, [transcript]);
 
   const handleFinalTranscript = React.useCallback((text: string, source: "manual" | "stt" = "stt", speaker: TranscriptSpeaker = "interviewer") => {
-    const normalized = text.trim();
+    const normalized = normalizeTechnicalTranscript(text).trim();
     if (!normalized) return;
     const now = Date.now();
     recentSpeechRef.current = pruneRecentSpeech(recentSpeechRef.current, now);
@@ -476,7 +666,7 @@ function App() {
       return;
     }
     const detection = detectQuestionIntent(normalized, preferredLanguage);
-    if (!autoAnswerEnabled) {
+    if (!autoAnswerEnabledRef.current) {
       setLiveAssistStatus(detection.shouldDispatch ? `Turn ready (${detection.reason})` : "Listening");
       return;
     }
@@ -488,6 +678,47 @@ function App() {
     }
     setLiveAssistStatus(detection.shouldDispatch ? "Turn ready, cooldown active" : "Listening");
   }, [appendTranscriptLine, ask, autoAnswerEnabled, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence, preferredLanguage]);
+
+  React.useEffect(() => {
+    const unsubscribeTranscript = window.callpilotDesktop?.onNativelyTranscript?.((payload) => {
+      const speaker: TranscriptSpeaker = payload.streamId.startsWith("mic-") ? "candidate" : "interviewer";
+      const normalized = stripKnownTranscriptHistory(normalizeTechnicalTranscript(payload.text), speaker);
+      if (!normalized) return;
+      if (!payload.isFinal) {
+        const liveText = mergeNativelyLiveDraft(speaker, normalized, false);
+        setDesktopStatus(`Natively partial: ${liveText.slice(0, 80)}`);
+        void window.callpilotDesktop?.publishLiveTranscript?.({
+          id: `live-${payload.streamId}`,
+          speaker,
+          text: liveText,
+          timestamp: Date.now(),
+        });
+        if (speaker === "interviewer" && autoAnswerEnabledRef.current) {
+          const now = Date.now();
+          const detection = detectQuestionIntent(liveText, preferredLanguage);
+          const previous = lastNativelyPartialAnswerRef.current;
+          const isNewEnough = speechSimilarity(previous.text, detection.normalizedText) < 0.82 || now - previous.timestamp > 8000;
+          if (isNewEnough && shouldAutoAnswer(detection, now, lastAutoAnsweredAtRef.current, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence)) {
+            lastAutoAnsweredAtRef.current = now;
+            lastNativelyPartialAnswerRef.current = { text: detection.normalizedText, timestamp: now };
+            setLiveAssistStatus(`Auto answering partial (${detection.reason})`);
+            void ask(detection.normalizedText);
+          }
+        }
+        return;
+      }
+      const finalText = mergeNativelyLiveDraft(speaker, normalized, true);
+      handleFinalTranscript(finalText, "stt", speaker);
+      setDesktopStatus("Natively STT transcribed audio");
+    });
+    const unsubscribeStatus = window.callpilotDesktop?.onNativelyStatus?.((payload) => {
+      if (payload.detail) setDesktopStatus(payload.detail);
+    });
+    return () => {
+      unsubscribeTranscript?.();
+      unsubscribeStatus?.();
+    };
+  }, [ask, handleFinalTranscript, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence, preferredLanguage]);
 
   const stopLiveRecording = () => {
     liveContinueRef.current = false;
@@ -513,9 +744,24 @@ function App() {
     liveStreamRef.current = null;
     liveChunkBusyRef.current = false;
     localSegmentChunksRef.current = [];
+    nativelyLiveDraftBySpeakerRef.current = {};
+    nativelySessionsRef.current.forEach((session) => {
+      session.processor.disconnect();
+      session.source.disconnect();
+      void session.context.close().catch(() => {});
+      void window.callpilotDesktop?.stopNativelyTranscription?.({ streamId: session.streamId });
+    });
+    nativelySessionsRef.current = [];
     setIsDictating(false);
     setLiveAssistStatus("Live assist idle");
   };
+
+  React.useEffect(() => {
+    if (!isDictating) return;
+    stopLiveRecording();
+    setLiveAssistStatus("Listening stopped after audio setup changed");
+    setDesktopStatus("Audio setup changed; start the overlay again to use the new source");
+  }, [liveAudioSource, liveTranscriptionProvider]);
 
   const liveChunkMs = () => {
     if (liveLatencyPreset === "fast") return 4500;
@@ -537,20 +783,24 @@ function App() {
   const requestSystemAudioStream = async () => {
       if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("system_audio_capture_unavailable");
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
+        audio: true,
+        video: {
+          width: 1,
+          height: 1,
+          frameRate: 1,
         },
       });
       const audioTracks = displayStream.getAudioTracks();
-      displayStream.getVideoTracks().forEach((track) => track.stop());
       if (audioTracks.length === 0) {
         displayStream.getTracks().forEach((track) => track.stop());
         throw new Error("system_audio_not_shared");
       }
-      return new MediaStream(audioTracks);
+      audioTracks.forEach((track) => {
+        track.onmute = () => setDesktopStatus("Computer audio track is muted by the capture source");
+        track.onended = () => setDesktopStatus("Computer audio capture ended");
+      });
+      setDesktopStatus(`Computer audio capture ready (${audioTracks.length} audio track${audioTracks.length === 1 ? "" : "s"})`);
+      return displayStream;
   };
 
   const requestLiveAudioStreams = async (): Promise<Array<{ stream: MediaStream; speaker: TranscriptSpeaker; label: string }>> => {
@@ -598,6 +848,31 @@ function App() {
       rms: Math.sqrt(sum / Math.max(1, audio.length)),
       peak,
     };
+  };
+
+  const floatToLinear16 = (audio: Float32Array): ArrayBuffer => {
+    const buffer = new ArrayBuffer(audio.length * 2);
+    const view = new DataView(buffer);
+    for (let index = 0; index < audio.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, audio[index] ?? 0));
+      view.setInt16(index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return buffer;
+  };
+
+  const resampleMono = (input: Float32Array, inputSampleRate: number, outputSampleRate = 16000): Float32Array => {
+    if (inputSampleRate === outputSampleRate) return input;
+    const ratio = inputSampleRate / outputSampleRate;
+    const outputLength = Math.max(1, Math.floor(input.length / ratio));
+    const output = new Float32Array(outputLength);
+    for (let index = 0; index < outputLength; index += 1) {
+      const sourceIndex = index * ratio;
+      const left = Math.floor(sourceIndex);
+      const right = Math.min(input.length - 1, left + 1);
+      const weight = sourceIndex - left;
+      output[index] = (input[left] ?? 0) * (1 - weight) + (input[right] ?? 0) * weight;
+    }
+    return output;
   };
 
   const shouldKeepTranscriptText = (text: string) => {
@@ -820,6 +1095,8 @@ function App() {
         mimeType: blob.type || "audio/webm",
         modelName: transcriptionModelName,
         apiKey: sessionApiKey,
+        provider: liveTranscriptionProvider === "natively" ? "natively" : "openai",
+        nativelyApiKey,
       });
       if (result?.ok && result.text) {
         handleFinalTranscript(result.text, "stt", speaker);
@@ -884,8 +1161,74 @@ function App() {
     }
   };
 
-  const toggleDictation = async () => {
-    if (isDictating) {
+  const startNativelyListening = async () => {
+    if (!window.callpilotDesktop?.startNativelyTranscription || !window.callpilotDesktop?.sendNativelyAudio) {
+      setDesktopStatus("Desktop transcription bridge is unavailable");
+      setLiveAssistStatus("Natively STT requires desktop mode");
+      return false;
+    }
+    if (!hasNativelyTranscriptionKey) {
+      setDesktopStatus("Natively STT needs a Natively API key saved first");
+      setLiveAssistStatus("No Natively key for live transcription");
+      return false;
+    }
+    const AudioContextCtor = window.AudioContext;
+    if (!AudioContextCtor) {
+      setDesktopStatus("AudioContext is unavailable");
+      return false;
+    }
+    try {
+      const channels = await requestLiveAudioStreams();
+      liveStreamsRef.current = channels.map((channel) => channel.stream);
+      const started: string[] = [];
+      for (const [index, channel] of channels.entries()) {
+        const context = new AudioContextCtor();
+        const source = context.createMediaStreamSource(channel.stream);
+        const processor = context.createScriptProcessor(4096, 1, 1);
+        const streamId = `${channel.speaker === "candidate" ? "mic" : "system"}-${Date.now()}-${index}`;
+        const nativelyChannel = channel.speaker === "candidate" ? "mic" : "system";
+        const startResult = await window.callpilotDesktop.startNativelyTranscription({
+          streamId,
+          channel: nativelyChannel,
+          sampleRate: 16000,
+          language: preferredLanguage,
+          apiKey: nativelyApiKey,
+        });
+        if (!startResult.ok) {
+          throw new Error(startResult.error ?? "natively_start_failed");
+        }
+        processor.onaudioprocess = (event) => {
+          event.outputBuffer.getChannelData(0).fill(0);
+          const input = event.inputBuffer.getChannelData(0);
+          const resampled = resampleMono(input, context.sampleRate, 16000);
+          const energy = audioEnergy(resampled);
+          if (channel.speaker === "interviewer" && energy.peak > 0.018 && Date.now() - lastSystemAudioSignalAtRef.current > 3000) {
+            lastSystemAudioSignalAtRef.current = Date.now();
+            setDesktopStatus("Computer audio signal detected");
+          }
+          if (energy.rms < 0.0018 && energy.peak < 0.018) return;
+          const pcm = floatToLinear16(resampled);
+          void window.callpilotDesktop?.sendNativelyAudio?.({ streamId, arrayBuffer: pcm });
+        };
+        source.connect(processor);
+        processor.connect(context.destination);
+        nativelySessionsRef.current.push({ streamId, context, source, processor });
+        started.push(channel.label);
+      }
+      setIsDictating(true);
+      setDesktopStatus("Natively PCM streaming started");
+      setLiveAssistStatus(autoAnswerEnabled ? `Listening with Natively STT (${started.join(" + ")}): auto answer on` : `Listening with Natively STT (${started.join(" + ")}): auto answer off`);
+      return true;
+    } catch (error) {
+      stopLiveRecording();
+      setDesktopStatus(error instanceof Error ? `Natively STT failed: ${error.message}` : "Natively STT failed");
+      setIsDictating(false);
+      return false;
+    }
+  };
+
+  const toggleDictation = async (forceStart = false) => {
+    if (isDictating && !forceStart) {
       stopLiveRecording();
       return;
     }
@@ -898,6 +1241,10 @@ function App() {
 
     if (liveTranscriptionProvider === "openai_realtime") {
       await startOpenAIChunkListening();
+      return;
+    }
+    if (liveTranscriptionProvider === "natively") {
+      await startNativelyListening();
       return;
     }
 
@@ -979,6 +1326,21 @@ function App() {
     }
   };
 
+  const startSession = React.useCallback(async () => {
+    if (!window.callpilotDesktop?.startSession) {
+      setDesktopStatus("Overlay requires desktop mode");
+      return;
+    }
+    applyInterviewSetup(selectedSetup);
+    autoAnswerEnabledRef.current = true;
+    setAutoAnswerEnabled(true);
+    if (isDictating) stopLiveRecording();
+    await toggleDictation(true);
+    const result = await window.callpilotDesktop.startSession({ mode: selectedSetup === "live_coding" ? "live_coding" : "technical_qa" });
+    setDesktopStatus(result.ok ? "Overlay session started with listening and auto-answer on" : `Overlay failed: ${result.error ?? "unknown"}`);
+    if (result.ok) void warmAnswerModel();
+  }, [applyInterviewSetup, isDictating, selectedSetup, toggleDictation, warmAnswerModel]);
+
   const stopMicRecording = () => {
     mediaRecorderRef.current?.stop();
   };
@@ -993,8 +1355,8 @@ function App() {
       setRecordingStatus("Mic transcription requires desktop mode");
       return;
     }
-    if (modelProvider !== "openai") {
-      setRecordingStatus("Select OpenAI provider before recording mic audio");
+    if (liveTranscriptionProvider !== "openai_realtime" && liveTranscriptionProvider !== "natively") {
+      setRecordingStatus("Select OpenAI live chunks or Natively STT before recording mic audio");
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -1033,6 +1395,8 @@ function App() {
           mimeType: blob.type || "audio/webm",
           modelName: transcriptionModelName,
           apiKey: sessionApiKey,
+          provider: liveTranscriptionProvider === "natively" ? "natively" : "openai",
+          nativelyApiKey,
         });
         if (result?.ok && result.text) {
           appendTranscriptLine(result.text, "stt");
@@ -1166,14 +1530,23 @@ function App() {
 
     const credential = await window.callpilotDesktop?.getCredentialStatus?.().catch(() => undefined);
     const hasKey = Boolean(credential?.hasOpenAIKey || sessionApiKey.trim());
+    const hasNativelyKey = Boolean(credential?.hasNativelyKey || nativelyApiKey.trim());
     if (credential) {
       setHasStoredOpenAIKey(credential.hasOpenAIKey);
+      setHasStoredNativelyKey(credential.hasNativelyKey);
       setCredentialMessage(credential.encryptionAvailable ? "Encrypted key storage ready" : "Encrypted key storage unavailable");
     }
     checks.push({
       label: "OpenAI transcription",
       status: hasKey ? "ok" : "warn",
       detail: hasKey ? "OpenAI live chunks can be used." : "No OpenAI key found. OpenAI live chunks will stay disabled.",
+    });
+    checks.push({
+      label: "Natively STT",
+      status: hasNativelyKey ? "warn" : "warn",
+      detail: hasNativelyKey
+        ? "Natively key is saved. PCM/WebSocket streaming is available for controlled STT testing."
+        : "No Natively key found. Add it here only for STT testing.",
     });
 
     if (window.callpilotDesktop?.listOllamaModels) {
@@ -1211,7 +1584,9 @@ function App() {
       setLiveTranscriptionProvider("browser");
     }
 
-    const recommendation = hasKey
+    const recommendation = hasNativelyKey
+      ? "Recommended: use Natively next as a controlled STT test; keep Local Whisper/OpenAI available as fallback while we compare quality."
+      : hasKey
       ? "Recommended: OpenAI live chunks for transcription, Ollama or OpenAI for answers."
       : liveAudioSource === "system" || liveAudioSource === "both"
         ? "Recommended: Local Whisper with computer audio + microphone for live interview conversations."
@@ -1222,7 +1597,7 @@ function App() {
 
     setAutoChecks(checks);
     setAutoCheckStatus("Checks complete");
-  }, [browserSpeechRuntimeError, liveAudioSource, liveTranscriptionProvider, modelName, modelProvider, ollamaBaseUrl, sessionApiKey]);
+  }, [browserSpeechRuntimeError, liveAudioSource, liveTranscriptionProvider, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, sessionApiKey]);
 
   React.useEffect(() => {
     if (modelProvider === "ollama") {
@@ -1237,6 +1612,7 @@ function App() {
   }, [runAutoChecks]);
 
   const updateModelProvider = (provider: ModelProvider) => {
+    answerProviderTouchedRef.current = true;
     setModelProvider(provider);
     if (provider === "ollama") {
       if (liveTranscriptionProvider === "openai_realtime" && !hasOpenAITranscriptionKey) {
@@ -1246,6 +1622,12 @@ function App() {
     }
     if (provider === "openai" && modelName === "llama3.1") {
       setModelName("");
+    }
+    if (provider === "natively" && (modelName === "llama3.1" || modelName.startsWith("llama3.1:"))) {
+      setModelName("default");
+    }
+    if (provider === "nvidia" && (modelName === "llama3.1" || modelName.startsWith("llama3.1:") || modelName === "default")) {
+      setModelName("nvidia-default");
     }
   };
 
@@ -1409,14 +1791,36 @@ function App() {
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onShortcut((action) => {
-      if (action.type === "ask") ask();
+      if (action.type === "ask") {
+        const latestPrompt = getLatestInterviewPrompt();
+        void ask(latestPrompt || undefined);
+      }
       if (action.type === "clear_context") clearContext();
       if (action.type === "capture_screenshot") captureScreenshot();
       if (action.type === "set_mode") setActiveMode(action.mode);
       if (action.type === "stealth") setStealth(action.state);
     });
     return () => dispose?.();
-  }, [ask, captureScreenshot, clearContext]);
+  }, [ask, captureScreenshot, clearContext, getLatestInterviewPrompt]);
+
+  React.useEffect(() => {
+    const dispose = window.callpilotDesktop?.onManualAnswerRequest?.(() => {
+      const latestPrompt = getLatestInterviewPrompt();
+      if (!latestPrompt) {
+        setLiveAssistStatus("No interviewer question detected yet");
+        void window.callpilotDesktop?.publishLiveTranscript?.({
+          id: `answer-status-${Date.now()}`,
+          speaker: "assistant",
+          text: "No interviewer question detected yet",
+          timestamp: Date.now(),
+        });
+        return;
+      }
+      setLiveAssistStatus("Manual answer requested");
+      void ask(latestPrompt);
+    });
+    return () => dispose?.();
+  }, [ask, getLatestInterviewPrompt]);
 
   React.useEffect(() => {
     const disposeHeadline = window.callpilotDesktop?.onAnswerHeadline?.((payload) => {
@@ -1501,6 +1905,20 @@ function App() {
     setDesktopStatus("Privacy reset");
   };
 
+  const togglePrivacyPreset = async () => {
+    if (stealth.callPrivacyAllowed && stealth.contentProtectionEnabled) {
+      await resetPrivacy();
+      setDesktopStatus("Standard mode active");
+      return;
+    }
+    const next = window.callpilotDesktop
+      ? await window.callpilotDesktop.applyShareSafe()
+      : reduceStealthState(stealth, { type: "apply_share_safe" });
+    setStealth(next);
+    setPrivacyCheck(null);
+    setDesktopStatus("Protected sharing mode active");
+  };
+
   const runPrivacyCheck = async () => {
     const result = window.callpilotDesktop?.runPrivacyCheck
       ? await window.callpilotDesktop.runPrivacyCheck()
@@ -1516,6 +1934,7 @@ function App() {
     }
     const status = await window.callpilotDesktop.saveOpenAIKey(sessionApiKey);
     setHasStoredOpenAIKey(status.hasOpenAIKey);
+    setHasStoredNativelyKey(status.hasNativelyKey);
     setCredentialMessage(status.ok ? "OpenAI key saved encrypted on this device" : `Could not save key: ${status.error ?? "unknown"}`);
     if (status.ok) setSessionApiKey("");
   };
@@ -1524,7 +1943,37 @@ function App() {
     if (!window.callpilotDesktop?.clearOpenAIKey) return;
     const status = await window.callpilotDesktop.clearOpenAIKey();
     setHasStoredOpenAIKey(status.hasOpenAIKey);
+    setHasStoredNativelyKey(status.hasNativelyKey);
     setCredentialMessage(status.ok ? "Stored OpenAI key cleared" : `Could not clear key: ${status.error ?? "unknown"}`);
+  };
+
+  const saveNativelySessionKey = async () => {
+    if (!window.callpilotDesktop?.saveNativelyKey) {
+      setCredentialMessage("Natively key storage requires desktop mode");
+      return;
+    }
+    const status = await window.callpilotDesktop.saveNativelyKey(nativelyApiKey);
+    setHasStoredOpenAIKey(status.hasOpenAIKey);
+    setHasStoredNativelyKey(status.hasNativelyKey);
+    setCredentialMessage(status.ok ? "Natively key saved encrypted on this device" : `Could not save Natively key: ${status.error ?? "unknown"}`);
+    if (status.ok) {
+      setNativelyApiKey("");
+      if (liveTranscriptionProvider === "natively" && (modelProvider === "ollama" || modelProvider === "mock")) {
+        setModelProvider("natively");
+        if (!modelName || modelName === "llama3.1" || modelName.startsWith("llama3.1:") || modelName === "mock-local") {
+          setModelName("default");
+        }
+        setLiveAssistStatus("Answer engine switched to Natively");
+      }
+    }
+  };
+
+  const clearStoredNativelyKey = async () => {
+    if (!window.callpilotDesktop?.clearNativelyKey) return;
+    const status = await window.callpilotDesktop.clearNativelyKey();
+    setHasStoredOpenAIKey(status.hasOpenAIKey);
+    setHasStoredNativelyKey(status.hasNativelyKey);
+    setCredentialMessage(status.ok ? "Stored Natively key cleared" : `Could not clear Natively key: ${status.error ?? "unknown"}`);
   };
 
   return (
@@ -1566,118 +2015,58 @@ function App() {
       )}
 
       {activeTab === "meeting" && (
-        <section className="tab-page meeting-layout">
-          <section className="panel call-panel">
+        <section className="tab-page interview-layout">
+          <section className="panel interview-launch-panel">
             <div className="section-head">
               <div>
-                <span className="eyebrow">Live call</span>
-                <h2>Listen and answer</h2>
+                <span className="eyebrow">Interview launch</span>
+                <h2>Choose the setup for this call</h2>
               </div>
               <span className={briefStats.ready ? "ready-pill ready" : "ready-pill"}>
                 {briefStats.ready ? "Context ready" : `${briefStats.filled}/5 context fields`}
               </span>
             </div>
+            <div className="setup-card-list">
+              {INTERVIEW_SETUPS.map((setup) => (
+                <button
+                  key={setup.id}
+                  type="button"
+                  className={selectedSetup === setup.id ? "setup-card active" : "setup-card"}
+                  onClick={() => applyInterviewSetup(setup.id)}
+                >
+                  <strong>{setup.title}</strong>
+                  <span>{setup.description}</span>
+                </button>
+              ))}
+            </div>
+            <div className="privacy-preset">
+              <div>
+                <strong>{stealth.callPrivacyAllowed && stealth.contentProtectionEnabled ? "Private call mode" : "Standard mode"}</strong>
+                <span>One click enables the authorized-call preset: protected overlay, always-on-top window, shortcuts, and local capture protection where the OS supports it.</span>
+              </div>
+              <button className={stealth.callPrivacyAllowed && stealth.contentProtectionEnabled ? "status active" : "status"} onClick={togglePrivacyPreset}>
+                <ShieldCheck size={16} />
+                {stealth.callPrivacyAllowed && stealth.contentProtectionEnabled ? "Private on" : "Enable private"}
+              </button>
+            </div>
             <div className="primary-actions">
               <button className="primary" onClick={startSession}>
                 <MonitorUp size={18} />
-                Start session
+                Start interview overlay
               </button>
-              <button className={isDictating ? "primary danger" : "primary"} onClick={toggleDictation}>
-                {isDictating ? <Square size={18} /> : <Mic size={18} />}
-                {isDictating ? "Stop listening" : "Start listening"}
-              </button>
-              <button className={autoAnswerEnabled ? "status active" : "status"} onClick={() => setAutoAnswerEnabled((current) => !current)}>
-                <Sparkles size={16} />
-                Auto answer
-              </button>
-              <button onClick={captureLocalOcr}>
-                <ScanText size={16} />
-                Read screen
-              </button>
+            </div>
+            <div className="launch-includes">
+              <span><Mic size={14} /> Starts listening</span>
+              <span><Sparkles size={14} /> Enables auto-answer</span>
+              {selectedSetup === "live_coding" && <span><ScanText size={14} /> Uses screen context for coding</span>}
             </div>
             <div className="quick-status">
               <span>{liveAssistStatus}</span>
               <span>{livePlan.engineLabel}: {livePlan.implemented ? `${livePlan.expectedLatency}, ${livePlan.quality}` : "configured, not connected"}</span>
               <span>{desktopStatus}</span>
             </div>
-            <label>
-              Question
-              <small>Use this when you want to ask manually or edit what was detected from the call.</small>
-              <textarea className="question-box" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Example: Why did you choose SQL instead of NoSQL?" />
-            </label>
-            <div className="button-row">
-              <button className="primary" onClick={() => ask()} disabled={isGenerating}>
-                <Send size={16} />
-                {isGenerating ? "Thinking..." : "Answer now"}
-              </button>
-              <button onClick={() => setQuestion("")}>Clear question</button>
-            </div>
           </section>
 
-          <section className="panel answer-panel">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">Suggested answer</span>
-                <h2>Say this in your words</h2>
-              </div>
-              <button onClick={() => navigator.clipboard?.writeText(answer)} disabled={!answer}>
-                <Copy size={16} />
-                Copy
-              </button>
-            </div>
-            <div className="answer-output large">
-              {answer ? <pre>{answer}</pre> : <span>Your answer will appear here after a question is detected or sent manually.</span>}
-            </div>
-            <div className="evidence-preview">
-              <div className="mini-title">Context used</div>
-              {lastPrompt.debug.selectedEvidence.length === 0 ? (
-                <span>No matched CV or STAR evidence yet.</span>
-              ) : (
-                lastPrompt.debug.selectedEvidence.map((item, index) => (
-                  <div className="evidence-item" key={`${item.source}-${index}`}>
-                    <strong>{item.label}</strong>
-                    <p>{item.text}</p>
-                    <span>{item.source} - score {item.score}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-
-          <section className="panel transcript-panel">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">Transcript</span>
-                <h2>{transcript.messages.length} lines</h2>
-              </div>
-              <div className="button-row compact">
-                <button onClick={() => setTranscript(transcript.paused ? transcriptBuffer.resume() : transcriptBuffer.pause())}>
-                  {transcript.paused ? <Play size={16} /> : <Pause size={16} />}
-                  {transcript.paused ? "Resume" : "Pause"}
-                </button>
-                <button onClick={() => setTranscript(transcriptBuffer.clear())}>
-                  <Trash2 size={16} />
-                  Clear
-                </button>
-              </div>
-            </div>
-            {recordingStatus && <span className="helper good">{recordingStatus}</span>}
-            <div className="transcript-entry">
-              <textarea value={transcriptDraft} onChange={(event) => setTranscriptDraft(event.target.value)} placeholder="Add something the interviewer said..." />
-              <button onClick={appendTranscript}>
-                <Send size={16} />
-                Add
-              </button>
-            </div>
-            <div className="transcript-box">
-              {transcript.messages.length === 0 ? <span>No transcript yet.</span> : transcript.messages.map((message) => (
-                <p key={message.id} className={`transcript-line speaker-${message.speaker ?? "unknown"}`}>
-                  <strong>{speakerLabel(message.speaker)}</strong>
-                  <span>{message.text}</span>
-                </p>
-              ))}
-            </div>
-          </section>
         </section>
       )}
 
@@ -1721,27 +2110,6 @@ function App() {
               <small>Anything extra: interviewer names, topics to emphasize, or constraints.</small>
               <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Extra notes..." />
             </label>
-          </section>
-
-          <section className="panel screen-panel">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">Screen context</span>
-                <h2>{screenContext.kind.replaceAll("_", " ")}</h2>
-              </div>
-              <div className="button-row compact">
-                <button onClick={captureLocalOcr}>
-                  <ScanText size={16} />
-                  Read screen
-                </button>
-                <button onClick={() => updateScreenContext(screenText)}>
-                  <RefreshCw size={16} />
-                  Refresh
-                </button>
-              </div>
-            </div>
-            <p className="muted">Confidence {screenContext.confidence.toFixed(2)}. Paste text or use local OCR in the desktop app.</p>
-            <textarea className="screen-input" value={screenText} onChange={(event) => updateScreenContext(event.target.value)} placeholder="Paste visible screen text, coding prompt, docs, transcript, or system design notes..." />
           </section>
 
           <section className="panel sessions-panel">
@@ -1822,22 +2190,24 @@ function App() {
             <div className="settings-grid">
               <label>
                 Answer engine
-                <small>Demo is safe for testing. OpenAI is cloud. Ollama runs locally if installed.</small>
+                <small>Transcription and answers are separate. Use Natively for testing, or swap to any supported LLM.</small>
                 <select value={modelProvider} onChange={(event) => updateModelProvider(event.target.value as ModelProvider)}>
                   <option value="mock">Demo</option>
+                  <option value="natively">Natively</option>
+                  <option value="nvidia">NVIDIA</option>
                   <option value="openai">OpenAI</option>
                   <option value="ollama">Ollama local</option>
                 </select>
               </label>
               <label>
                 Model
-                <small>{modelProvider === "ollama" ? "Choose one of your installed local Ollama models." : "The model that writes the answer."}</small>
+                <small>{modelProvider === "ollama" ? "Choose one of your installed local Ollama models." : modelProvider === "natively" ? "Natively answer model or default if your account chooses it." : modelProvider === "nvidia" ? "NVIDIA NIM model name or default from your env setup." : "The model that writes the answer."}</small>
                 {modelProvider === "ollama" && ollamaModels.length > 0 ? (
                   <select value={modelName} onChange={(event) => setModelName(event.target.value)}>
                     {ollamaModels.map((name) => <option key={name} value={name}>{name}</option>)}
                   </select>
                 ) : (
-                  <input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={modelProvider === "ollama" ? "Example: llama3.1:8b" : undefined} />
+                  <input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={modelProvider === "ollama" ? "Example: llama3.1:8b" : modelProvider === "natively" ? "default" : modelProvider === "nvidia" ? "nvidia-default" : undefined} />
                 )}
               </label>
               {modelProvider === "ollama" && (
@@ -1902,9 +2272,25 @@ function App() {
                 <select value={liveTranscriptionProvider} onChange={(event) => setLiveTranscriptionProvider(event.target.value as LiveTranscriptionProvider)}>
                   <option value="browser">Browser live</option>
                   <option value="openai_realtime" disabled={!hasOpenAITranscriptionKey}>OpenAI live chunks</option>
+                  <option value="natively">Natively STT testing</option>
                   <option value="local">Local Whisper</option>
                 </select>
               </label>
+              <label>
+                Natively API key
+                <small>Temporary testing key for improving transcription quality. Stored encrypted when desktop key storage is available.</small>
+                <input type="password" value={nativelyApiKey} onChange={(event) => setNativelyApiKey(event.target.value)} placeholder="Optional if NATIVELY_API_KEY is set before launch" />
+              </label>
+              <div className="button-row">
+                <button onClick={saveNativelySessionKey} disabled={!nativelyApiKey.trim()}>Save Natively key</button>
+                <button onClick={clearStoredNativelyKey} disabled={!hasStoredNativelyKey}>Clear Natively key</button>
+                <span className={hasStoredNativelyKey ? "helper good" : "helper"}>{hasStoredNativelyKey ? "Stored Natively key available" : "No stored Natively key"}</span>
+              </div>
+              {liveTranscriptionProvider === "natively" && (
+                <div className="setting-note">
+                  <span>Natively uses PCM/WebSocket streaming for lower-latency transcription testing. Keep Local Whisper or OpenAI available as fallback while we compare quality.</span>
+                </div>
+              )}
               <label>
                 Listen to
                 <small>Automatic conversation listens to the meeting audio and your microphone.</small>
@@ -1982,41 +2368,50 @@ function App() {
           <section className="panel">
             <div className="section-head">
               <div>
-                <span className="eyebrow">Privacy controls</span>
-                <h2>Use only with consent</h2>
+                <span className="eyebrow">Privacy preset</span>
+                <h2>One-click call mode</h2>
               </div>
             </div>
-            <p className="muted">These controls are for approved calls and local presentation privacy. They do not guarantee invisibility on every platform.</p>
+            <p className="muted">Enable this only for an authorized call setup. It turns on the local overlay privacy posture without making you manage each switch.</p>
             <div className="privacy-actions">
-              <button className={stealth.callPrivacyAllowed ? "status active" : "status"} onClick={() => setCallPrivacyAllowed(!stealth.callPrivacyAllowed)}>
+              <button className={stealth.callPrivacyAllowed && stealth.contentProtectionEnabled ? "status active" : "status"} onClick={togglePrivacyPreset}>
                 <ShieldCheck size={16} />
-                {stealth.callPrivacyAllowed ? "Approved" : "Not approved"}
-              </button>
-              <button className={stealth.overlayVisible ? "status active" : "status"} onClick={() => setOverlayVisible(!stealth.overlayVisible)} disabled={!stealth.callPrivacyAllowed}>
-                {stealth.overlayVisible ? <Eye size={16} /> : <EyeOff size={16} />}
-                {stealth.overlayVisible ? "Visible" : "Hidden"}
-              </button>
-              <button className={stealth.contentProtectionEnabled ? "status active" : "status"} onClick={() => setContentProtection(!stealth.contentProtectionEnabled)} disabled={!stealth.callPrivacyAllowed}>
-                <Shield size={16} />
-                Protected
-              </button>
-              <button className={stealth.mousePassthroughEnabled ? "status active" : "status"} onClick={togglePassthrough} disabled={!stealth.callPrivacyAllowed}>
-                <MousePointer2 size={16} />
-                Passthrough
-              </button>
-              <button className={stealth.callPrivacyAllowed && !stealth.overlayVisible && stealth.contentProtectionEnabled ? "status active" : "status"} onClick={applyShareSafe}>
-                <ShieldCheck size={16} />
-                Share Safe
-              </button>
-              <button className={privacyCheck?.status === "safe" ? "status active" : "status"} onClick={runPrivacyCheck}>
-                <Radar size={16} />
-                Check
+                {stealth.callPrivacyAllowed && stealth.contentProtectionEnabled ? "Private call mode on" : "Enable private call mode"}
               </button>
               <button className="status" onClick={resetPrivacy}>
                 <RotateCcw size={16} />
-                Reset
+                Standard mode
               </button>
             </div>
+            <details className="advanced-inline">
+              <summary>Advanced privacy controls</summary>
+              <div className="privacy-actions">
+                <button className={stealth.callPrivacyAllowed ? "status active" : "status"} onClick={() => setCallPrivacyAllowed(!stealth.callPrivacyAllowed)}>
+                  <ShieldCheck size={16} />
+                  {stealth.callPrivacyAllowed ? "Approved" : "Not approved"}
+                </button>
+                <button className={stealth.overlayVisible ? "status active" : "status"} onClick={() => setOverlayVisible(!stealth.overlayVisible)} disabled={!stealth.callPrivacyAllowed}>
+                  {stealth.overlayVisible ? <Eye size={16} /> : <EyeOff size={16} />}
+                  {stealth.overlayVisible ? "Visible" : "Hidden"}
+                </button>
+                <button className={stealth.contentProtectionEnabled ? "status active" : "status"} onClick={() => setContentProtection(!stealth.contentProtectionEnabled)} disabled={!stealth.callPrivacyAllowed}>
+                  <Shield size={16} />
+                  Protected
+                </button>
+                <button className={stealth.mousePassthroughEnabled ? "status active" : "status"} onClick={togglePassthrough} disabled={!stealth.callPrivacyAllowed}>
+                  <MousePointer2 size={16} />
+                  Passthrough
+                </button>
+                <button className={stealth.callPrivacyAllowed && !stealth.overlayVisible && stealth.contentProtectionEnabled ? "status active" : "status"} onClick={applyShareSafe}>
+                  <ShieldCheck size={16} />
+                  Reapply protected mode
+                </button>
+                <button className={privacyCheck?.status === "safe" ? "status active" : "status"} onClick={runPrivacyCheck}>
+                  <Radar size={16} />
+                  Check
+                </button>
+              </div>
+            </details>
           </section>
 
           {modelProvider === "openai" && (
@@ -2068,6 +2463,6 @@ function App() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {window.location.hash === "#/overlay" ? <OverlayApp /> : <App />}
+    {window.location.hash === "#/overlay" ? <OverlayApp /> : window.location.hash === "#/coding" ? <CodingOverlayApp /> : <App />}
   </React.StrictMode>,
 );

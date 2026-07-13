@@ -40,14 +40,14 @@ test("approved privacy mode permits local privacy controls", () => {
   assert.equal(passthrough.focusMode, "passthrough");
 });
 
-test("share safe applies hidden protected passthrough posture", () => {
+test("share safe applies visible protected interview posture", () => {
   const shareSafe = applyShareSafeState(defaultStealthState);
 
   assert.equal(shareSafe.callPrivacyAllowed, true);
-  assert.equal(shareSafe.overlayVisible, false);
+  assert.equal(shareSafe.overlayVisible, true);
   assert.equal(shareSafe.contentProtectionEnabled, true);
-  assert.equal(shareSafe.mousePassthroughEnabled, true);
-  assert.equal(shareSafe.focusMode, "passthrough");
+  assert.equal(shareSafe.mousePassthroughEnabled, false);
+  assert.equal(shareSafe.focusMode, "interactive");
   assert.equal(assessPrivacyState(shareSafe, "2026-07-03T00:00:00.000Z").status, "safe");
 });
 

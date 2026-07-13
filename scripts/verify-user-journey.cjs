@@ -146,6 +146,11 @@ const evaluate = async (client, expression) => {
   return result.result.value;
 };
 
+const getPageTarget = async (predicate) => {
+  const targets = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
+  return targets.find((target) => target.type === "page" && predicate(target));
+};
+
 const pngPath = path.join(os.tmpdir(), `callpilot-e2e-${Date.now()}.png`);
 fs.writeFileSync(pngPath, Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
@@ -197,6 +202,27 @@ const run = async () => {
     const client = await cdp(page.webSocketDebuggerUrl);
     await client.send("Runtime.enable");
 
+    const setupUi = await evaluate(client, `new Promise((resolve) => {
+      const read = () => ({
+        hasRoot: Boolean(document.querySelector("#root")),
+        hasStartSession: [...document.querySelectorAll("button")].some((button) => /start (session|interview overlay)/i.test(button.textContent || "")),
+        hasSetupCards: /technical interview/i.test(document.body?.innerText || "")
+          && /live coding/i.test(document.body?.innerText || ""),
+        hasContextFields: /context fields/i.test(document.body?.innerText || ""),
+        bodyTextLength: (document.body?.innerText || "").length
+      });
+      const started = performance.now();
+      const tick = () => {
+        const snapshot = read();
+        if (snapshot.hasStartSession || performance.now() - started > 5000) {
+          resolve(snapshot);
+          return;
+        }
+        setTimeout(tick, 100);
+      };
+      tick();
+    })`);
+
     const metrics = await evaluate(client, `new Promise(async (resolve) => {
       const prompt = {
         system: "You are CallPilot test.",
@@ -245,16 +271,73 @@ const run = async () => {
     })`);
 
     const overlayStartedAt = Date.now();
-    await evaluate(client, `window.callpilotDesktop.startSession()`);
+    await evaluate(client, `window.callpilotDesktop.startSession({ mode: "live_coding" })`);
     let overlayOpenMs = Infinity;
+    let overlayTarget = null;
+    let codingTarget = null;
     for (let index = 0; index < 30; index += 1) {
-      const list = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
-      if (list.some((target) => String(target.url).includes("#/overlay"))) {
+      overlayTarget = await getPageTarget((target) => String(target.url).includes("#/overlay"));
+      codingTarget = await getPageTarget((target) => String(target.url).includes("#/coding"));
+      if (overlayTarget && codingTarget) {
         overlayOpenMs = Date.now() - overlayStartedAt;
         break;
       }
       await sleep(100);
     }
+    if (!overlayTarget?.webSocketDebuggerUrl) {
+      throw new Error("Overlay target did not open");
+    }
+    if (!codingTarget?.webSocketDebuggerUrl) {
+      throw new Error("Coding target did not open");
+    }
+
+    const overlayClient = await cdp(overlayTarget.webSocketDebuggerUrl);
+    await overlayClient.send("Runtime.enable");
+    const overlayInitialUi = await evaluate(overlayClient, `({
+      hasOverlayRoot: Boolean(document.querySelector(".cp-overlay")),
+      hasOverlayBar: Boolean(document.querySelector(".cp-overlay__bar")),
+      hasConfigControls: [...document.querySelectorAll("button")].some((button) => /config|context|start listening|capture/i.test(button.textContent || "")),
+      text: document.body.innerText
+    })`);
+
+    const codingClient = await cdp(codingTarget.webSocketDebuggerUrl);
+    await codingClient.send("Runtime.enable");
+    const codingInitialUi = await evaluate(codingClient, `({
+      hasCodingRoot: Boolean(document.querySelector(".cp-coding")),
+      hasCodePanel: Boolean(document.querySelector(".cp-code-panel")),
+      hasReasoningPanel: Boolean(document.querySelector(".cp-reasoning-panel")),
+      text: document.body.innerText
+    })`);
+
+    await evaluate(client, `window.callpilotDesktop.publishTranscriptMessage({
+      id: "journey-recruiter-1",
+      speaker: "recruiter",
+      text: "Walk me through your SQL approach.",
+      timestamp: Date.now()
+    })`);
+    const overlayAnswer = await evaluate(client, `window.callpilotDesktop.generateAnswer({
+      provider: "openai",
+      modelName: "mock-openai-e2e",
+      apiKey: "callpilot-e2e-key",
+      prompt: {
+        system: "You are CallPilot overlay test.",
+        user: "<resume>Built payments reconciliation with PostgreSQL.</resume>\\n<user_input>Walk me through SQL.</user_input>",
+        debug: { modeId: "technical_qa", includedSections: [], omittedSections: [] }
+      }
+    })`);
+    await sleep(100);
+    const overlayRenderedUi = await evaluate(overlayClient, `({
+      bubbleCount: document.querySelectorAll(".cp-bubble").length,
+      hasRecruiterBubble: Boolean(document.querySelector(".cp-bubble--recruiter")),
+      hasAssistantBubble: Boolean(document.querySelector(".cp-bubble--assistant")),
+      headline: document.querySelector(".cp-bubble__headline")?.textContent || "",
+      keywords: [...document.querySelectorAll(".cp-keyword")].map((node) => node.textContent),
+      detail: document.querySelector(".cp-bubble__detail")?.textContent || "",
+      text: document.body.innerText
+    })`);
+    overlayClient.close();
+    codingClient.close();
+
     await evaluate(client, `window.callpilotDesktop.endSession()`);
     client.close();
 
@@ -283,7 +366,15 @@ const run = async () => {
       overlay: {
         openMs: overlayOpenMs,
         ok: Number.isFinite(overlayOpenMs),
+        initialUi: overlayInitialUi,
+        renderedUi: overlayRenderedUi,
+        answerOk: overlayAnswer.ok,
       },
+      coding: {
+        ok: Boolean(codingInitialUi.hasCodingRoot && codingInitialUi.hasCodePanel && codingInitialUi.hasReasoningPanel),
+        initialUi: codingInitialUi,
+      },
+      setupUi,
     };
 
     console.log(JSON.stringify(report, null, 2));
@@ -299,6 +390,16 @@ const run = async () => {
     if (!report.vision.ok || !report.vision.hasFunctionSignature) failures.push("vision failed coding extraction");
     if (report.vision.totalMs > thresholds.visionMs) failures.push(`vision too slow: ${report.vision.totalMs}ms`);
     if (!report.overlay.ok || report.overlay.openMs > thresholds.overlayOpenMs) failures.push(`overlay too slow: ${report.overlay.openMs}ms`);
+    if (!report.setupUi.hasRoot || !report.setupUi.hasStartSession || !report.setupUi.hasSetupCards || !report.setupUi.hasContextFields) failures.push("setup UI did not render expected controls");
+    if (!report.overlay.initialUi.hasOverlayRoot || !report.overlay.initialUi.hasOverlayBar) failures.push("overlay UI did not render expected shell");
+    if (!report.coding.ok) failures.push("coding overlay did not render expected workspace");
+    if (report.overlay.initialUi.hasConfigControls) failures.push("overlay exposes setup/config controls");
+    if (!report.overlay.answerOk) failures.push("overlay answer generation failed");
+    if (!report.overlay.renderedUi.hasRecruiterBubble) failures.push("overlay did not render transcript bubble");
+    if (!report.overlay.renderedUi.hasAssistantBubble) failures.push("overlay did not render assistant bubble");
+    if (!/SQL|consistency|product risk/i.test(report.overlay.renderedUi.headline)) failures.push("overlay headline content missing");
+    if (report.overlay.renderedUi.keywords.length < 3) failures.push("overlay keywords missing");
+    if (!/tradeoff|consistency/i.test(report.overlay.renderedUi.detail)) failures.push("overlay detail stream did not render");
 
     if (failures.length > 0) {
       console.error(`User journey failed: ${failures.join("; ")}`);

@@ -12,15 +12,22 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   captureScreenshot: () => ipcRenderer.invoke("screen:capture"),
   recognizeScreenText: (input) => ipcRenderer.invoke("screen:ocr", input),
   analyzeScreenshot: (input) => ipcRenderer.invoke("screen:analyze", input),
-  startSession: () => ipcRenderer.invoke("session:start"),
+  startSession: (options) => ipcRenderer.invoke("session:start", options),
   endSession: () => ipcRenderer.invoke("session:end"),
+  requestAnswer: () => ipcRenderer.invoke("answer:request"),
   publishTranscriptMessage: (message) => ipcRenderer.invoke("transcript:publish", message),
+  publishLiveTranscript: (message) => ipcRenderer.invoke("transcript:publish-live", message),
   listOllamaModels: (input) => ipcRenderer.invoke("ollama:list-models", input),
   generateAnswer: (input) => ipcRenderer.invoke("model:generate", input),
   transcribeAudio: (input) => ipcRenderer.invoke("audio:transcribe", input),
+  startNativelyTranscription: (input) => ipcRenderer.invoke("natively:start", input),
+  sendNativelyAudio: (input) => ipcRenderer.invoke("natively:audio", input),
+  stopNativelyTranscription: (input) => ipcRenderer.invoke("natively:stop", input),
   getCredentialStatus: () => ipcRenderer.invoke("credentials:status"),
   saveOpenAIKey: (apiKey) => ipcRenderer.invoke("credentials:save-openai-key", apiKey),
+  saveNativelyKey: (apiKey) => ipcRenderer.invoke("credentials:save-natively-key", apiKey),
   clearOpenAIKey: () => ipcRenderer.invoke("credentials:clear-openai-key"),
+  clearNativelyKey: () => ipcRenderer.invoke("credentials:clear-natively-key"),
   exportSessionFile: (session) => ipcRenderer.invoke("session:export-file", session),
   importSessionFile: () => ipcRenderer.invoke("session:import-file"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
@@ -30,6 +37,16 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     const handler = (_event, action) => callback(action);
     ipcRenderer.on("shortcut", handler);
     return () => ipcRenderer.removeListener("shortcut", handler);
+  },
+  onManualAnswerRequest: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on("answer:manual-request", handler);
+    return () => ipcRenderer.removeListener("answer:manual-request", handler);
+  },
+  onManualAnswerStatus: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("answer:manual-status", handler);
+    return () => ipcRenderer.removeListener("answer:manual-status", handler);
   },
   onAnswerHeadline: (callback) => {
     const handler = (_event, payload) => callback(payload);
@@ -45,5 +62,20 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     const handler = (_event, message) => callback(message);
     ipcRenderer.on("transcript:message", handler);
     return () => ipcRenderer.removeListener("transcript:message", handler);
+  },
+  onLiveTranscript: (callback) => {
+    const handler = (_event, message) => callback(message);
+    ipcRenderer.on("transcript:live", handler);
+    return () => ipcRenderer.removeListener("transcript:live", handler);
+  },
+  onNativelyTranscript: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("natively:transcript", handler);
+    return () => ipcRenderer.removeListener("natively:transcript", handler);
+  },
+  onNativelyStatus: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("natively:status", handler);
+    return () => ipcRenderer.removeListener("natively:status", handler);
   },
 });

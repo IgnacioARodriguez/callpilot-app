@@ -1,7 +1,7 @@
 import type { BuiltPrompt } from "./promptBuilder.ts";
 import { STRUCTURED_ANSWER_JSON_SCHEMA } from "./answerSchema.ts";
 
-export type ModelProvider = "mock" | "openai" | "ollama";
+export type ModelProvider = "mock" | "openai" | "ollama" | "natively" | "nvidia";
 export type AudioTranscriptionModel = "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | "gpt-4o-transcribe-diarize" | "whisper-1";
 
 export const DEFAULT_TRANSCRIPTION_MODEL: AudioTranscriptionModel = "gpt-4o-transcribe";
@@ -24,7 +24,9 @@ export interface GenerateAnswerInput {
   modelName: string;
   prompt: BuiltPrompt;
   apiKey?: string;
+  nativelyApiKey?: string;
   ollamaBaseUrl?: string;
+  maxTokens?: number;
 }
 
 export interface GenerateAnswerResult {
@@ -49,7 +51,7 @@ export interface OllamaModelListResult {
 }
 
 export interface AudioTranscriptionInput {
-  provider: "openai";
+  provider: "openai" | "natively";
   modelName?: string;
   fileName: string;
   mimeType: string;
@@ -91,7 +93,7 @@ export const isSupportedAudioMimeType = (mimeType: string): boolean => {
 };
 
 export const validateAudioTranscriptionInput = (input: AudioTranscriptionInput): string | undefined => {
-  if (input.provider !== "openai") return "unsupported_transcription_provider";
+  if (input.provider !== "openai" && input.provider !== "natively") return "unsupported_transcription_provider";
   if (!input.fileName.trim()) return "missing_audio_file_name";
   if (!isSupportedAudioMimeType(input.mimeType)) return "unsupported_audio_type";
   if (!Number.isFinite(input.byteLength) || input.byteLength <= 0) return "empty_audio_file";
@@ -150,6 +152,41 @@ export const buildOllamaChatRequest = (prompt: BuiltPrompt, modelName: string) =
     { role: "user", content: prompt.user },
   ],
 });
+
+export const buildOpenAICompatibleChatRequest = (prompt: BuiltPrompt, modelName: string) => ({
+  model: modelName.trim() || "default",
+  stream: false,
+  messages: [
+    { role: "system", content: prompt.system },
+    { role: "user", content: prompt.user },
+  ],
+});
+
+export const extractOpenAICompatibleChatText = (response: unknown): string => {
+  if (!response || typeof response !== "object") return "";
+  const choices = (response as { choices?: unknown }).choices;
+  if (Array.isArray(choices)) {
+    const content = choices
+      .map((choice) => {
+        if (!choice || typeof choice !== "object") return "";
+        const message = (choice as { message?: unknown }).message;
+        if (message && typeof message === "object") {
+          const text = (message as { content?: unknown }).content;
+          if (typeof text === "string") return text;
+        }
+        const text = (choice as { text?: unknown }).text;
+        return typeof text === "string" ? text : "";
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (content) return content;
+  }
+  const text = (response as { text?: unknown }).text;
+  if (typeof text === "string" && text.trim()) return text.trim();
+  const outputText = (response as { output_text?: unknown }).output_text;
+  return typeof outputText === "string" ? outputText.trim() : "";
+};
 
 export const extractOllamaModels = (response: unknown): OllamaModelInfo[] => {
   if (!response || typeof response !== "object") return [];

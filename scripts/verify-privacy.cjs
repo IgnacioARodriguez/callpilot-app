@@ -28,7 +28,7 @@ const requiredSourceChecks = [
   ["src/desktop.d.ts", "setCallPrivacyAllowed"],
   ["src/desktop.d.ts", "PrivacyCheckResult"],
   ["src/main.tsx", "Not approved"],
-  ["src/main.tsx", "Share Safe"],
+  ["src/main.tsx", "Protected sharing mode"],
   ["src/main.tsx", "runPrivacyCheck"],
   ["src/main.tsx", "resetPrivacy"],
   ["src/main.tsx", "disabled={!stealth.callPrivacyAllowed}"],

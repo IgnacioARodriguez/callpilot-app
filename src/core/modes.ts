@@ -15,7 +15,7 @@ export const MODES: ModeDefinition[] = [
     label: "Live Coding",
     description: "Step-by-step coding interview support.",
     systemPromptFragment: "Prefer Python unless context clearly indicates another language. Include approach, solution, complexity, edge cases, and what to say out loud.",
-    defaultOutputFormat: ["Problem detected", "Approach", "Solution", "Complexity", "Edge cases", "What to say out loud"],
+    defaultOutputFormat: ["Approach", "Code or change", "Complexity", "Edge cases if relevant"],
     responseLengthPreference: "medium",
   },
   {
@@ -39,7 +39,7 @@ export const MODES: ModeDefinition[] = [
     label: "Technical Q&A",
     description: "Concise direct technical explanations.",
     systemPromptFragment: "Answer directly, give an example when useful, and mention tradeoffs.",
-    defaultOutputFormat: ["Direct answer", "Example", "Tradeoff", "Interview-ready sentence"],
+    defaultOutputFormat: ["Respuesta", "Ejemplo or tradeoff only if useful", "Para decir"],
     responseLengthPreference: "short",
   },
   {
