@@ -189,33 +189,6 @@ const extractOpenAIResponseText = (response) => {
     .trim();
 };
 
-const structuredAnswerJsonSchema = {
-  name: "structured_interview_answer",
-  schema: {
-    type: "object",
-    properties: {
-      headline: { type: "string" },
-      keywords: { type: "array", items: { type: "string" }, minItems: 3, maxItems: 5 },
-      detail: { type: "string" },
-    },
-    required: ["headline", "keywords", "detail"],
-    additionalProperties: false,
-  },
-};
-
-const parseStructuredAnswer = (text) => {
-  try {
-    const value = JSON.parse(String(text || ""));
-    return {
-      headline: typeof value.headline === "string" ? value.headline : "",
-      keywords: Array.isArray(value.keywords) ? value.keywords.filter((item) => typeof item === "string").slice(0, 5) : [],
-      detail: typeof value.detail === "string" ? value.detail : "",
-    };
-  } catch {
-    return { headline: "", keywords: [], detail: String(text || "") };
-  }
-};
-
 const createPromptCacheKey = (prompt) => {
   const stablePrefix = [
     String(prompt?.system ?? ""),
@@ -410,15 +383,6 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
   if (!modelName) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_model` };
 
   try {
-    const requestBase = {
-      model: modelName,
-      instructions: String(prompt?.system ?? ""),
-      input: String(prompt?.user ?? ""),
-      prompt_cache_key: createPromptCacheKey(prompt),
-      store: false,
-    };
-    let headlineDelivered = false;
-    const pendingDetailChunks = [];
     let detailSequence = 0;
     const sendDetailChunk = (chunk) => {
       detailSequence += 1;
@@ -426,50 +390,6 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
       event.sender.send("answer:detail-chunk", payload);
       sendToOverlay("answer:detail-chunk", payload);
     };
-    const flushPendingDetailChunks = () => {
-      while (pendingDetailChunks.length > 0) {
-        sendDetailChunk(pendingDetailChunks.shift());
-      }
-    };
-    const headlinePromise = fetch(`${provider.baseUrl()}/v1/responses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        ...requestBase,
-        text: {
-          format: {
-            type: "json_schema",
-            name: structuredAnswerJsonSchema.name,
-            strict: true,
-            schema: structuredAnswerJsonSchema.schema,
-          },
-        },
-      }),
-    }).then(async (headlineResponse) => {
-      const payload = await headlineResponse.json().catch(() => ({}));
-      if (!headlineResponse.ok) {
-        throw new Error(payload?.error?.message ?? `${provider.id}_headline_http_${headlineResponse.status}`);
-      }
-      const structured = parseStructuredAnswer(extractOpenAIResponseText(payload));
-      if (structured.headline || structured.keywords.length) {
-        event.sender.send("answer:headline", {
-          requestId,
-          headline: structured.headline,
-          keywords: structured.keywords,
-        });
-        sendToOverlay("answer:headline", {
-          requestId,
-          headline: structured.headline,
-          keywords: structured.keywords,
-        });
-        headlineDelivered = true;
-        flushPendingDetailChunks();
-      }
-      return structured;
-    });
 
     const detailResponse = await fetch(`${provider.baseUrl()}/v1/responses`, {
       method: "POST",
@@ -478,28 +398,24 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        ...requestBase,
+        model: modelName,
+        instructions: String(prompt?.system ?? ""),
+        input: String(prompt?.user ?? ""),
+        prompt_cache_key: createPromptCacheKey(prompt),
+        store: false,
         stream: true,
       }),
     });
     if (!detailResponse.ok) {
       const payload = await detailResponse.json().catch(() => ({}));
-      await headlinePromise.catch(() => undefined);
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? `${provider.id}_http_${detailResponse.status}` };
     }
 
     const text = await readOpenAISseStream(detailResponse, (streamEvent) => {
       if (streamEvent.type === "response.output_text.delta" && typeof streamEvent.delta === "string") {
-        if (headlineDelivered) {
-          sendDetailChunk(streamEvent.delta);
-        } else {
-          pendingDetailChunks.push(streamEvent.delta);
-        }
+        sendDetailChunk(streamEvent.delta);
       }
     });
-    const headlineResult = await headlinePromise.catch((error) => ({ headline: "", keywords: [], detail: "", error: error.message }));
-    headlineDelivered = true;
-    flushPendingDetailChunks();
     const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
     event.sender.send("answer:detail-chunk", completedPayload);
     sendToOverlay("answer:detail-chunk", completedPayload);
@@ -509,8 +425,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
       provider: provider.id,
       modelName,
       requestId,
-      structured: headlineResult,
-      error: text ? undefined : headlineResult.error || `empty_${provider.id}_response`,
+      error: text ? undefined : `empty_${provider.id}_response`,
     };
   } catch (error) {
     const failedPayload = { requestId, sequence: 0, text: "", done: true, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };

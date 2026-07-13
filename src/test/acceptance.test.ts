@@ -72,7 +72,8 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   assert.match(overlay, /lastSequenceByRequest/);
   assert.match(main, /requestId/);
   assert.match(main, /sequence/);
-  assert.match(main, /pendingDetailChunks/);
+  assert.doesNotMatch(main, /pendingDetailChunks/);
+  assert.match(main, /sendDetailChunk\(streamEvent\.delta\)/);
   assert.match(codingOverlay, /cp-code-panel/);
   assert.match(codingOverlay, /cp-reasoning-panel/);
   assert.match(codingOverlay, /starterCode/);
