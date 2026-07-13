@@ -27,7 +27,9 @@ import {
   ocrConfidenceLabel,
   modeById,
   parseSessionJson,
+  formatStructuredAnswerPayload,
   pickEvidenceWithEmbeddings,
+  parseStructuredAnswerPayload,
   pruneRecentSpeech,
   reduceStealthState,
   shouldDropCandidateEcho,
@@ -594,7 +596,10 @@ function App() {
         ollamaBaseUrl,
         maxTokens: context.activeMode === "live_coding" ? 360 : 220,
       });
-      const text = result.ok ? result.text : `Generation failed: ${result.error ?? "unknown error"}`;
+      const structured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
+      const text = result.ok
+        ? structured ? formatStructuredAnswerPayload(structured) : result.text
+        : `Generation failed: ${result.error ?? "unknown error"}`;
       if (activeAnswerRequestIdRef.current === requestId) {
         setAnswer(text);
         appendAssistantTranscriptLine(text);

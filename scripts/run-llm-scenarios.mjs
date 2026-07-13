@@ -6,6 +6,7 @@ import { buildPrompt } from "../src/core/promptBuilder.ts";
 import { createGlobalContext } from "../src/core/context.ts";
 import { TranscriptBuffer, formatConversationWindow } from "../src/core/transcriptBuffer.ts";
 import { classifyScreenText } from "../src/core/screenContext.ts";
+import { formatStructuredAnswerPayload, parseStructuredAnswerPayload } from "../src/core/answerPayload.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -212,7 +213,9 @@ const defaultModelName = (provider, savedModel) => {
 };
 
 const scoreAnswer = (scenario, result, elapsedMs) => {
-  const text = String(result?.text || "");
+  const rawText = String(result?.text || "");
+  const structured = parseStructuredAnswerPayload(rawText);
+  const text = structured ? formatStructuredAnswerPayload(structured) : rawText;
   const lower = text.toLowerCase();
   const missingExpected = scenario.expected.filter((term) => !lower.includes(term));
   const forbiddenRoleLabels = /\b(interviewer|entrevistador)\s*:/i.test(text);
@@ -235,8 +238,10 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     ok: Object.values(checks).every(Boolean),
     latencyMs: elapsedMs,
     chars: text.length,
+    renderedText: text,
     checks,
     missingExpected,
+    structured: structured?.kind,
   };
 };
 
@@ -376,6 +381,7 @@ const run = async () => {
         checks: item.metrics.checks,
         error: item.response?.error,
         preview: String(item.response?.text || "").slice(0, 220),
+        renderedPreview: String(item.metrics.renderedText || item.response?.text || "").slice(0, 220),
       })),
     }, null, 2));
     if (!passed) process.exitCode = 1;

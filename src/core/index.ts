@@ -2,6 +2,15 @@ export { createGlobalContext, type GlobalContext, type PreferredLanguage } from 
 export { MODES, modeById, type AssistantModeId, type ModeDefinition } from "./modes.ts";
 export { buildEvidenceCandidates, formatEvidenceForPrompt, pickEvidence, pickEvidenceWithEmbeddings, type EvidenceCandidate, type EvidenceEmbedder, type EvidenceEmbedding, type EvidenceItem, type EvidenceSelection, type EvidenceSource } from "./evidencePicker.ts";
 export { buildPrompt, buildPromptWithEvidence, type BuiltPrompt } from "./promptBuilder.ts";
+export {
+  formatStructuredAnswerPayload,
+  parseCodingAnswerPayload,
+  parseInterviewAnswerPayload,
+  parseStructuredAnswerPayload,
+  type CodingAnswerPayload,
+  type InterviewAnswerPayload,
+  type StructuredAnswerPayload,
+} from "./answerPayload.ts";
 export { classifyScreenText, createEmptyScreenContext, type ScreenContext, type ScreenKind } from "./screenContext.ts";
 export {
   cleanOcrText,

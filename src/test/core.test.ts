@@ -25,6 +25,7 @@ import {
   extractOpenAICompatibleChatText,
   extractOpenAIResponseText,
   extractOpenAITranscriptionText,
+  formatStructuredAnswerPayload,
   formatConversationWindow,
   assessPartialTurnStability,
   isSupportedAudioMimeType,
@@ -39,6 +40,7 @@ import {
   pickEvidence,
   pickEvidenceWithEmbeddings,
   parseSessionJson,
+  parseStructuredAnswerPayload,
   reduceStealthState,
   resetStealthState,
   serializeSession,
@@ -250,6 +252,63 @@ test("partial turn stability requires unchanged non-truncated text", () => {
   assert.equal(assessPartialTurnStability("Que es S", "Que es S", 1000, 2200).reason, "truncated_definition");
   assert.equal(assessPartialTurnStability("Que es SQL exactamente", "Que es SQ", 1000, 2200).reason, "changed_recently");
   assert.equal(assessPartialTurnStability("Que es SQL exactamente", "Que es SQL exactamente", 1000, 1200).reason, "changed_recently");
+});
+
+test("structured interview answers parse and render compactly", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      spokenAnswer: "SQL is a declarative language for relational data.",
+      keyPoints: ["ACID", "joins"],
+      correction: { needed: true, transition: "I would clarify that SQL is not a general-purpose app language.", correctedClaim: "SQL is domain-specific." },
+      assumptions: [],
+      evidenceRefs: ["resume:1"],
+      followUpHint: null,
+    },
+  }));
+
+  assert.equal(structured?.kind, "interview");
+  assert.match(structured ? formatStructuredAnswerPayload(structured) : "", /\*\*Respuesta:\*\*/);
+  assert.match(structured ? formatStructuredAnswerPayload(structured) : "", /SQL is a declarative/);
+});
+
+test("structured coding answers parse and render code block", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "initial_solution",
+      problem: { title: "Two Sum", summary: "Find two indices", language: "Python", functionSignature: null, constraints: [] },
+      solution: {
+        approachSteps: ["Use a hash map."],
+        code: "def two_sum(nums, target):\n    return []",
+        complexity: { time: "O(n)", space: "O(n)", rationale: "One pass." },
+        edgeCases: ["duplicates"],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "I will trade memory for one-pass lookup.", currentStep: "Implement hashmap." },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  const rendered = structured ? formatStructuredAnswerPayload(structured) : "";
+  assert.equal(structured?.kind, "coding");
+  assert.match(rendered, /```python/);
+  assert.match(rendered, /O\(n\)/);
+});
+
+test("structured answer parser repairs small missing closing braces", () => {
+  const structured = parseStructuredAnswerPayload(
+    '{"kind":"interview","payload":{"version":"1","answerNeeded":true,"intent":"technical_qa","spokenAnswer":"Short answer","keyPoints":[],"correction":{"needed":false,"transition":null,"correctedClaim":null},"assumptions":[],"evidenceRefs":[],"followUpHint":null}',
+  );
+
+  assert.equal(structured?.kind, "interview");
+  assert.match(structured ? formatStructuredAnswerPayload(structured) : "", /Short answer/);
 });
 
 test("live conversation auto answer respects cooldown", () => {

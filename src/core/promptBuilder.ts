@@ -41,7 +41,19 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
   const includePersonalContext = context.activeMode !== "live_coding" || asksForExperienceContext(userInput);
   const includedSections: string[] = ["mode", "output_format"];
   const omittedSections: Array<{ section: string; reason: string }> = [];
-  const sections = [fenced("active_mode", mode.id), fenced("output_format", mode.defaultOutputFormat.join("\n"))];
+  const structuredContract = context.activeMode === "live_coding"
+    ? [
+      "Prefer JSON when possible:",
+      '{"kind":"coding","payload":{"version":"1","answerNeeded":true,"responseType":"initial_solution|explanation|follow_up_change|debug_fix|clarification","problem":{"title":"","summary":"","language":"Python","functionSignature":null,"constraints":[]},"solution":{"approachSteps":[],"code":"","complexity":{"time":"","space":"","rationale":""},"edgeCases":[],"invariants":[]},"narration":{"spokenAnswer":"","currentStep":""},"tests":[],"patch":{"kind":"none","code":null}}}',
+    ].join("\n")
+    : [
+      "Prefer JSON when possible:",
+      '{"kind":"interview","payload":{"version":"1","answerNeeded":true,"intent":"technical_qa|behavioral|system_design|clarification|no_answer","spokenAnswer":"","keyPoints":[],"correction":{"needed":false,"transition":null,"correctedClaim":null},"assumptions":[],"evidenceRefs":[],"followUpHint":null}}',
+    ].join("\n");
+  const sections = [
+    fenced("active_mode", mode.id),
+    fenced("output_format", `${mode.defaultOutputFormat.join("\n")}\n\n${structuredContract}`),
+  ];
   const add = (name: string, value: string) => {
     if (!value.trim()) {
       omittedSections.push({ section: name, reason: "empty" });
@@ -97,6 +109,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     "Tailor wording to the company and role when company_name, role_title, or job_description are present.",
     "Keep answers concise, practical, and interview-ready.",
     "Avoid filler, apologies, meta commentary, and broad tutorials. If the user pressed Answer, return the most useful next thing to say, not an analysis of why an answer may or may not be needed.",
+    "When the provider supports reliable JSON, prefer the structured JSON contract in output_format. Do not include chain-of-thought. If you cannot follow JSON reliably, return the same content as compact readable text.",
     "For conversational modes, produce a natural spoken headline first: it should sound easy to say aloud, not like written prose. Keep keywords short and memorable.",
     mode.systemPromptFragment,
   ].join("\n");
