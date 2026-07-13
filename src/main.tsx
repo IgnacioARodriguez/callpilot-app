@@ -193,11 +193,13 @@ function App() {
   const localSegmentTimersRef = React.useRef<number[]>([]);
   const localSegmentChunksByIdRef = React.useRef(new Map<string, BlobPart[]>());
   const localSttBusyByIdRef = React.useRef(new Set<string>());
+  const localSttQueueByIdRef = React.useRef(new Map<string, Array<{ blob: Blob; speaker: TranscriptSpeaker }>>());
   const recentSpeechRef = React.useRef<RecentSpeech[]>([]);
   const lastNativelyPartialAnswerRef = React.useRef<{ text: string; timestamp: number }>({ text: "", timestamp: 0 });
   const nativelyLiveDraftBySpeakerRef = React.useRef<Partial<Record<TranscriptSpeaker, { text: string; timestamp: number }>>>({});
   const lastSystemAudioSignalAtRef = React.useRef(0);
-  const liveChunkBusyRef = React.useRef(false);
+  const liveChunkBusyByIdRef = React.useRef(new Set<string>());
+  const liveChunkQueueByIdRef = React.useRef(new Map<string, Array<{ blob: Blob; speaker: TranscriptSpeaker }>>());
   const liveContinueRef = React.useRef(false);
   const localSegmentChunksRef = React.useRef<BlobPart[]>([]);
   const localSegmentTimerRef = React.useRef<number | null>(null);
@@ -483,6 +485,10 @@ function App() {
       if (recorder.state === "recording") recorder.stop();
     });
     liveStreamsRef.current.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
+    localSttQueueByIdRef.current.clear();
+    localSttBusyByIdRef.current.clear();
+    liveChunkQueueByIdRef.current.clear();
+    liveChunkBusyByIdRef.current.clear();
     liveRecorderRef.current?.stop();
     liveStreamRef.current?.getTracks().forEach((track) => track.stop());
     nativelySessionsRef.current.forEach((session) => {
@@ -745,11 +751,13 @@ function App() {
     liveStreamsRef.current = [];
     localSegmentChunksByIdRef.current.clear();
     localSttBusyByIdRef.current.clear();
+    localSttQueueByIdRef.current.clear();
     liveRecorderRef.current?.stop();
     liveRecorderRef.current = null;
     liveStreamRef.current?.getTracks().forEach((track) => track.stop());
     liveStreamRef.current = null;
-    liveChunkBusyRef.current = false;
+    liveChunkBusyByIdRef.current.clear();
+    liveChunkQueueByIdRef.current.clear();
     localSegmentChunksRef.current = [];
     nativelyLiveDraftBySpeakerRef.current = {};
     nativelySessionsRef.current.forEach((session) => {
@@ -998,31 +1006,63 @@ function App() {
     }
   };
 
+  const enqueueLocalSttBlob = (channelId: string, blob: Blob, speaker: TranscriptSpeaker) => {
+    if (!blob.size) return;
+    const queue = localSttQueueByIdRef.current.get(channelId) ?? [];
+    queue.push({ blob, speaker });
+    if (queue.length > 6) {
+      const overflow = queue.splice(0, queue.length - 5);
+      const merged = new Blob(overflow.map((item) => item.blob), { type: blob.type || "audio/webm" });
+      queue.unshift({ blob: merged, speaker: overflow[overflow.length - 1]?.speaker ?? speaker });
+      setDesktopStatus(`Local STT merged ${overflow.length} queued chunks for ${channelId}`);
+    }
+    localSttQueueByIdRef.current.set(channelId, queue);
+  };
+
+  const enqueueLiveChunkBlob = (channelId: string, blob: Blob, speaker: TranscriptSpeaker) => {
+    if (!blob.size) return;
+    const queue = liveChunkQueueByIdRef.current.get(channelId) ?? [];
+    queue.push({ blob, speaker });
+    if (queue.length > 6) {
+      const overflow = queue.splice(0, queue.length - 5);
+      const merged = new Blob(overflow.map((item) => item.blob), { type: blob.type || "audio/webm" });
+      queue.unshift({ blob: merged, speaker: overflow[overflow.length - 1]?.speaker ?? speaker });
+      setDesktopStatus(`Live STT merged ${overflow.length} queued chunks for ${channelId}`);
+    }
+    liveChunkQueueByIdRef.current.set(channelId, queue);
+  };
+
   const transcribeLocalBlob = async (blob: Blob, speaker: TranscriptSpeaker = "interviewer", channelId = "default") => {
-    if (!blob.size || localSttBusyByIdRef.current.has(channelId)) return;
+    if (!blob.size) return;
+    enqueueLocalSttBlob(channelId, blob, speaker);
+    if (localSttBusyByIdRef.current.has(channelId)) return;
     localSttBusyByIdRef.current.add(channelId);
     try {
-      const audio = await decodeAudioBlobToMono16k(blob);
-      if (audio.length < 1600) return;
-      const energy = audioEnergy(audio);
-      if (energy.rms < 0.0035 && energy.peak < 0.035) {
-        setDesktopStatus("Local Whisper ignored silence");
-        return;
-      }
-      const recognizer = await getLocalSttPipeline() as (audio: Float32Array, options?: Record<string, unknown>) => Promise<{ text?: string }>;
-      const language = preferredLanguage === "spanish" ? "spanish" : preferredLanguage === "english" ? "english" : undefined;
-      const result = await recognizer(audio, {
-        chunk_length_s: 20,
-        stride_length_s: 4,
-        task: "transcribe",
-        ...(language ? { language } : {}),
-      });
-      const text = typeof result?.text === "string" ? result.text.trim() : "";
-      if (shouldKeepTranscriptText(text)) {
-        handleFinalTranscript(text, "stt", speaker);
-        setDesktopStatus("Local Whisper transcribed audio");
-      } else if (text) {
-        setDesktopStatus("Local Whisper ignored non-speech noise");
+      while (liveContinueRef.current || (localSttQueueByIdRef.current.get(channelId)?.length ?? 0) > 0) {
+        const next = localSttQueueByIdRef.current.get(channelId)?.shift();
+        if (!next) break;
+        const audio = await decodeAudioBlobToMono16k(next.blob);
+        if (audio.length < 1600) continue;
+        const energy = audioEnergy(audio);
+        if (energy.rms < 0.0035 && energy.peak < 0.035) {
+          setDesktopStatus("Local Whisper ignored silence");
+          continue;
+        }
+        const recognizer = await getLocalSttPipeline() as (audio: Float32Array, options?: Record<string, unknown>) => Promise<{ text?: string }>;
+        const language = preferredLanguage === "spanish" ? "spanish" : preferredLanguage === "english" ? "english" : undefined;
+        const result = await recognizer(audio, {
+          chunk_length_s: 20,
+          stride_length_s: 4,
+          task: "transcribe",
+          ...(language ? { language } : {}),
+        });
+        const text = typeof result?.text === "string" ? result.text.trim() : "";
+        if (shouldKeepTranscriptText(text)) {
+          handleFinalTranscript(text, "stt", next.speaker);
+          setDesktopStatus("Local Whisper transcribed queued audio");
+        } else if (text) {
+          setDesktopStatus("Local Whisper ignored non-speech noise");
+        }
       }
     } catch (error) {
       setDesktopStatus(error instanceof Error ? `Local STT failed: ${error.message}` : "Local STT failed");
@@ -1091,28 +1131,34 @@ function App() {
     }
   };
 
-  const transcribeLiveBlob = async (blob: Blob, speaker: TranscriptSpeaker = "interviewer") => {
-    if (!blob.size || liveChunkBusyRef.current) return;
-    liveChunkBusyRef.current = true;
+  const transcribeLiveBlob = async (blob: Blob, speaker: TranscriptSpeaker = "interviewer", channelId = "default") => {
+    if (!blob.size) return;
+    enqueueLiveChunkBlob(channelId, blob, speaker);
+    if (liveChunkBusyByIdRef.current.has(channelId)) return;
+    liveChunkBusyByIdRef.current.add(channelId);
     try {
-      const arrayBuffer = await blob.arrayBuffer();
-      const result = await window.callpilotDesktop?.transcribeAudio({
-        arrayBuffer,
-        fileName: `callpilot-live-${Date.now()}.webm`,
-        mimeType: blob.type || "audio/webm",
-        modelName: transcriptionModelName,
-        apiKey: sessionApiKey,
-        provider: liveTranscriptionProvider === "natively" ? "natively" : "openai",
-        nativelyApiKey,
-      });
-      if (result?.ok && result.text) {
-        handleFinalTranscript(result.text, "stt", speaker);
-        setDesktopStatus(`Live chunk transcribed with ${result.modelName}`);
-        return;
+      while (liveContinueRef.current || (liveChunkQueueByIdRef.current.get(channelId)?.length ?? 0) > 0) {
+        const next = liveChunkQueueByIdRef.current.get(channelId)?.shift();
+        if (!next) break;
+        const arrayBuffer = await next.blob.arrayBuffer();
+        const result = await window.callpilotDesktop?.transcribeAudio({
+          arrayBuffer,
+          fileName: `callpilot-live-${Date.now()}.webm`,
+          mimeType: next.blob.type || "audio/webm",
+          modelName: transcriptionModelName,
+          apiKey: sessionApiKey,
+          provider: liveTranscriptionProvider === "natively" ? "natively" : "openai",
+          nativelyApiKey,
+        });
+        if (result?.ok && result.text) {
+          handleFinalTranscript(result.text, "stt", next.speaker);
+          setDesktopStatus(`Live chunk transcribed with ${result.modelName}`);
+          continue;
+        }
+        if (result && !result.ok) setDesktopStatus(`Live transcription failed: ${result.error ?? "unknown"}`);
       }
-      if (result && !result.ok) setDesktopStatus(`Live transcription failed: ${result.error ?? "unknown"}`);
     } finally {
-      liveChunkBusyRef.current = false;
+      liveChunkBusyByIdRef.current.delete(channelId);
     }
   };
 
@@ -1135,30 +1181,30 @@ function App() {
 
     try {
       const channels = await requestLiveAudioStreams();
-      const stream = channels[0]?.stream;
-      if (!stream) throw new Error("audio_capture_unavailable");
-      channels.slice(1).forEach((channel) => channel.stream.getTracks().forEach((track) => track.stop()));
-      const preferredMimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-      const recorder = new MediaRecorder(stream, { mimeType: preferredMimeType });
-      liveStreamRef.current = stream;
-      liveRecorderRef.current = recorder;
-      const speaker = channels[0]?.speaker ?? "interviewer";
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) void transcribeLiveBlob(event.data, speaker);
-      };
-      recorder.onerror = () => {
-        setDesktopStatus("Live microphone recording error");
-        stopLiveRecording();
-      };
-      recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop());
-        liveStreamRef.current = null;
-        liveRecorderRef.current = null;
-      };
-      recorder.start(liveChunkMs());
+      if (channels.length === 0) throw new Error("audio_capture_unavailable");
+      liveStreamsRef.current = channels.map((channel) => channel.stream);
+      liveContinueRef.current = true;
+      channels.forEach((channel, index) => {
+        const preferredMimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+        const recorder = new MediaRecorder(channel.stream, { mimeType: preferredMimeType });
+        const channelId = `${channel.speaker}-${index}`;
+        liveRecordersRef.current.push(recorder);
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) void transcribeLiveBlob(event.data, channel.speaker, channelId);
+        };
+        recorder.onerror = () => {
+          setDesktopStatus(`Live ${channel.label} recording error`);
+          stopLiveRecording();
+        };
+        recorder.onstop = () => {
+          channel.stream.getTracks().forEach((track) => track.stop());
+          liveRecordersRef.current = liveRecordersRef.current.filter((item) => item !== recorder);
+        };
+        recorder.start(liveChunkMs());
+      });
       setIsDictating(true);
       setDesktopStatus(reason);
-      const sourceLabel = liveAudioSource === "both" ? "computer audio" : liveAudioSource === "system" ? "computer audio" : "microphone";
+      const sourceLabel = liveAudioSource === "both" ? "computer audio + microphone" : liveAudioSource === "system" ? "computer audio" : "microphone";
       setLiveAssistStatus(autoAnswerEnabled ? `Listening to ${sourceLabel} with OpenAI: auto answer on` : `Listening to ${sourceLabel} with OpenAI: auto answer off`);
       return true;
     } catch (error) {

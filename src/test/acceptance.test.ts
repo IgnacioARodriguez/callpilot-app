@@ -89,6 +89,20 @@ test("acceptance: answer providers are routed through a registry", () => {
   assert.match(main, /nvidia/);
 });
 
+test("acceptance: live STT chunks are queued instead of dropped while busy", () => {
+  const app = read("src/main.tsx");
+  const localEnqueue = app.indexOf("enqueueLocalSttBlob(channelId, blob, speaker)");
+  const localBusy = app.indexOf("localSttBusyByIdRef.current.has(channelId)");
+  const liveEnqueue = app.indexOf("enqueueLiveChunkBlob(channelId, blob, speaker)");
+  const liveBusy = app.indexOf("liveChunkBusyByIdRef.current.has(channelId)");
+
+  assert.ok(localEnqueue > 0 && localBusy > localEnqueue, "local STT must enqueue before checking busy state");
+  assert.ok(liveEnqueue > 0 && liveBusy > liveEnqueue, "live chunk STT must enqueue before checking busy state");
+  assert.match(app, /localSttQueueByIdRef/);
+  assert.match(app, /liveChunkQueueByIdRef/);
+  assert.doesNotMatch(app, /channels\.slice\(1\).*stop/s);
+});
+
 test("acceptance: realistic interview exchange preserves roles and asks for correction", () => {
   const transcript = new TranscriptBuffer();
   transcript.append("What is SQL?", "stt", 1000, "interviewer");
