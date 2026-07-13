@@ -904,6 +904,11 @@ const sendToOverlay = (channel, payload) => {
   overlayWindow?.webContents.send(channel, payload);
 };
 
+const sendToSessionWindows = (channel, payload) => {
+  overlayWindow?.webContents.send(channel, payload);
+  codingWindow?.webContents.send(channel, payload);
+};
+
 const createWindow = async () => {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -1043,6 +1048,11 @@ ipcMain.handle("transcript:publish", (_event, message) => {
 });
 ipcMain.handle("transcript:publish-live", (_event, message) => {
   sendToOverlay("transcript:live", message);
+  return { ok: true };
+});
+
+ipcMain.handle("answer:publish-structured", (_event, payload) => {
+  sendToSessionWindows("answer:structured", payload);
   return { ok: true };
 });
 ipcMain.handle("settings:get", () => readSettings());

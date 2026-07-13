@@ -11,7 +11,6 @@ const electronBin = process.platform === "win32"
 const debugPort = Number(process.env.CALLPILOT_E2E_DEBUG_PORT || 9339);
 const mockPort = Number(process.env.CALLPILOT_E2E_MOCK_PORT || 9340);
 const thresholds = {
-  headlineMs: 1000,
   firstDetailMs: 1500,
   answerCompleteMs: 2500,
   transcriptionMs: 1200,
@@ -63,9 +62,18 @@ const mockOpenAI = http.createServer(async (request, response) => {
       await sleep(payload.text?.format?.type === "json_schema" ? 160 : 180);
       if (payload.text?.format?.type === "json_schema") {
         json(response, createOutputPayload(JSON.stringify({
-          headline: "I chose SQL because consistency was the product risk.",
-          keywords: ["SQL", "ACID", "audits"],
-          detail: "",
+          kind: "interview",
+          payload: {
+            version: "1",
+            answerNeeded: true,
+            intent: "technical_qa",
+            spokenAnswer: "I chose SQL because consistency was the product risk.",
+            keyPoints: ["SQL", "ACID", "audits"],
+            correction: { needed: false, transition: null, correctedClaim: null },
+            assumptions: [],
+            evidenceRefs: [],
+            followUpHint: null,
+          },
         })));
         return;
       }
@@ -231,9 +239,6 @@ const run = async () => {
       };
       const events = [];
       const t0 = performance.now();
-      const offHeadline = window.callpilotDesktop.onAnswerHeadline((payload) => {
-        events.push({ type: "headline", at: performance.now() - t0, payload });
-      });
       const offDetail = window.callpilotDesktop.onAnswerDetailChunk((chunk) => {
         events.push({ type: "detail", at: performance.now() - t0, chunk });
       });
@@ -243,7 +248,6 @@ const run = async () => {
         apiKey: "callpilot-e2e-key",
         prompt
       });
-      offHeadline();
       offDetail();
       resolve({ result, events, totalMs: performance.now() - t0 });
     })`);
@@ -309,6 +313,45 @@ const run = async () => {
       text: document.body.innerText
     })`);
 
+    await evaluate(client, `window.callpilotDesktop.publishStructuredAnswer({
+      requestId: "journey-coding-1",
+      timestamp: Date.now(),
+      renderedText: "**Respuesta:** Use a hash map.",
+      answer: {
+        kind: "coding",
+        payload: {
+          version: "1",
+          answerNeeded: true,
+          responseType: "initial_solution",
+          problem: {
+            title: "Two Sum",
+            summary: "Find two indices that add to the target.",
+            language: "Python",
+            functionSignature: "def two_sum(nums, target):",
+            constraints: ["Return any valid pair"]
+          },
+          solution: {
+            approachSteps: ["Store seen values in a dictionary.", "Check each complement before inserting the current value."],
+            code: "def two_sum(nums, target):\\n    seen = {}\\n    for i, num in enumerate(nums):\\n        need = target - num\\n        if need in seen:\\n            return [seen[need], i]\\n        seen[num] = i\\n    return []",
+            complexity: { time: "O(n)", space: "O(n)", rationale: "One pass with hash lookups." },
+            edgeCases: ["Duplicate values", "No valid pair"],
+            invariants: []
+          },
+          narration: { spokenAnswer: "I will trade O(n) memory for a single pass lookup.", currentStep: "Implementing the hash map." },
+          tests: [{ input: "[2,7,11,15], 9", expected: "[0,1]", rationale: "2 + 7 = 9" }],
+          patch: { kind: "none", code: null }
+        }
+      }
+    })`);
+    await sleep(100);
+    const codingRenderedUi = await evaluate(codingClient, `({
+      hasTwoSum: /Two Sum/i.test(document.body.innerText || ""),
+      hasCode: /def two_sum/.test(document.body.innerText || ""),
+      hasApproach: /dictionary|complement/i.test(document.body.innerText || ""),
+      hasComplexity: /O\\(n\\)/.test(document.body.innerText || ""),
+      text: document.body.innerText
+    })`);
+
     await evaluate(client, `window.callpilotDesktop.publishTranscriptMessage({
       id: "journey-recruiter-1",
       speaker: "recruiter",
@@ -341,16 +384,13 @@ const run = async () => {
     await evaluate(client, `window.callpilotDesktop.endSession()`);
     client.close();
 
-    const headlineEvent = metrics.events.find((event) => event.type === "headline");
     const firstDetailEvent = metrics.events.find((event) => event.type === "detail");
     const report = {
       generatedAt: new Date().toISOString(),
       thresholds,
       answer: {
-        headlineMs: Number((headlineEvent?.at ?? Infinity).toFixed(2)),
         firstDetailMs: Number((firstDetailEvent?.at ?? Infinity).toFixed(2)),
         totalMs: Number(metrics.totalMs.toFixed(2)),
-        headlineBeforeDetail: Boolean(headlineEvent && firstDetailEvent && headlineEvent.at <= firstDetailEvent.at),
         ok: metrics.result.ok,
       },
       transcription: {
@@ -373,6 +413,7 @@ const run = async () => {
       coding: {
         ok: Boolean(codingInitialUi.hasCodingRoot && codingInitialUi.hasCodePanel && codingInitialUi.hasReasoningPanel),
         initialUi: codingInitialUi,
+        renderedUi: codingRenderedUi,
       },
       setupUi,
     };
@@ -381,8 +422,6 @@ const run = async () => {
 
     const failures = [];
     if (!report.answer.ok) failures.push("answer generation failed");
-    if (!report.answer.headlineBeforeDetail) failures.push("headline did not arrive before detail");
-    if (report.answer.headlineMs > thresholds.headlineMs) failures.push(`headline too slow: ${report.answer.headlineMs}ms`);
     if (report.answer.firstDetailMs > thresholds.firstDetailMs) failures.push(`first detail too slow: ${report.answer.firstDetailMs}ms`);
     if (report.answer.totalMs > thresholds.answerCompleteMs) failures.push(`answer total too slow: ${report.answer.totalMs}ms`);
     if (!report.transcription.ok || !/approach/i.test(report.transcription.text)) failures.push("transcription failed expected text");
@@ -393,13 +432,12 @@ const run = async () => {
     if (!report.setupUi.hasRoot || !report.setupUi.hasStartSession || !report.setupUi.hasSetupCards || !report.setupUi.hasContextFields) failures.push("setup UI did not render expected controls");
     if (!report.overlay.initialUi.hasOverlayRoot || !report.overlay.initialUi.hasOverlayBar) failures.push("overlay UI did not render expected shell");
     if (!report.coding.ok) failures.push("coding overlay did not render expected workspace");
+    if (!report.coding.renderedUi.hasTwoSum || !report.coding.renderedUi.hasCode || !report.coding.renderedUi.hasApproach || !report.coding.renderedUi.hasComplexity) failures.push("coding overlay did not render structured solution");
     if (report.overlay.initialUi.hasConfigControls) failures.push("overlay exposes setup/config controls");
     if (!report.overlay.answerOk) failures.push("overlay answer generation failed");
     if (!report.overlay.renderedUi.hasRecruiterBubble) failures.push("overlay did not render transcript bubble");
     if (!report.overlay.renderedUi.hasAssistantBubble) failures.push("overlay did not render assistant bubble");
-    if (!/SQL|consistency|product risk/i.test(report.overlay.renderedUi.headline)) failures.push("overlay headline content missing");
-    if (report.overlay.renderedUi.keywords.length < 3) failures.push("overlay keywords missing");
-    if (!/tradeoff|consistency/i.test(report.overlay.renderedUi.detail)) failures.push("overlay detail stream did not render");
+    if (!/tradeoff|consistency/i.test(report.overlay.renderedUi.detail)) failures.push("overlay detail did not render");
 
     if (failures.length > 0) {
       console.error(`User journey failed: ${failures.join("; ")}`);

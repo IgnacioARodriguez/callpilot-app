@@ -1,4 +1,4 @@
-import type { AssistantModeId, AudioTranscriptionResult, GenerateAnswerInput, GenerateAnswerResult, LiveAudioSource, LiveLatencyPreset, LiveTranscriptionProvider, ModelProvider, OcrLanguage, OcrResult, OllamaModelListResult, PrivacyCheckResult, SavedSession, StealthState } from "./core";
+import type { AssistantModeId, AudioTranscriptionResult, GenerateAnswerInput, GenerateAnswerResult, LiveAudioSource, LiveLatencyPreset, LiveTranscriptionProvider, ModelProvider, OcrLanguage, OcrResult, OllamaModelListResult, PrivacyCheckResult, SavedSession, StealthState, StructuredAnswerPayload } from "./core";
 
 export type DesktopShortcutAction =
   | { type: "ask" }
@@ -119,6 +119,7 @@ declare global {
       requestAnswer: () => Promise<{ ok: boolean; error?: string }>;
       publishTranscriptMessage: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishLiveTranscript: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
+      publishStructuredAnswer: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => Promise<{ ok: boolean }>;
       listOllamaModels: (input?: { ollamaBaseUrl?: string }) => Promise<OllamaModelListResult>;
       generateAnswer: (input: GenerateAnswerInput) => Promise<GenerateAnswerResult>;
       transcribeAudio: (input: {
@@ -154,6 +155,7 @@ declare global {
       onManualAnswerStatus: (callback: (payload: { ok: boolean; status: string; error?: string }) => void) => () => void;
       onAnswerHeadline: (callback: (payload: { requestId?: string; headline: string; keywords: string[] }) => void) => () => void;
       onAnswerDetailChunk: (callback: (payload: { requestId?: string; sequence?: number; text?: string; done?: boolean; error?: string } | string) => void) => () => void;
+      onStructuredAnswer: (callback: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => void) => () => void;
       onTranscriptMessage: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onLiveTranscript: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onNativelyTranscript: (callback: (payload: { streamId: string; text: string; isFinal: boolean; confidence: number }) => void) => () => void;

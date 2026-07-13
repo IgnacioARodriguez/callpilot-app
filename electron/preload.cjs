@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   requestAnswer: () => ipcRenderer.invoke("answer:request"),
   publishTranscriptMessage: (message) => ipcRenderer.invoke("transcript:publish", message),
   publishLiveTranscript: (message) => ipcRenderer.invoke("transcript:publish-live", message),
+  publishStructuredAnswer: (payload) => ipcRenderer.invoke("answer:publish-structured", payload),
   listOllamaModels: (input) => ipcRenderer.invoke("ollama:list-models", input),
   generateAnswer: (input) => ipcRenderer.invoke("model:generate", input),
   transcribeAudio: (input) => ipcRenderer.invoke("audio:transcribe", input),
@@ -57,6 +58,11 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     const handler = (_event, chunk) => callback(chunk);
     ipcRenderer.on("answer:detail-chunk", handler);
     return () => ipcRenderer.removeListener("answer:detail-chunk", handler);
+  },
+  onStructuredAnswer: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("answer:structured", handler);
+    return () => ipcRenderer.removeListener("answer:structured", handler);
   },
   onTranscriptMessage: (callback) => {
     const handler = (_event, message) => callback(message);

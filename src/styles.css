@@ -403,6 +403,29 @@ button:disabled {
   line-height: 1.55;
 }
 
+.cp-code-placeholder {
+  min-height: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 18px;
+  text-align: center;
+  background: #101820;
+  color: #d8f3dc;
+}
+
+.cp-code-placeholder strong {
+  font-size: 13px;
+}
+
+.cp-code-placeholder span {
+  color: #9fb6c4;
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 280px;
+}
+
 .cp-mini-chat {
   min-height: 0;
   overflow: auto;
@@ -430,7 +453,11 @@ button:disabled {
   color: #425166;
   font-size: 12px;
   line-height: 1.45;
-  margin: 0;
+  margin: 0 0 6px;
+}
+
+.cp-mini-chat p:last-child {
+  margin-bottom: 0;
 }
 
 textarea,

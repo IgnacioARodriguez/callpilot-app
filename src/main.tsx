@@ -603,6 +603,14 @@ function App() {
         : `Generation failed: ${result.error ?? "unknown error"}`;
       if (activeAnswerRequestIdRef.current === requestId) {
         setAnswer(text);
+        if (structured) {
+          void window.callpilotDesktop.publishStructuredAnswer?.({
+            requestId,
+            answer: structured,
+            renderedText: text,
+            timestamp: Date.now(),
+          });
+        }
         appendAssistantTranscriptLine(text);
       }
     } finally {
