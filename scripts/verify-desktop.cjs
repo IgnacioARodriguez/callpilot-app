@@ -46,7 +46,7 @@ for (const needle of ["setContentProtection", "setIgnoreMouseEvents", "globalSho
 }
 
 const preloadSource = fs.readFileSync(path.join(root, "electron/preload.cjs"), "utf8");
-for (const needle of ["generateAnswer", "listOllamaModels", "captureScreenshot", "recognizeScreenText", "transcribeAudio", "runPrivacyCheck", "applyShareSafe"]) {
+for (const needle of ["generateAnswer", "listOllamaModels", "captureScreenshot", "recognizeScreenText", "transcribeAudio", "runPrivacyCheck", "applyShareSafe", "getSessionTraceStatus"]) {
   if (!preloadSource.includes(needle)) {
     console.error(`Electron preload is missing expected bridge capability: ${needle}`);
     process.exit(1);

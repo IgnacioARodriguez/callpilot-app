@@ -344,6 +344,7 @@ const run = async () => {
       }
     })`);
     await sleep(100);
+    const traceStatusBeforeEnd = await evaluate(client, `window.callpilotDesktop.getSessionTraceStatus()`);
     const codingRenderedUi = await evaluate(codingClient, `({
       hasTwoSum: /Two Sum/i.test(document.body.innerText || ""),
       hasCode: /def two_sum/.test(document.body.innerText || ""),
@@ -381,7 +382,7 @@ const run = async () => {
     overlayClient.close();
     codingClient.close();
 
-    await evaluate(client, `window.callpilotDesktop.endSession()`);
+    const endSessionResult = await evaluate(client, `window.callpilotDesktop.endSession()`);
     client.close();
 
     const firstDetailEvent = metrics.events.find((event) => event.type === "detail");
@@ -415,6 +416,12 @@ const run = async () => {
         initialUi: codingInitialUi,
         renderedUi: codingRenderedUi,
       },
+      trace: {
+        activeBeforeEnd: Boolean(traceStatusBeforeEnd?.active),
+        eventCountBeforeEnd: traceStatusBeforeEnd?.eventCount || 0,
+        path: endSessionResult?.tracePath || traceStatusBeforeEnd?.path || "",
+        ok: Boolean((endSessionResult?.tracePath || traceStatusBeforeEnd?.path) && (traceStatusBeforeEnd?.eventCount || 0) >= 3),
+      },
       setupUi,
     };
 
@@ -433,6 +440,7 @@ const run = async () => {
     if (!report.overlay.initialUi.hasOverlayRoot || !report.overlay.initialUi.hasOverlayBar) failures.push("overlay UI did not render expected shell");
     if (!report.coding.ok) failures.push("coding overlay did not render expected workspace");
     if (!report.coding.renderedUi.hasTwoSum || !report.coding.renderedUi.hasCode || !report.coding.renderedUi.hasApproach || !report.coding.renderedUi.hasComplexity) failures.push("coding overlay did not render structured solution");
+    if (!report.trace.ok) failures.push("session trace was not recorded");
     if (report.overlay.initialUi.hasConfigControls) failures.push("overlay exposes setup/config controls");
     if (!report.overlay.answerOk) failures.push("overlay answer generation failed");
     if (!report.overlay.renderedUi.hasRecruiterBubble) failures.push("overlay did not render transcript bubble");

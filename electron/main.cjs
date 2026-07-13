@@ -60,6 +60,111 @@ const supportedAudioMimeTypes = new Set([
 const userDataPath = () => app.getPath("userData");
 const settingsPath = () => path.join(userDataPath(), "settings.json");
 const credentialsPath = () => path.join(userDataPath(), "credentials.json");
+const sessionReportsDir = () => path.join(userDataPath(), "reports", "sessions");
+
+let activeSessionTrace = null;
+
+const safeIsoStamp = () => new Date().toISOString().replace(/[:.]/g, "-");
+const hashText = (value) => crypto.createHash("sha256").update(String(value || "")).digest("hex").slice(0, 16);
+const textSummary = (value, maxPreview = 160) => {
+  const text = String(value || "");
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return {
+    chars: text.length,
+    lines: text ? text.split(/\r?\n/).length : 0,
+    hash: hashText(text),
+    preview: normalized.slice(0, maxPreview),
+    truncated: normalized.length > maxPreview,
+  };
+};
+const promptSummary = (prompt) => ({
+  system: textSummary(prompt?.system, 120),
+  user: textSummary(prompt?.user, 180),
+  debug: prompt?.debug ? {
+    modeId: prompt.debug.modeId,
+    includedSections: prompt.debug.includedSections,
+    omittedSections: prompt.debug.omittedSections,
+    approximateChars: prompt.debug.approximateChars,
+    selectedEvidenceCount: Array.isArray(prompt.debug.selectedEvidence) ? prompt.debug.selectedEvidence.length : 0,
+    evidenceQueryTerms: Array.isArray(prompt.debug.evidenceQueryTerms) ? prompt.debug.evidenceQueryTerms.slice(0, 24) : [],
+  } : null,
+});
+const resultSummary = (result) => ({
+  ok: Boolean(result?.ok),
+  provider: result?.provider,
+  modelName: result?.modelName,
+  requestId: result?.requestId,
+  error: result?.error,
+  text: textSummary(result?.text, 160),
+});
+const appendTraceEvent = (type, payload = {}) => {
+  if (!activeSessionTrace) return;
+  activeSessionTrace.events.push({
+    index: activeSessionTrace.events.length,
+    at: new Date().toISOString(),
+    elapsedMs: Date.now() - activeSessionTrace.startedAtMs,
+    type,
+    ...payload,
+  });
+};
+const writeActiveSessionTrace = (status = "active") => {
+  if (!activeSessionTrace) return null;
+  activeSessionTrace.status = status;
+  activeSessionTrace.updatedAt = new Date().toISOString();
+  activeSessionTrace.durationMs = Date.now() - activeSessionTrace.startedAtMs;
+  fs.mkdirSync(path.dirname(activeSessionTrace.path), { recursive: true });
+  const serialized = {
+    ...activeSessionTrace,
+    startedAtMs: undefined,
+  };
+  fs.writeFileSync(activeSessionTrace.path, `${JSON.stringify(serialized, null, 2)}\n`);
+  return activeSessionTrace.path;
+};
+const startSessionTrace = (options = {}) => {
+  const id = `session-${safeIsoStamp()}-${crypto.randomBytes(3).toString("hex")}`;
+  activeSessionTrace = {
+    schemaVersion: 1,
+    id,
+    status: "active",
+    mode: options?.mode || "technical_qa",
+    startedAt: new Date().toISOString(),
+    startedAtMs: Date.now(),
+    updatedAt: new Date().toISOString(),
+    durationMs: 0,
+    path: path.join(sessionReportsDir(), `${id}.metrics.json`),
+    privacy: {
+      detailedContent: false,
+      storesRawAudio: false,
+      storesScreenshots: false,
+      storesApiKeys: false,
+      transcriptTextMode: "preview_hash_only",
+      promptTextMode: "preview_hash_only",
+    },
+    settings: (() => {
+      const settings = readSettings();
+      return {
+        modelProvider: settings.modelProvider,
+        modelName: settings.modelName,
+        liveTranscriptionProvider: settings.liveTranscriptionProvider,
+        liveLatencyPreset: settings.liveLatencyPreset,
+        liveAudioSource: settings.liveAudioSource,
+        preferredLanguage: settings.preferredLanguage,
+        activeMode: settings.activeMode,
+      };
+    })(),
+    events: [],
+  };
+  appendTraceEvent("session_started", { mode: activeSessionTrace.mode });
+  writeActiveSessionTrace("active");
+  return activeSessionTrace;
+};
+const finishSessionTrace = () => {
+  if (!activeSessionTrace) return null;
+  appendTraceEvent("session_ended", {});
+  const tracePath = writeActiveSessionTrace("ended");
+  activeSessionTrace = null;
+  return tracePath;
+};
 
 const readSettings = () => {
   try {
@@ -1034,6 +1139,7 @@ ipcMain.handle("stealth:reset-privacy", () => {
 });
 ipcMain.handle("privacy:check", () => assessPrivacyState());
 ipcMain.handle("session:start", async (_event, options = {}) => {
+  startSessionTrace(options);
   await createOverlayWindow();
   if (options.mode === "live_coding") {
     await createCodingWindow();
@@ -1041,15 +1147,29 @@ ipcMain.handle("session:start", async (_event, options = {}) => {
     closeCodingWindow();
   }
   mainWindow?.hide();
+  appendTraceEvent("session_windows_ready", { mode: options.mode || "technical_qa", hasCodingWindow: Boolean(codingWindow) });
+  writeActiveSessionTrace("active");
   return { ok: true };
 });
 ipcMain.handle("session:end", () => {
   closeOverlayWindow();
   closeCodingWindow();
   mainWindow?.show();
-  return { ok: true };
+  const tracePath = finishSessionTrace();
+  return { ok: true, tracePath };
 });
+ipcMain.handle("session:trace-status", () => activeSessionTrace ? {
+  ok: true,
+  active: true,
+  id: activeSessionTrace.id,
+  path: activeSessionTrace.path,
+  eventCount: activeSessionTrace.events.length,
+  startedAt: activeSessionTrace.startedAt,
+  updatedAt: activeSessionTrace.updatedAt,
+} : { ok: true, active: false });
 ipcMain.handle("answer:request", () => {
+  appendTraceEvent("manual_answer_requested", {});
+  writeActiveSessionTrace("active");
   if (!mainWindow || mainWindow.webContents.isDestroyed()) {
     sendToOverlay("answer:manual-status", { ok: false, status: "main_window_unavailable" });
     return { ok: false, error: "main_window_unavailable" };
@@ -1059,15 +1179,35 @@ ipcMain.handle("answer:request", () => {
   return { ok: true };
 });
 ipcMain.handle("transcript:publish", (_event, message) => {
+  appendTraceEvent("transcript_final", {
+    speaker: message?.speaker,
+    messageId: message?.id,
+    sourceTimestamp: message?.timestamp,
+    text: textSummary(message?.text, 140),
+  });
+  writeActiveSessionTrace("active");
   sendToOverlay("transcript:message", message);
   return { ok: true };
 });
 ipcMain.handle("transcript:publish-live", (_event, message) => {
+  appendTraceEvent("transcript_partial", {
+    speaker: message?.speaker,
+    messageId: message?.id,
+    sourceTimestamp: message?.timestamp,
+    text: textSummary(message?.text, 120),
+  });
+  writeActiveSessionTrace("active");
   sendToOverlay("transcript:live", message);
   return { ok: true };
 });
 
 ipcMain.handle("answer:publish-structured", (_event, payload) => {
+  appendTraceEvent("answer_structured_published", {
+    requestId: payload?.requestId,
+    kind: payload?.answer?.kind,
+    renderedText: textSummary(payload?.renderedText, 160),
+  });
+  writeActiveSessionTrace("active");
   sendToSessionWindows("answer:structured", payload);
   return { ok: true };
 });
@@ -1080,8 +1220,11 @@ ipcMain.handle("credentials:save-natively-key", (_event, apiKey) => saveStoredNa
 ipcMain.handle("credentials:clear-openai-key", () => clearStoredOpenAIKey());
 ipcMain.handle("credentials:clear-natively-key", () => clearStoredNativelyKey());
 ipcMain.handle("natively:start", async (_event, input) => {
+  const startedAt = Date.now();
   const WebSocketCtor = globalThis.WebSocket;
   if (typeof WebSocketCtor !== "function") {
+    appendTraceEvent("natively_stream_start_failed", { error: "websocket_unavailable" });
+    writeActiveSessionTrace("active");
     return { ok: false, error: "websocket_unavailable" };
   }
   const streamId = typeof input?.streamId === "string" && input.streamId.trim() ? input.streamId.trim() : `natively-${Date.now()}`;
@@ -1089,10 +1232,23 @@ ipcMain.handle("natively:start", async (_event, input) => {
   const apiKey = typeof input?.apiKey === "string" && input.apiKey.trim()
     ? input.apiKey.trim()
     : process.env.NATIVELY_API_KEY || getStoredNativelyKey();
-  if (!apiKey) return { ok: false, error: "missing_natively_api_key" };
+  if (!apiKey) {
+    appendTraceEvent("natively_stream_start_failed", { streamId, error: "missing_natively_api_key" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "missing_natively_api_key" };
+  }
   const sampleRate = Number.isFinite(input?.sampleRate) ? Math.max(8000, Math.min(48000, Math.round(Number(input.sampleRate)))) : 16000;
   const channel = input?.channel === "mic" ? "mic" : "system";
   const language = nativelyLanguageForPreference(input?.language);
+  appendTraceEvent("natively_stream_started", {
+    streamId,
+    channel,
+    sampleRate,
+    requestedLanguage: input?.language,
+    normalizedLanguage: language.language,
+    durationMs: Date.now() - startedAt,
+  });
+  writeActiveSessionTrace("active");
   const ws = new WebSocketCtor(nativelyTranscriptionUrl());
   nativelyStreams.set(streamId, {
     ws,
@@ -1142,6 +1298,13 @@ ipcMain.handle("natively:start", async (_event, input) => {
           isFinal: Boolean(message.is_final),
           confidence: typeof message.confidence === "number" ? message.confidence : 1,
         };
+        appendTraceEvent("natively_transcript", {
+          streamId,
+          isFinal: payload.isFinal,
+          confidence: payload.confidence,
+          text: textSummary(payload.text, 120),
+        });
+        writeActiveSessionTrace("active");
         mainWindow?.webContents.send("natively:transcript", payload);
       }
     } catch {
@@ -1161,24 +1324,43 @@ ipcMain.handle("natively:start", async (_event, input) => {
 ipcMain.handle("natively:audio", (_event, input) => {
   const streamId = typeof input?.streamId === "string" ? input.streamId : "";
   const stream = nativelyStreams.get(streamId);
-  if (!stream || stream.closed) return { ok: false, error: "natively_stream_not_started" };
+  if (!stream || stream.closed) {
+    appendTraceEvent("natively_audio_rejected", { streamId, error: "natively_stream_not_started" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "natively_stream_not_started" };
+  }
   const rawAudio = input?.arrayBuffer;
   const audioBuffer = rawAudio instanceof ArrayBuffer
     ? Buffer.from(rawAudio)
     : ArrayBuffer.isView(rawAudio)
       ? Buffer.from(rawAudio.buffer, rawAudio.byteOffset, rawAudio.byteLength)
       : Buffer.alloc(0);
-  if (audioBuffer.length === 0) return { ok: false, error: "empty_audio_chunk" };
+  if (audioBuffer.length === 0) {
+    appendTraceEvent("natively_audio_rejected", { streamId, error: "empty_audio_chunk" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "empty_audio_chunk" };
+  }
+  const queuedBefore = stream.queue.length;
   if (stream.connected && stream.ws?.readyState === globalThis.WebSocket.OPEN) {
     stream.ws.send(audioBuffer);
   } else {
     stream.queue.push(audioBuffer);
     if (stream.queue.length > 500) stream.queue.shift();
   }
+  appendTraceEvent("natively_audio_chunk", {
+    streamId,
+    bytes: audioBuffer.length,
+    connected: Boolean(stream.connected),
+    queuedBefore,
+    queuedAfter: stream.queue.length,
+  });
+  writeActiveSessionTrace("active");
   return { ok: true };
 });
 ipcMain.handle("natively:stop", (_event, input) => {
   const streamId = typeof input?.streamId === "string" ? input.streamId : "";
+  appendTraceEvent("natively_stop_requested", { streamId: streamId || "all" });
+  writeActiveSessionTrace("active");
   if (streamId) return stopNativelyStream(streamId);
   for (const id of [...nativelyStreams.keys()]) stopNativelyStream(id);
   return { ok: true };
@@ -1235,27 +1417,56 @@ ipcMain.handle("ollama:list-models", async (_event, input) => {
   }
 });
 ipcMain.handle("model:generate", async (_event, input) => {
+  const startedAt = Date.now();
   const provider = resolveAnswerProvider(input);
   const modelName = resolveAnswerModel(provider, input);
   const requestId = createAnswerRequestId(input);
   const normalizedInput = { ...(input || {}), requestId };
   const prompt = input?.prompt;
+  appendTraceEvent("model_generate_started", {
+    requestId,
+    provider: provider.id,
+    protocol: provider.protocol,
+    modelName,
+    structuredOutput: Boolean(input?.structuredOutput),
+    maxTokens: input?.maxTokens,
+    prompt: promptSummary(prompt),
+  });
+  writeActiveSessionTrace("active");
 
   let result;
-  if (provider.protocol === "mock") {
-    result = { ok: true, text: createMockAnswer(prompt), provider: provider.id, modelName, requestId };
-  } else if (provider.protocol === "ollama_chat") {
-    result = await generateWithOllamaChat({ provider, input: normalizedInput, prompt, modelName });
-  } else if (provider.protocol === "openai_chat") {
-    result = await generateWithOpenAICompatibleChat({ provider, input: normalizedInput, prompt, modelName });
-  } else if (provider.protocol === "openai_responses") {
-    result = await generateWithOpenAIResponses({ provider, input: normalizedInput, prompt, modelName, event: _event });
-  } else {
-    result = { ok: false, text: "", provider: provider.id, modelName, requestId, error: `unsupported_provider_protocol:${provider.protocol}` };
+  try {
+    if (provider.protocol === "mock") {
+      result = { ok: true, text: createMockAnswer(prompt), provider: provider.id, modelName, requestId };
+    } else if (provider.protocol === "ollama_chat") {
+      result = await generateWithOllamaChat({ provider, input: normalizedInput, prompt, modelName });
+    } else if (provider.protocol === "openai_chat") {
+      result = await generateWithOpenAICompatibleChat({ provider, input: normalizedInput, prompt, modelName });
+    } else if (provider.protocol === "openai_responses") {
+      result = await generateWithOpenAIResponses({ provider, input: normalizedInput, prompt, modelName, event: _event });
+    } else {
+      result = { ok: false, text: "", provider: provider.id, modelName, requestId, error: `unsupported_provider_protocol:${provider.protocol}` };
+    }
+  } catch (error) {
+    result = {
+      ok: false,
+      text: "",
+      provider: provider.id,
+      modelName,
+      requestId,
+      error: error instanceof Error ? error.message : "model_generation_failed",
+    };
   }
+  appendTraceEvent("model_generate_completed", {
+    requestId,
+    durationMs: Date.now() - startedAt,
+    result: resultSummary(result),
+  });
+  writeActiveSessionTrace("active");
   return result;
 });
 ipcMain.handle("audio:transcribe", async (_event, input) => {
+  const startedAt = Date.now();
   const provider = input?.provider === "natively" ? "natively" : "openai";
   const modelName = typeof input?.modelName === "string" && input.modelName.trim()
     ? input.modelName.trim()
@@ -1279,18 +1490,40 @@ ipcMain.handle("audio:transcribe", async (_event, input) => {
       ? Buffer.from(rawAudio.buffer, rawAudio.byteOffset, rawAudio.byteLength)
       : Buffer.alloc(0);
 
-  if (!apiKey) return { ok: false, text: "", modelName, error: provider === "natively" ? "missing_natively_api_key" : "missing_openai_api_key" };
+  appendTraceEvent("audio_transcribe_started", {
+    provider,
+    modelName,
+    mimeType,
+    fileName,
+    audioBytes: audioBuffer.length,
+  });
+  writeActiveSessionTrace("active");
+
+  const finishTranscriptionTrace = (result) => {
+    appendTraceEvent("audio_transcribe_completed", {
+      provider,
+      modelName: result?.modelName || modelName,
+      durationMs: Date.now() - startedAt,
+      ok: Boolean(result?.ok),
+      error: result?.error,
+      text: textSummary(result?.text, 140),
+    });
+    writeActiveSessionTrace("active");
+    return result;
+  };
+
+  if (!apiKey) return finishTranscriptionTrace({ ok: false, text: "", modelName, error: provider === "natively" ? "missing_natively_api_key" : "missing_openai_api_key" });
   if (provider === "natively") {
-    return {
+    return finishTranscriptionTrace({
       ok: false,
       text: "",
       modelName: "natively-stt",
       error: "natively_pcm_streaming_not_configured",
-    };
+    });
   }
-  if (!supportedAudioMimeTypes.has(mimeType)) return { ok: false, text: "", modelName, error: "unsupported_audio_type" };
-  if (audioBuffer.length === 0) return { ok: false, text: "", modelName, error: "empty_audio_file" };
-  if (audioBuffer.length > openAITranscriptionMaxBytes) return { ok: false, text: "", modelName, error: "audio_file_too_large" };
+  if (!supportedAudioMimeTypes.has(mimeType)) return finishTranscriptionTrace({ ok: false, text: "", modelName, error: "unsupported_audio_type" });
+  if (audioBuffer.length === 0) return finishTranscriptionTrace({ ok: false, text: "", modelName, error: "empty_audio_file" });
+  if (audioBuffer.length > openAITranscriptionMaxBytes) return finishTranscriptionTrace({ ok: false, text: "", modelName, error: "audio_file_too_large" });
 
   try {
     const form = new FormData();
@@ -1311,49 +1544,100 @@ ipcMain.handle("audio:transcribe", async (_event, input) => {
       ? await response.json().catch(() => ({}))
       : await response.text().catch(() => "");
     if (!response.ok) {
-      return {
+      return finishTranscriptionTrace({
         ok: false,
         text: "",
         modelName,
         error: payload?.error?.message ?? `openai_http_${response.status}`,
-      };
+      });
     }
 
     const text = extractOpenAITranscriptionText(payload);
-    return { ok: Boolean(text), text, modelName, error: text ? undefined : "empty_transcription_response" };
+    return finishTranscriptionTrace({ ok: Boolean(text), text, modelName, error: text ? undefined : "empty_transcription_response" });
   } catch (error) {
-    return {
+    return finishTranscriptionTrace({
       ok: false,
       text: "",
       modelName,
       error: error instanceof Error ? error.message : "audio_transcription_failed",
-    };
+    });
   }
 });
 ipcMain.handle("screen:capture", async () => {
-  const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1600, height: 1000 } });
-  const source = sources[0];
-  if (!source) return { ok: false, error: "no_screen_source" };
-  const screenshotDir = path.join(userDataPath(), "screenshots");
-  fs.mkdirSync(screenshotDir, { recursive: true });
-  const filePath = path.join(screenshotDir, `screen-${Date.now()}.png`);
-  fs.writeFileSync(filePath, source.thumbnail.toPNG());
-  return { ok: true, path: filePath, displayName: source.name };
+  const startedAt = Date.now();
+  try {
+    const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1600, height: 1000 } });
+    const source = sources[0];
+    if (!source) {
+      appendTraceEvent("screen_capture_completed", { ok: false, durationMs: Date.now() - startedAt, error: "no_screen_source" });
+      writeActiveSessionTrace("active");
+      return { ok: false, error: "no_screen_source" };
+    }
+    const screenshotDir = path.join(userDataPath(), "screenshots");
+    fs.mkdirSync(screenshotDir, { recursive: true });
+    const filePath = path.join(screenshotDir, `screen-${Date.now()}.png`);
+    const png = source.thumbnail.toPNG();
+    fs.writeFileSync(filePath, png);
+    appendTraceEvent("screen_capture_completed", {
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      displayName: source.name,
+      bytes: png.length,
+      fileName: path.basename(filePath),
+    });
+    writeActiveSessionTrace("active");
+    return { ok: true, path: filePath, displayName: source.name };
+  } catch (error) {
+    appendTraceEvent("screen_capture_completed", {
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : "screen_capture_failed",
+    });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: error instanceof Error ? error.message : "screen_capture_failed" };
+  }
 });
-ipcMain.handle("screen:ocr", async (_event, input) => recognizeImageText({
-  imagePath: typeof input?.path === "string" ? input.path : "",
-  language: input?.language,
-}));
+ipcMain.handle("screen:ocr", async (_event, input) => {
+  const startedAt = Date.now();
+  const result = await recognizeImageText({
+    imagePath: typeof input?.path === "string" ? input.path : "",
+    language: input?.language,
+  });
+  appendTraceEvent("screen_ocr_completed", {
+    ok: Boolean(result?.ok),
+    durationMs: Date.now() - startedAt,
+    language: input?.language,
+    confidence: result?.confidence,
+    error: result?.error,
+    text: textSummary(result?.text, 160),
+  });
+  writeActiveSessionTrace("active");
+  return result;
+});
 ipcMain.handle("screen:analyze", async (_event, input) => {
+  const startedAt = Date.now();
   const imagePath = typeof input?.path === "string" ? input.path : "";
   const modelName = typeof input?.modelName === "string" && input.modelName.trim() ? input.modelName.trim() : settingsDefaults.modelName;
   const apiKey = typeof input?.apiKey === "string" && input.apiKey.trim()
     ? input.apiKey.trim()
     : process.env.OPENAI_API_KEY || getStoredOpenAIKey();
 
-  if (!apiKey) return { ok: false, text: "", error: "missing_openai_api_key" };
-  if (!modelName) return { ok: false, text: "", error: "missing_openai_model" };
-  if (!imagePath || !fs.existsSync(imagePath)) return { ok: false, text: "", error: "missing_screenshot_file" };
+  const finishScreenAnalysisTrace = (result) => {
+    appendTraceEvent("screen_analysis_completed", {
+      ok: Boolean(result?.ok),
+      durationMs: Date.now() - startedAt,
+      modelName,
+      error: result?.error,
+      imageFileName: imagePath ? path.basename(imagePath) : "",
+      text: textSummary(result?.text, 180),
+    });
+    writeActiveSessionTrace("active");
+    return result;
+  };
+
+  if (!apiKey) return finishScreenAnalysisTrace({ ok: false, text: "", error: "missing_openai_api_key" });
+  if (!modelName) return finishScreenAnalysisTrace({ ok: false, text: "", error: "missing_openai_model" });
+  if (!imagePath || !fs.existsSync(imagePath)) return finishScreenAnalysisTrace({ ok: false, text: "", error: "missing_screenshot_file" });
 
   try {
     const imageDataUrl = `data:image/png;base64,${fs.readFileSync(imagePath, "base64")}`;
@@ -1389,12 +1673,12 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return { ok: false, text: "", error: payload?.error?.message ?? `openai_http_${response.status}` };
+      return finishScreenAnalysisTrace({ ok: false, text: "", error: payload?.error?.message ?? `openai_http_${response.status}` });
     }
     const text = extractOpenAIResponseText(payload);
-    return { ok: Boolean(text), text, error: text ? undefined : "empty_openai_response" };
+    return finishScreenAnalysisTrace({ ok: Boolean(text), text, error: text ? undefined : "empty_openai_response" });
   } catch (error) {
-    return { ok: false, text: "", error: error instanceof Error ? error.message : "screen_analysis_failed" };
+    return finishScreenAnalysisTrace({ ok: false, text: "", error: error instanceof Error ? error.message : "screen_analysis_failed" });
   }
 });
 

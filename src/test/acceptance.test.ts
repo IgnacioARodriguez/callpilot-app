@@ -62,7 +62,7 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   const overlay = read("src/overlay/OverlayApp.tsx");
   const codingOverlay = read("src/overlay/CodingOverlayApp.tsx");
 
-  for (const needle of ["session:start", "session:end", "answer:request", "answer:manual-request", "answer:headline", "answer:detail-chunk", "answer:structured", "transcript:message"]) {
+  for (const needle of ["session:start", "session:end", "session:trace-status", "answer:request", "answer:manual-request", "answer:headline", "answer:detail-chunk", "answer:structured", "transcript:message"]) {
     assert.match(`${main}\n${preload}`, new RegExp(needle.replace(":", ":")));
   }
   assert.match(overlay, /cp-overlay/);
@@ -82,6 +82,24 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   assert.match(codingOverlay, /onStructuredAnswer/);
   assert.match(codingOverlay, /displayCode/);
   assert.doesNotMatch(codingOverlay, /starterCode/);
+});
+
+test("acceptance: normal sessions persist metrics traces", () => {
+  const main = read("electron/main.cjs");
+  const preload = read("electron/preload.cjs");
+  const app = read("src/main.tsx");
+
+  assert.match(main, /sessionReportsDir/);
+  assert.match(main, /startSessionTrace/);
+  assert.match(main, /finishSessionTrace/);
+  assert.match(main, /appendTraceEvent\("model_generate_started"/);
+  assert.match(main, /appendTraceEvent\("model_generate_completed"/);
+  assert.match(main, /appendTraceEvent\("audio_transcribe_completed"/);
+  assert.match(main, /appendTraceEvent\("screen_capture_completed"/);
+  assert.match(main, /storesRawAudio:\s*false/);
+  assert.match(main, /storesScreenshots:\s*false/);
+  assert.match(preload, /getSessionTraceStatus/);
+  assert.match(app, /Metrics trace:/);
 });
 
 test("acceptance: answer providers are routed through a registry", () => {

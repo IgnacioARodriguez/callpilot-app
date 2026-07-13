@@ -1435,7 +1435,14 @@ function App() {
     if (isDictating) stopLiveRecording();
     await toggleDictation(true);
     const result = await window.callpilotDesktop.startSession({ mode: selectedSetup === "live_coding" ? "live_coding" : "technical_qa" });
-    setDesktopStatus(result.ok ? "Overlay session started with listening and auto-answer on" : `Overlay failed: ${result.error ?? "unknown"}`);
+    if (result.ok) {
+      const traceStatus = await window.callpilotDesktop.getSessionTraceStatus?.();
+      setDesktopStatus(traceStatus?.path
+        ? `Overlay session started. Metrics trace: ${traceStatus.path}`
+        : "Overlay session started with listening and auto-answer on");
+    } else {
+      setDesktopStatus(`Overlay failed: ${result.error ?? "unknown"}`);
+    }
     if (result.ok) void warmAnswerModel();
   }, [applyInterviewSetup, isDictating, selectedSetup, toggleDictation, warmAnswerModel]);
 
