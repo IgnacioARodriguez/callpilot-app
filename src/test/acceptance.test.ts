@@ -81,11 +81,15 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
 
 test("acceptance: answer providers are routed through a registry", () => {
   const main = read("electron/main.cjs");
+  const app = read("src/main.tsx");
 
   assert.match(main, /providerPresets/);
   assert.match(main, /protocol:\s*"openai_chat"/);
   assert.match(main, /protocol:\s*"openai_responses"/);
   assert.match(main, /generateWithOpenAICompatibleChat/);
+  assert.match(main, /structuredAnswerPayloadJsonSchema/);
+  assert.match(main, /input\?\.structuredOutput/);
+  assert.match(app, /structuredOutput:\s*true/);
   assert.match(main, /nvidia/);
 });
 

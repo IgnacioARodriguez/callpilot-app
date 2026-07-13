@@ -311,6 +311,27 @@ test("structured answer parser repairs small missing closing braces", () => {
   assert.match(structured ? formatStructuredAnswerPayload(structured) : "", /Short answer/);
 });
 
+test("structured renderer removes duplicated model labels", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      spokenAnswer: "**Respuesta:** SQL is declarative.",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+    },
+  }));
+  const rendered = structured ? formatStructuredAnswerPayload(structured) : "";
+
+  assert.equal((rendered.match(/\*\*Respuesta:\*\*/g) ?? []).length, 1);
+  assert.doesNotMatch(rendered, /\*\*Respuesta:\*\*\s+\*\*Respuesta:\*\*/);
+});
+
 test("live conversation auto answer respects cooldown", () => {
   const detection = detectQuestionIntent("What tradeoffs did you consider?");
 

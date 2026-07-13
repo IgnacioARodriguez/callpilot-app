@@ -1,5 +1,5 @@
 import type { BuiltPrompt } from "./promptBuilder.ts";
-import { STRUCTURED_ANSWER_JSON_SCHEMA } from "./answerSchema.ts";
+import { STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA } from "./answerPayload.ts";
 
 export type ModelProvider = "mock" | "openai" | "ollama" | "natively" | "nvidia";
 export type AudioTranscriptionModel = "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | "gpt-4o-transcribe-diarize" | "whisper-1";
@@ -24,6 +24,7 @@ export interface GenerateAnswerInput {
   modelName: string;
   prompt: BuiltPrompt;
   requestId?: string;
+  structuredOutput?: boolean;
   apiKey?: string;
   nativelyApiKey?: string;
   ollamaBaseUrl?: string;
@@ -134,9 +135,9 @@ export const buildOpenAIStructuredAnswerRequest = (prompt: BuiltPrompt, modelNam
   text: {
     format: {
       type: "json_schema",
-      name: STRUCTURED_ANSWER_JSON_SCHEMA.name,
+      name: STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA.name,
       strict: true,
-      schema: STRUCTURED_ANSWER_JSON_SCHEMA.schema,
+      schema: STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA.schema,
     },
   },
 });

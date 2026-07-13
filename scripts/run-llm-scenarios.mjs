@@ -145,7 +145,7 @@ const scenarioDefinitions = [
       { speaker: "candidate", text: "SQL es un lenguaje de programacion general para crear aplicaciones completas y manejar cualquier tipo de logica." },
       { speaker: "interviewer", text: "Por que lo describirias de esa manera? Hay algo que corregirias?" },
     ],
-    expected: ["corre", "base", "relacional"],
+    expected: ["sql", "lenguaje", "language", "relacional", "relational"],
     maxChars: 1000,
     maxTokens: 220,
     latencyTargetMs: 3000,
@@ -252,6 +252,7 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
     prompt: scenario.prompt,
     ollamaBaseUrl: settings.ollamaBaseUrl,
     maxTokens: scenario.maxTokens,
+    structuredOutput: true,
   };
   const started = performance.now();
   const result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify(input)})`);

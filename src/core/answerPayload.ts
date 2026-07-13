@@ -55,10 +55,114 @@ export type StructuredAnswerPayload =
   | { kind: "interview"; payload: InterviewAnswerPayload }
   | { kind: "coding"; payload: CodingAnswerPayload };
 
+export const STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA = {
+  name: "callpilot_structured_answer",
+  schema: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["interview", "coding"] },
+      payload: {
+        type: "object",
+        properties: {
+          version: { type: "string", enum: ["1"] },
+          answerNeeded: { type: "boolean" },
+          intent: { type: "string" },
+          responseType: { type: "string" },
+          spokenAnswer: { type: "string" },
+          keyPoints: { type: "array", items: { type: "string" } },
+          correction: {
+            type: "object",
+            properties: {
+              needed: { type: "boolean" },
+              transition: { type: ["string", "null"] },
+              correctedClaim: { type: ["string", "null"] },
+            },
+            required: ["needed", "transition", "correctedClaim"],
+            additionalProperties: false,
+          },
+          assumptions: { type: "array", items: { type: "string" } },
+          evidenceRefs: { type: "array", items: { type: "string" } },
+          followUpHint: { type: ["string", "null"] },
+          problem: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              summary: { type: "string" },
+              language: { type: "string" },
+              functionSignature: { type: ["string", "null"] },
+              constraints: { type: "array", items: { type: "string" } },
+            },
+            required: ["title", "summary", "language", "functionSignature", "constraints"],
+            additionalProperties: false,
+          },
+          solution: {
+            type: "object",
+            properties: {
+              approachSteps: { type: "array", items: { type: "string" } },
+              code: { type: "string" },
+              complexity: {
+                type: "object",
+                properties: {
+                  time: { type: "string" },
+                  space: { type: "string" },
+                  rationale: { type: "string" },
+                },
+                required: ["time", "space", "rationale"],
+                additionalProperties: false,
+              },
+              edgeCases: { type: "array", items: { type: "string" } },
+              invariants: { type: "array", items: { type: "string" } },
+            },
+            required: ["approachSteps", "code", "complexity", "edgeCases", "invariants"],
+            additionalProperties: false,
+          },
+          narration: {
+            type: "object",
+            properties: {
+              spokenAnswer: { type: "string" },
+              currentStep: { type: "string" },
+            },
+            required: ["spokenAnswer", "currentStep"],
+            additionalProperties: false,
+          },
+          tests: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                input: { type: "string" },
+                expected: { type: "string" },
+                rationale: { type: "string" },
+              },
+              required: ["input", "expected", "rationale"],
+              additionalProperties: false,
+            },
+          },
+          patch: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["replace", "diff", "none"] },
+              code: { type: ["string", "null"] },
+            },
+            required: ["kind", "code"],
+            additionalProperties: false,
+          },
+        },
+        required: ["version", "answerNeeded"],
+        additionalProperties: false,
+      },
+    },
+    required: ["kind", "payload"],
+    additionalProperties: false,
+  },
+} as const;
+
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 const asString = (value: unknown): string => typeof value === "string" ? value.trim() : "";
+const stripLeadingLabel = (value: string): string =>
+  value.replace(/^\s*(?:\*\*)?(respuesta|answer|correccion|corrección|enfoque|approach)(?:\*\*)?\s*:\s*/i, "").trim();
 const asNullableString = (value: unknown): string | null => {
   if (value === null || value === undefined) return null;
   const text = asString(value);
@@ -213,7 +317,7 @@ export const formatStructuredAnswerPayload = (structured: StructuredAnswerPayloa
     const payload = structured.payload;
     const lines = [
       payload.correction.needed && payload.correction.transition ? `**Correccion:** ${payload.correction.transition}` : "",
-      `**Respuesta:** ${payload.spokenAnswer}`,
+      `**Respuesta:** ${stripLeadingLabel(payload.spokenAnswer)}`,
       payload.keyPoints.length ? `**Puntos:** ${payload.keyPoints.join(" | ")}` : "",
       payload.assumptions.length ? `**Supuestos:** ${payload.assumptions.join(" | ")}` : "",
       payload.followUpHint ? `**Follow-up:** ${payload.followUpHint}` : "",
@@ -223,7 +327,7 @@ export const formatStructuredAnswerPayload = (structured: StructuredAnswerPayloa
 
   const payload = structured.payload;
   const lines = [
-    payload.narration.spokenAnswer ? `**Respuesta:** ${payload.narration.spokenAnswer}` : "",
+    payload.narration.spokenAnswer ? `**Respuesta:** ${stripLeadingLabel(payload.narration.spokenAnswer)}` : "",
     payload.solution.approachSteps.length ? `**Enfoque:** ${payload.solution.approachSteps.join(" ")}` : "",
     payload.solution.code ? `**Codigo:**\n\`\`\`${payload.problem.language.toLowerCase() || "python"}\n${payload.solution.code}\n\`\`\`` : "",
     payload.solution.complexity.time || payload.solution.complexity.space

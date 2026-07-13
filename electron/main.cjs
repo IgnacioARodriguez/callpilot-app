@@ -197,6 +197,108 @@ const createPromptCacheKey = (prompt) => {
   return `callpilot:${crypto.createHash("sha256").update(stablePrefix).digest("hex").slice(0, 24)}`;
 };
 
+const structuredAnswerPayloadJsonSchema = {
+  name: "callpilot_structured_answer",
+  schema: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["interview", "coding"] },
+      payload: {
+        type: "object",
+        properties: {
+          version: { type: "string", enum: ["1"] },
+          answerNeeded: { type: "boolean" },
+          intent: { type: "string" },
+          responseType: { type: "string" },
+          spokenAnswer: { type: "string" },
+          keyPoints: { type: "array", items: { type: "string" } },
+          correction: {
+            type: "object",
+            properties: {
+              needed: { type: "boolean" },
+              transition: { type: ["string", "null"] },
+              correctedClaim: { type: ["string", "null"] },
+            },
+            required: ["needed", "transition", "correctedClaim"],
+            additionalProperties: false,
+          },
+          assumptions: { type: "array", items: { type: "string" } },
+          evidenceRefs: { type: "array", items: { type: "string" } },
+          followUpHint: { type: ["string", "null"] },
+          problem: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              summary: { type: "string" },
+              language: { type: "string" },
+              functionSignature: { type: ["string", "null"] },
+              constraints: { type: "array", items: { type: "string" } },
+            },
+            required: ["title", "summary", "language", "functionSignature", "constraints"],
+            additionalProperties: false,
+          },
+          solution: {
+            type: "object",
+            properties: {
+              approachSteps: { type: "array", items: { type: "string" } },
+              code: { type: "string" },
+              complexity: {
+                type: "object",
+                properties: {
+                  time: { type: "string" },
+                  space: { type: "string" },
+                  rationale: { type: "string" },
+                },
+                required: ["time", "space", "rationale"],
+                additionalProperties: false,
+              },
+              edgeCases: { type: "array", items: { type: "string" } },
+              invariants: { type: "array", items: { type: "string" } },
+            },
+            required: ["approachSteps", "code", "complexity", "edgeCases", "invariants"],
+            additionalProperties: false,
+          },
+          narration: {
+            type: "object",
+            properties: {
+              spokenAnswer: { type: "string" },
+              currentStep: { type: "string" },
+            },
+            required: ["spokenAnswer", "currentStep"],
+            additionalProperties: false,
+          },
+          tests: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                input: { type: "string" },
+                expected: { type: "string" },
+                rationale: { type: "string" },
+              },
+              required: ["input", "expected", "rationale"],
+              additionalProperties: false,
+            },
+          },
+          patch: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["replace", "diff", "none"] },
+              code: { type: ["string", "null"] },
+            },
+            required: ["kind", "code"],
+            additionalProperties: false,
+          },
+        },
+        required: ["version", "answerNeeded"],
+        additionalProperties: false,
+      },
+    },
+    required: ["kind", "payload"],
+    additionalProperties: false,
+  },
+};
+
 const readOpenAISseStream = async (response, onEvent) => {
   if (!response.body) return "";
   const decoder = new TextDecoder();
@@ -383,6 +485,40 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
   if (!modelName) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_model` };
 
   try {
+    const requestBase = {
+      model: modelName,
+      instructions: String(prompt?.system ?? ""),
+      input: String(prompt?.user ?? ""),
+      prompt_cache_key: createPromptCacheKey(prompt),
+      store: false,
+    };
+    if (input?.structuredOutput) {
+      const structuredResponse = await fetch(`${provider.baseUrl()}/v1/responses`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          ...requestBase,
+          text: {
+            format: {
+              type: "json_schema",
+              name: structuredAnswerPayloadJsonSchema.name,
+              strict: true,
+              schema: structuredAnswerPayloadJsonSchema.schema,
+            },
+          },
+        }),
+      });
+      const payload = await structuredResponse.json().catch(() => ({}));
+      if (!structuredResponse.ok) {
+        return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? `${provider.id}_structured_http_${structuredResponse.status}` };
+      }
+      const text = extractOpenAIResponseText(payload);
+      return { ok: Boolean(text), text, provider: provider.id, modelName, requestId, error: text ? undefined : `empty_${provider.id}_structured_response` };
+    }
+
     let detailSequence = 0;
     const sendDetailChunk = (chunk) => {
       detailSequence += 1;
@@ -398,11 +534,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: modelName,
-        instructions: String(prompt?.system ?? ""),
-        input: String(prompt?.user ?? ""),
-        prompt_cache_key: createPromptCacheKey(prompt),
-        store: false,
+        ...requestBase,
         stream: true,
       }),
     });
