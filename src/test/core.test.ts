@@ -47,6 +47,7 @@ import {
   shouldAutoAnswer,
   shouldDropCandidateEcho,
   speechSimilarity,
+  STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA,
   upsertSession,
   validateAudioTranscriptionInput,
 } from "../core/index.ts";
@@ -330,6 +331,17 @@ test("structured renderer removes duplicated model labels", () => {
 
   assert.equal((rendered.match(/\*\*Respuesta:\*\*/g) ?? []).length, 1);
   assert.doesNotMatch(rendered, /\*\*Respuesta:\*\*\s+\*\*Respuesta:\*\*/);
+});
+
+test("structured answer json schema requires every payload property for strict providers", () => {
+  const payloadSchema = STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA.schema.properties.payload;
+  const propertyNames = Object.keys(payloadSchema.properties);
+  const required = new Set<string>(payloadSchema.required);
+
+  for (const propertyName of propertyNames) {
+    assert.equal(required.has(propertyName), true, `${propertyName} should be required`);
+  }
+  assert.equal(payloadSchema.additionalProperties, false);
 });
 
 test("live conversation auto answer respects cooldown", () => {

@@ -7,6 +7,7 @@ export {
   parseCodingAnswerPayload,
   parseInterviewAnswerPayload,
   parseStructuredAnswerPayload,
+  STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA,
   type CodingAnswerPayload,
   type InterviewAnswerPayload,
   type StructuredAnswerPayload,
