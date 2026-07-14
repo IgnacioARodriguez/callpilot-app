@@ -336,6 +336,16 @@ const scenarioDefinitions = [
     forbidden: ["sql", "respuesta directa", "def "],
     maxChars: 500,
   }),
+  makeTechnicalScenario("no_answer_gaming_physical_copy", "A mi me gustaria tenerlo fisico, claro. Lo quieres tener fisico?", ["no", "neces", "casual"], {
+    category: "no_answer",
+    forbidden: ["sql", "base de datos", "backend", "relacional"],
+    maxChars: 500,
+  }),
+  makeTechnicalScenario("no_answer_gaming_reservations", "Cuantas reservas crees que puede tener GTA en el primer mes?", ["no", "neces", "casual"], {
+    category: "no_answer",
+    forbidden: ["sql", "postgres", "api", "codigo"],
+    maxChars: 500,
+  }),
   makeCodingScenario("coding_valid_parentheses", "Valid Parentheses solution", validParenthesesProblem, [
     { speaker: "interviewer", text: "Resuelve Valid Parentheses y explicame el approach." },
   ], ["stack", "pila", "o(n)", "parent"]),

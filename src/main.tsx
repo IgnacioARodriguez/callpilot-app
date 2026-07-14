@@ -220,6 +220,7 @@ function App() {
   const activeLatencyRunIdRef = React.useRef<string | null>(null);
   const activeAnswerRequestIdRef = React.useRef<string | null>(null);
   const firstDetailChunkSeenRef = React.useRef(false);
+  const recentPublishedTranscriptRef = React.useRef<{ speaker: TranscriptSpeaker; text: string; timestamp: number }>({ speaker: "unknown", text: "", timestamp: 0 });
 
   React.useEffect(() => {
     autoAnswerEnabledRef.current = autoAnswerEnabled;
@@ -356,7 +357,16 @@ function App() {
       }
       const next = new TranscriptBuffer(current);
       const message = next.append(text, source, Date.now(), speaker);
-      if (message) void window.callpilotDesktop?.publishTranscriptMessage?.(message);
+      if (message) {
+        const recent = recentPublishedTranscriptRef.current;
+        const duplicatePublish = recent.speaker === speaker
+          && Date.now() - recent.timestamp < 1500
+          && speechSimilarity(recent.text, message.text) >= 0.96;
+        if (!duplicatePublish) {
+          recentPublishedTranscriptRef.current = { speaker, text: message.text, timestamp: Date.now() };
+          void window.callpilotDesktop?.publishTranscriptMessage?.(message);
+        }
+      }
       return next.snapshot();
     });
   }, []);
@@ -366,7 +376,16 @@ function App() {
     setTranscript((current) => {
       const next = new TranscriptBuffer(current);
       const message = next.append(text, "manual", Date.now(), "assistant");
-      if (message) void window.callpilotDesktop?.publishTranscriptMessage?.(message);
+      if (message) {
+        const recent = recentPublishedTranscriptRef.current;
+        const duplicatePublish = recent.speaker === "assistant"
+          && Date.now() - recent.timestamp < 1500
+          && speechSimilarity(recent.text, message.text) >= 0.96;
+        if (!duplicatePublish) {
+          recentPublishedTranscriptRef.current = { speaker: "assistant", text: message.text, timestamp: Date.now() };
+          void window.callpilotDesktop?.publishTranscriptMessage?.(message);
+        }
+      }
       return next.snapshot();
     });
   }, []);

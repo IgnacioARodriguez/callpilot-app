@@ -205,9 +205,10 @@ test("prompt tells model not to answer stale topics or non-questions", () => {
     "interviewer: Bueno, ya no se cuantas personas hay aqui.",
   );
 
-  assert.match(prompt.system, /latest interviewer turn is not a question/i);
+  assert.match(prompt.system, /latest interviewer turn is not an interview/i);
   assert.match(prompt.system, /Do not answer stale topics/i);
-  assert.match(prompt.system, /do not invent a technical answer/i);
+  assert.match(prompt.system, /do not pivot to resume\/CV topics/i);
+  assert.match(prompt.system, /do not answer it with SQL/i);
   assert.match(prompt.system, /at most two compact/i);
 });
 

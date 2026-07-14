@@ -175,7 +175,25 @@ test("acceptance: manual answer falls back to context when no question is detect
   assert.match(app, /next useful coding help/);
   assert.match(app, /next useful thing to say/);
   assert.doesNotMatch(app, /No interviewer question detected yet/);
-  assert.match(promptBuilder, /If the latest interviewer turn is not a question/);
+  assert.match(promptBuilder, /If the latest interviewer turn is not an interview/);
+});
+
+test("acceptance: non-interview casual questions must not pivot to SQL", () => {
+  const promptBuilder = read("src/core/promptBuilder.ts");
+  const runner = read("scripts/run-llm-scenarios.mjs");
+
+  assert.match(promptBuilder, /casual, entertainment-related, logistical, or unrelated/);
+  assert.match(promptBuilder, /do not answer it with SQL/);
+  assert.match(runner, /no_answer_gaming_physical_copy/);
+  assert.match(runner, /no_answer_gaming_reservations/);
+});
+
+test("acceptance: transcript publishing is idempotent under React StrictMode", () => {
+  const app = read("src/main.tsx");
+
+  assert.match(app, /recentPublishedTranscriptRef/);
+  assert.match(app, /duplicatePublish/);
+  assert.match(app, /speechSimilarity\(recent\.text, message\.text\) >= 0\.96/);
 });
 
 test("acceptance: LLM quality runner has a broad scenario corpus", () => {
