@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { buildPrompt } from "../src/core/promptBuilder.ts";
 import { createGlobalContext } from "../src/core/context.ts";
@@ -12,6 +13,9 @@ import { detectQuestionIntent, extractLatestQuestionFocus } from "../src/core/li
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
+const require = createRequire(import.meta.url);
+const { loadDotEnv } = require("../electron/env.cjs");
+loadDotEnv(root);
 const electronBin = process.platform === "win32"
   ? path.join(root, "node_modules", "electron", "dist", "electron.exe")
   : path.join(root, "node_modules", ".bin", "electron");
@@ -474,6 +478,7 @@ const chooseProvider = (settings, credentialStatus) => {
 
 const defaultModelName = (provider, savedModel) => {
   if (cliModel) return cliModel;
+  if (provider === "nvidia" && process.env.CALLPILOT_NVIDIA_MODEL) return process.env.CALLPILOT_NVIDIA_MODEL;
   if (provider === "natively" && (!savedModel || savedModel === "mock-local" || savedModel === "llama3.1" || savedModel.startsWith("llama3.1:"))) {
     return "default";
   }

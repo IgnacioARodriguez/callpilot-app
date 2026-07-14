@@ -3,6 +3,9 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createWorker } = require("tesseract.js");
+const { loadDotEnv } = require("./env.cjs");
+
+loadDotEnv();
 
 if (process.env.CALLPILOT_REMOTE_DEBUG_PORT) {
   app.commandLine.appendSwitch("remote-debugging-port", process.env.CALLPILOT_REMOTE_DEBUG_PORT);
@@ -607,7 +610,7 @@ const providerPresets = {
   nvidia: {
     id: "nvidia",
     protocol: "openai_chat",
-    defaultModel: "nvidia-default",
+    defaultModel: process.env.CALLPILOT_NVIDIA_MODEL || "nvidia-default",
     auth: "bearer",
     chatUrl: () => (process.env.CALLPILOT_NVIDIA_LLM_URL || "https://integrate.api.nvidia.com/v1/chat/completions").trim(),
     apiKey: (input) => (typeof input?.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim() : process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || ""),

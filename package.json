@@ -20,6 +20,7 @@
     "verify:user-journey": "npm run build && node scripts/verify-user-journey.cjs",
     "verify:llm-scenarios": "node --experimental-strip-types scripts/run-llm-scenarios.mjs",
     "verify:llm-quality": "node --experimental-strip-types scripts/run-llm-scenarios.mjs",
+    "verify:llm-nvidia": "node --experimental-strip-types scripts/run-llm-scenarios.mjs --provider=nvidia",
     "verify:app": "npm test && npm run build && npm run verify:privacy && npm run verify:isolation && node scripts/verify-user-journey.cjs",
     "test:privacy": "node --experimental-strip-types --test \"src/test/privacy.test.ts\"",
     "verify:local-stt": "node scripts/verify-local-stt.cjs",
