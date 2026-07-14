@@ -77,6 +77,12 @@ const textSummary = (value, maxPreview = 160) => {
     truncated: normalized.length > maxPreview,
   };
 };
+const extractPromptSection = (promptUser, sectionName) => {
+  const value = typeof promptUser === "string" ? promptUser : "";
+  if (!value || !sectionName) return "";
+  const match = value.match(new RegExp(`<${sectionName}>\\n([\\s\\S]*?)\\n<\\/${sectionName}>`));
+  return match?.[1]?.trim() || "";
+};
 const promptSummary = (prompt) => ({
   system: textSummary(prompt?.system, 120),
   user: textSummary(prompt?.user, 180),
@@ -87,6 +93,8 @@ const promptSummary = (prompt) => ({
     approximateChars: prompt.debug.approximateChars,
     selectedEvidenceCount: Array.isArray(prompt.debug.selectedEvidence) ? prompt.debug.selectedEvidence.length : 0,
     evidenceQueryTerms: Array.isArray(prompt.debug.evidenceQueryTerms) ? prompt.debug.evidenceQueryTerms.slice(0, 24) : [],
+    latestActionableInput: textSummary(extractPromptSection(prompt.user, "latest_actionable_input"), 320),
+    userInput: textSummary(extractPromptSection(prompt.user, "user_input"), 320),
   } : null,
 });
 const resultSummary = (result) => ({

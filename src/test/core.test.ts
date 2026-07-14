@@ -671,6 +671,39 @@ test("turn assembler commits only the delta when cumulative provider text contin
   assert.equal(thirdPartial.action === "publish_live" ? thirdPartial.text : "", "So I think here I'm going to use a list.");
 });
 
+test("turn assembler strips confirmed prefix even when provider inserts filler before continuing", () => {
+  const state = createTurnAssemblerState();
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "ID of a certain book in the library. So maybe we can just add ID here,",
+    isFinal: true,
+    timestamp: 1_000,
+  });
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "ID of a certain book in the library. So maybe we can just add ID here, um. And. Maybe I can make that also a string or an integer or something.",
+    isFinal: false,
+    timestamp: 1_200,
+  });
+  const committed = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "Maybe I can make that also a string or an integer or something.",
+    isFinal: true,
+    timestamp: 1_500,
+  });
+  const next = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "ID of a certain book in the library. So maybe we can just add ID here, um. And. Maybe I can make that also a string or an integer or something. Yep. And I'm going to add a question mark.",
+    isFinal: false,
+    timestamp: 1_800,
+  });
+
+  assert.equal(committed.action, "commit");
+  assert.equal(next.action, "publish_live");
+  assert.match(next.action === "publish_live" ? next.text : "", /^Yep\./);
+  assert.doesNotMatch(next.action === "publish_live" ? next.text : "", /^ID of a certain book/);
+});
+
 test("answer grounding guard blocks unsupported topic drift", () => {
   const context = createGlobalContext({
     activeMode: "technical_qa",

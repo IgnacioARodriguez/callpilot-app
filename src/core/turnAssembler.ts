@@ -74,6 +74,17 @@ const stripCommittedPrefix = (committedText: string | undefined, text: string): 
     return clean.slice(committed.length).replace(/^[\s.,;:!?Â¿Â¡"'`-]+/, "").trim();
   }
   if (committedLower.includes(cleanLower)) return "";
+  let commonPrefixLength = 0;
+  const maxPrefixLength = Math.min(committed.length, clean.length);
+  while (
+    commonPrefixLength < maxPrefixLength
+    && committedLower.charCodeAt(commonPrefixLength) === cleanLower.charCodeAt(commonPrefixLength)
+  ) {
+    commonPrefixLength += 1;
+  }
+  if (commonPrefixLength >= Math.min(40, Math.floor(committed.length * 0.35))) {
+    return clean.slice(commonPrefixLength).replace(/^[\s.,;:!?Â¿Â¡"'`-]+/, "").trim();
+  }
   return clean;
 };
 

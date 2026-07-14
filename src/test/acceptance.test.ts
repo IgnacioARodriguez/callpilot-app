@@ -98,6 +98,8 @@ test("acceptance: normal sessions persist metrics traces", () => {
   assert.match(main, /appendTraceEvent\("screen_capture_completed"/);
   assert.match(main, /storesRawAudio:\s*false/);
   assert.match(main, /storesScreenshots:\s*false/);
+  assert.match(main, /latestActionableInput/);
+  assert.match(main, /extractPromptSection\(prompt\.user, "latest_actionable_input"\)/);
   assert.match(preload, /getSessionTraceStatus/);
   assert.match(app, /Metrics trace:/);
 });
