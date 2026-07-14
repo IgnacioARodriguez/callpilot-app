@@ -28,7 +28,7 @@ const tokenize = (text: string): string[] =>
     ?.map((token) => token.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
     .filter((token) => token.length >= 3 && !stopWords.has(token)) ?? [];
 
-const extractAcronymAnchors = (text: string): string[] =>
+const extractCurrentTurnAnchors = (text: string): string[] =>
   [...new Set(text.match(/\b[A-Z][A-Z0-9+#.-]{1,9}\b/g) ?? [])]
     .filter((token) => !["OK"].includes(token));
 
@@ -73,16 +73,16 @@ export const assessAnswerGrounding = (
     return { ok: true, reason: "grounded", overlapCount: 0, unsupportedTerms: [] };
   }
 
-  const userAcronyms = extractAcronymAnchors(userInput);
-  const answerAcronyms = extractAcronymAnchors(candidateText);
-  const missingUserAcronyms = userAcronyms.filter((term) => !answerAcronyms.includes(term));
-  const extraAnswerAcronyms = answerAcronyms.filter((term) => !userAcronyms.includes(term));
-  if (userAcronyms.length > 0 && missingUserAcronyms.length > 0 && extraAnswerAcronyms.length > 0) {
+  const userAnchors = extractCurrentTurnAnchors(userInput);
+  const answerAnchors = extractCurrentTurnAnchors(candidateText);
+  const missingUserAnchors = userAnchors.filter((term) => !answerAnchors.includes(term));
+  const extraAnswerAnchors = answerAnchors.filter((term) => !userAnchors.includes(term));
+  if (userAnchors.length > 0 && missingUserAnchors.length > 0 && extraAnswerAnchors.length > 0) {
     return {
       ok: false,
       reason: "topic_anchor_mismatch",
       overlapCount: 0,
-      unsupportedTerms: extraAnswerAcronyms.slice(0, 12),
+      unsupportedTerms: extraAnswerAnchors.slice(0, 12),
     };
   }
 

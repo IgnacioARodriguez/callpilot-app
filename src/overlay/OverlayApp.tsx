@@ -115,7 +115,12 @@ export default function OverlayApp() {
   const assistantIdByRequest = React.useRef<Record<string, string>>({});
   const lastSequenceByRequest = React.useRef<Record<string, number>>({});
   const liveTranscriptByRole = React.useRef<Partial<Record<OverlayMessageRole, LiveTranscriptState>>>({});
+  const messagesStateRef = React.useRef<OverlayMessage[]>([]);
   const messagesRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    messagesStateRef.current = messages;
+  }, [messages]);
 
   React.useEffect(() => {
     const upsertLiveTranscript = (role: OverlayMessageRole, text: string, mode: "partial" | "final") => {
@@ -126,12 +131,15 @@ export default function OverlayApp() {
       const canReuse = Boolean(existing && now - existing.lastUpdatedAt < 8000);
       const id = canReuse && existing ? existing.id : `live-${role}-${now}`;
       const committed = canReuse && existing ? existing.committed : "";
+      const existingIndexBeforeUpdate = messagesStateRef.current.findIndex((item) => item.id === id);
+      const assistantAfterExistingBeforeUpdate = existingIndexBeforeUpdate >= 0
+        && messagesStateRef.current.slice(existingIndexBeforeUpdate + 1).some((item) => item.role === "assistant");
       const nextCommitted = mode === "final"
         ? isDuplicateTranscript(committed, clean)
           ? committed.length >= clean.length ? committed : clean
           : [committed, clean].filter(Boolean).join(" ")
         : committed;
-      if (mode === "partial" && committed && isDuplicateTranscript(committed, clean)) {
+      if (mode === "partial" && committed && isDuplicateTranscript(committed, clean) && !assistantAfterExistingBeforeUpdate) {
         liveTranscriptByRole.current[role] = {
           id,
           committed,

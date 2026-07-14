@@ -211,6 +211,7 @@ test("acceptance: overlay starts a new live bubble after an assistant answer", (
 
   assert.match(overlay, /assistantAfterExisting/);
   assert.match(overlay, /targetId = mode === "partial" && assistantAfterExisting/);
+  assert.match(overlay, /!assistantAfterExistingBeforeUpdate/);
 });
 
 test("acceptance: overlay shows the changing tail of long live transcripts", () => {
