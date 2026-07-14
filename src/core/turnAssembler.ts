@@ -8,6 +8,7 @@ export interface TurnDraft {
 
 export interface TurnAssemblerState {
   draftsBySpeaker: Partial<Record<TranscriptSpeaker, TurnDraft>>;
+  committedBySpeaker: Partial<Record<TranscriptSpeaker, string>>;
 }
 
 export type TurnAssemblyDecision =
@@ -21,6 +22,7 @@ const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
 export const createTurnAssemblerState = (): TurnAssemblerState => ({
   draftsBySpeaker: {},
+  committedBySpeaker: {},
 });
 
 export const mergeTurnDraft = (
@@ -61,6 +63,32 @@ const isShortNonQuestionFinal = (text: string): boolean => {
   return clean.length < 24 && !hasQuestionSignal(clean);
 };
 
+const stripCommittedPrefix = (committedText: string | undefined, text: string): string => {
+  const committed = normalize(committedText ?? "");
+  const clean = normalize(text);
+  if (!committed || !clean) return clean;
+
+  const committedLower = committed.toLowerCase();
+  const cleanLower = clean.toLowerCase();
+  if (cleanLower.startsWith(committedLower)) {
+    return clean.slice(committed.length).replace(/^[\s.,;:!?Â¿Â¡"'`-]+/, "").trim();
+  }
+  if (committedLower.includes(cleanLower)) return "";
+  return clean;
+};
+
+const appendCommitted = (committedText: string | undefined, text: string): string => {
+  const committed = normalize(committedText ?? "");
+  const clean = normalize(text);
+  if (!clean) return committed;
+  if (!committed) return clean;
+  const committedLower = committed.toLowerCase();
+  const cleanLower = clean.toLowerCase();
+  if (committedLower.includes(cleanLower)) return committed;
+  if (cleanLower.startsWith(committedLower)) return clean;
+  return `${committed} ${clean}`;
+};
+
 export const assembleTurn = (
   state: TurnAssemblerState,
   input: {
@@ -74,32 +102,35 @@ export const assembleTurn = (
   if (!clean) return { action: "ignore", reason: "empty" };
 
   const now = input.timestamp ?? Date.now();
+  const incrementalClean = stripCommittedPrefix(state.committedBySpeaker[input.speaker], clean);
+  if (!incrementalClean) return { action: "ignore", reason: "empty" };
   const previous = state.draftsBySpeaker[input.speaker];
 
   if (!input.isFinal) {
-    const next = mergeTurnDraft(previous?.text ?? "", clean);
+    const next = mergeTurnDraft(previous?.text ?? "", incrementalClean);
     state.draftsBySpeaker[input.speaker] = { text: next, timestamp: now };
     return { action: "publish_live", reason: "partial", text: next };
   }
 
-  if (previous?.text && isFinalFragmentOfDraft(previous.text, clean)) {
+  if (previous?.text && isFinalFragmentOfDraft(previous.text, incrementalClean)) {
     state.draftsBySpeaker[input.speaker] = { text: previous.text, timestamp: now };
-    return { action: "fold_final", reason: "final_fragment", text: clean, draftText: previous.text };
+    return { action: "fold_final", reason: "final_fragment", text: incrementalClean, draftText: previous.text };
   }
-  if (previous?.text && isShortNonQuestionFinal(clean)) {
-    const next = mergeTurnDraft(previous.text, clean);
+  if (previous?.text && isShortNonQuestionFinal(incrementalClean)) {
+    const next = mergeTurnDraft(previous.text, incrementalClean);
     state.draftsBySpeaker[input.speaker] = { text: next, timestamp: now };
-    return { action: "fold_final", reason: "final_fragment", text: clean, draftText: next };
+    return { action: "fold_final", reason: "final_fragment", text: incrementalClean, draftText: next };
   }
-  if (!previous?.text && isShortNonQuestionFinal(clean)) {
-    return { action: "ignore", reason: "short_final_fragment", text: clean };
+  if (!previous?.text && isShortNonQuestionFinal(incrementalClean)) {
+    return { action: "ignore", reason: "short_final_fragment", text: incrementalClean };
   }
 
-  const finalText = previous?.text ? mergeTurnDraft(previous.text, clean) : clean;
+  const finalText = previous?.text ? mergeTurnDraft(previous.text, incrementalClean) : incrementalClean;
   delete state.draftsBySpeaker[input.speaker];
+  state.committedBySpeaker[input.speaker] = appendCommitted(state.committedBySpeaker[input.speaker], finalText);
   return {
     action: "commit",
-    reason: previous?.text && finalText !== clean ? "final_replaces_draft" : "final",
+    reason: previous?.text && finalText !== incrementalClean ? "final_replaces_draft" : "final",
     text: finalText,
   };
 };

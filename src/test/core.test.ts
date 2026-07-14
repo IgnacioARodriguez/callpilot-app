@@ -612,6 +612,65 @@ test("turn assembler keeps growing live draft after folded short finals", () => 
   assert.match(next.action === "publish_live" ? next.text : "", /Remember page/);
 });
 
+test("turn assembler publishes only new text after a committed cumulative provider turn", () => {
+  const state = createTurnAssemblerState();
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "There's a reason to use, like, a tuple over a list in this specific example.",
+    isFinal: false,
+    timestamp: 1_000,
+  });
+  const firstCommit = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "There's a reason to use, like, a tuple over a list in this specific example.",
+    isFinal: true,
+    timestamp: 1_100,
+  });
+  const nextPartial = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "There's a reason to use, like, a tuple over a list in this specific example. Yep. Or, like, vice versa.",
+    isFinal: false,
+    timestamp: 1_400,
+  });
+
+  assert.equal(firstCommit.action, "commit");
+  assert.equal(nextPartial.action, "publish_live");
+  assert.equal(nextPartial.action === "publish_live" ? nextPartial.text : "", "Yep. Or, like, vice versa.");
+});
+
+test("turn assembler commits only the delta when cumulative provider text continues after prior finals", () => {
+  const state = createTurnAssemblerState();
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "There's a reason to use a tuple over a list.",
+    isFinal: true,
+    timestamp: 1_000,
+  });
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "There's a reason to use a tuple over a list. Yep. You could choose either one.",
+    isFinal: false,
+    timestamp: 1_200,
+  });
+  const secondCommit = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "There's a reason to use a tuple over a list. Yep. You could choose either one.",
+    isFinal: true,
+    timestamp: 1_500,
+  });
+  const thirdPartial = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "There's a reason to use a tuple over a list. Yep. You could choose either one. So I think here I'm going to use a list.",
+    isFinal: false,
+    timestamp: 1_800,
+  });
+
+  assert.equal(secondCommit.action, "commit");
+  assert.equal(secondCommit.action === "commit" ? secondCommit.text : "", "Yep. You could choose either one.");
+  assert.equal(thirdPartial.action, "publish_live");
+  assert.equal(thirdPartial.action === "publish_live" ? thirdPartial.text : "", "So I think here I'm going to use a list.");
+});
+
 test("answer grounding guard blocks unsupported topic drift", () => {
   const context = createGlobalContext({
     activeMode: "technical_qa",
