@@ -187,6 +187,13 @@ button:disabled {
   min-width: 64px;
 }
 
+.cp-overlay__bar .cp-stop-button {
+  background: #7f2738;
+  border-color: #7f2738;
+  color: #ffffff;
+  font-weight: 800;
+}
+
 .cp-overlay__messages {
   min-height: 0;
   overflow-y: auto;

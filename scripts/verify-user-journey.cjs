@@ -71,6 +71,14 @@ const mockOpenAI = http.createServer(async (request, response) => {
           response.end();
           return;
         }
+        if (/CANCEL_STREAM_TEST/i.test(promptInput)) {
+          response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "This answer should be cancellable." })}\n\n`);
+          await sleep(1500);
+          response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: " This late chunk should not be needed." })}\n\n`);
+          response.write("data: [DONE]\n\n");
+          response.end();
+          return;
+        }
         await sleep(90);
         response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Start with the tradeoff: " })}\n\n`);
         await sleep(90);
@@ -380,6 +388,49 @@ const run = async () => {
       text: document.body.innerText
     })`);
 
+    await evaluate(client, `(() => {
+      window.__callpilotCancelPromise = window.callpilotDesktop.generateAnswer({
+        provider: "openai",
+        modelName: "mock-openai-e2e",
+        apiKey: "callpilot-e2e-key",
+        requestId: "journey-cancel-1",
+        prompt: {
+          system: "You are CallPilot cancellation test.",
+          user: "CANCEL_STREAM_TEST",
+          debug: { modeId: "technical_qa", includedSections: [], omittedSections: [] }
+        }
+      });
+      return true;
+    })()`);
+    const overlayStopReady = await evaluate(overlayClient, `new Promise((resolve) => {
+      const started = performance.now();
+      const tick = () => {
+        const stopButton = [...document.querySelectorAll("button")].find((button) => /^stop$/i.test((button.textContent || "").trim()));
+        if (stopButton || performance.now() - started > 2500) {
+          resolve({
+            hasStopButton: Boolean(stopButton),
+            text: document.body.innerText
+          });
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    })`);
+    const overlayStopClicked = await evaluate(overlayClient, `(() => {
+      const stopButton = [...document.querySelectorAll("button")].find((button) => /^stop$/i.test((button.textContent || "").trim()));
+      if (!stopButton) return false;
+      stopButton.click();
+      return true;
+    })()`);
+    const cancelledAnswer = await evaluate(client, `window.__callpilotCancelPromise`);
+    await sleep(100);
+    const overlayAfterCancel = await evaluate(overlayClient, `({
+      hasStopButton: [...document.querySelectorAll("button")].some((button) => /^stop$/i.test((button.textContent || "").trim())),
+      hasStoppedStatus: /Stopped|Stopping/i.test(document.body.innerText || ""),
+      text: document.body.innerText
+    })`);
+
     await evaluate(client, `window.callpilotDesktop.publishStructuredAnswer({
       requestId: "journey-coding-1",
       timestamp: Date.now(),
@@ -443,7 +494,7 @@ const run = async () => {
       hasAssistantBubble: Boolean(document.querySelector(".cp-bubble--assistant")),
       headline: document.querySelector(".cp-bubble__headline")?.textContent || "",
       keywords: [...document.querySelectorAll(".cp-keyword")].map((node) => node.textContent),
-      detail: document.querySelector(".cp-bubble__detail")?.textContent || "",
+      detail: [...document.querySelectorAll(".cp-bubble__detail")].map((node) => node.textContent || "").join("\\n"),
       text: document.body.innerText
     })`);
     overlayClient.close();
@@ -481,6 +532,13 @@ const run = async () => {
         malformedOk: Boolean(malformedStream.ok && /Recovered valid stream text/i.test(malformedStream.text || "")),
         malformedText: malformedStream.text,
       },
+      cancellation: {
+        stopButtonAppeared: overlayStopReady.hasStopButton,
+        stopClicked: Boolean(overlayStopClicked),
+        cancelled: Boolean(cancelledAnswer.cancelled || cancelledAnswer.error === "cancelled"),
+        result: cancelledAnswer,
+        overlayAfterCancel,
+      },
       overlay: {
         openMs: overlayOpenMs,
         ok: Number.isFinite(overlayOpenMs),
@@ -514,6 +572,10 @@ const run = async () => {
     if (!report.contextContinuity.spanishOk) failures.push("contextual Spanish HTML follow-up failed");
     if (!report.contextContinuity.englishOk) failures.push("contextual English Redis follow-up failed");
     if (!report.streamingRobustness.malformedOk) failures.push("malformed stream recovery failed");
+    if (!report.cancellation.stopButtonAppeared) failures.push("overlay stop button did not appear during streaming");
+    if (!report.cancellation.stopClicked) failures.push("overlay stop button could not be clicked");
+    if (!report.cancellation.cancelled) failures.push("streaming answer was not cancelled");
+    if (report.cancellation.overlayAfterCancel.hasStopButton) failures.push("overlay stop button remained after cancellation");
     if (report.vision.totalMs > thresholds.visionMs) failures.push(`vision too slow: ${report.vision.totalMs}ms`);
     if (!report.overlay.ok || report.overlay.openMs > thresholds.overlayOpenMs) failures.push(`overlay too slow: ${report.overlay.openMs}ms`);
     if (!report.setupUi.hasRoot || !report.setupUi.hasStartSession || !report.setupUi.hasSetupCards || !report.setupUi.hasContextFields) failures.push("setup UI did not render expected controls");

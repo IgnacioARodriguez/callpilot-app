@@ -24,6 +24,7 @@ interface AnswerDetailPayload {
   sequence?: number;
   text?: string;
   done?: boolean;
+  cancelled?: boolean;
   error?: string;
 }
 
@@ -119,6 +120,7 @@ const liveTranscriptText = (text = ""): string => {
 export default function OverlayApp() {
   const [messages, setMessages] = React.useState<OverlayMessage[]>([]);
   const [isRequestingAnswer, setIsRequestingAnswer] = React.useState(false);
+  const [activeAnswerRequestId, setActiveAnswerRequestId] = React.useState<string | null>(null);
   const [activity, setActivity] = React.useState<{ state: "idle" | "listening" | "transcribing"; label: string; updatedAt: number }>({
     state: "idle",
     label: "Waiting",
@@ -248,9 +250,12 @@ export default function OverlayApp() {
       }
     });
     const disposeManualAnswerStatus = window.callpilotDesktop?.onManualAnswerStatus?.((payload) => {
+      if (payload.status === "cancelled") {
+        setActiveAnswerRequestId(null);
+      }
       setActivity({
-        state: payload.ok ? "transcribing" : "idle",
-        label: payload.ok ? "Sent" : "Request failed",
+        state: payload.status === "cancelled" ? "idle" : payload.ok ? "transcribing" : "idle",
+        label: payload.status === "cancelled" ? "Stopped" : payload.ok ? "Sent" : "Request failed",
         updatedAt: Date.now(),
       });
     });
@@ -269,6 +274,7 @@ export default function OverlayApp() {
       const keywords = (payload.keywords ?? []).filter((keyword) => keyword.trim());
       if (!payload.headline?.trim() && keywords.length === 0) return;
       const id = ensureAssistantMessage(payload.requestId);
+      if (payload.requestId) setActiveAnswerRequestId(payload.requestId);
       const assistantMessage: OverlayMessage = {
         id,
         requestId: payload.requestId,
@@ -292,6 +298,10 @@ export default function OverlayApp() {
     const disposeChunk = window.callpilotDesktop?.onAnswerDetailChunk?.((payload: AnswerDetailPayload | string) => {
       const normalized: AnswerDetailPayload = typeof payload === "string" ? { text: payload } : payload;
       const chunk = normalized.text ?? "";
+      if (normalized.requestId) setActiveAnswerRequestId(normalized.done || normalized.cancelled ? null : normalized.requestId);
+      if (normalized.cancelled) {
+        setActivity({ state: "idle", label: "Stopped", updatedAt: Date.now() });
+      }
       if (normalized.requestId && typeof normalized.sequence === "number") {
         const previous = lastSequenceByRequest.current[normalized.requestId] ?? 0;
         if (normalized.sequence <= previous) return;
@@ -331,6 +341,7 @@ export default function OverlayApp() {
         delete assistantIdByRequest.current[normalized.requestId];
         delete lastSequenceByRequest.current[normalized.requestId];
         if (activeAssistantId.current === id) activeAssistantId.current = null;
+        setActiveAnswerRequestId(null);
       }
     });
     return () => {
@@ -376,6 +387,16 @@ export default function OverlayApp() {
     }
   };
 
+  const cancelAnswer = async () => {
+    if (!activeAnswerRequestId) return;
+    const requestId = activeAnswerRequestId;
+    setActiveAnswerRequestId(null);
+    setIsRequestingAnswer(false);
+    setActivity({ state: "idle", label: "Stopping", updatedAt: Date.now() });
+    const result = await window.callpilotDesktop?.cancelAnswer?.(requestId).catch(() => ({ ok: false }));
+    setActivity({ state: "idle", label: result?.ok ? "Stopped" : "Stop failed", updatedAt: Date.now() });
+  };
+
   return (
     <div className="cp-overlay">
       <div className="cp-overlay__bar">
@@ -395,6 +416,11 @@ export default function OverlayApp() {
           )}
         </div>
         <div className="cp-overlay__actions">
+          {activeAnswerRequestId && (
+            <button className="cp-stop-button" type="button" onClick={cancelAnswer}>
+              Stop
+            </button>
+          )}
           <button className="cp-answer-button" type="button" onClick={requestAnswer} disabled={isRequestingAnswer}>
             {isRequestingAnswer ? "..." : "Answer"}
           </button>
