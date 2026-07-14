@@ -242,7 +242,10 @@ test("prompt excludes previous assistant suggestions from factual transcript", (
 
   assert.match(prompt.user, /interviewer: What is SQL\?/);
   assert.match(prompt.user, /interviewer: Can you expand\?/);
-  assert.doesNotMatch(prompt.user, /assistant: SQL is a relational query language/);
+  const factualTranscript = prompt.user.match(/<transcript>\n([\s\S]*?)\n<\/transcript>/)?.[1] ?? "";
+  const previousAnswers = prompt.user.match(/<previous_assistant_answers>\n([\s\S]*?)\n<\/previous_assistant_answers>/)?.[1] ?? "";
+  assert.doesNotMatch(factualTranscript, /assistant: SQL is a relational query language/);
+  assert.match(previousAnswers, /Assistant suggestion: SQL is a relational query language/);
 });
 
 test("live conversation detects interview questions in English and Spanish", () => {

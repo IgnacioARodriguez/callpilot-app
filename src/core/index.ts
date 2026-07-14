@@ -3,6 +3,17 @@ export { MODES, modeById, type AssistantModeId, type ModeDefinition } from "./mo
 export { buildEvidenceCandidates, formatEvidenceForPrompt, pickEvidence, pickEvidenceWithEmbeddings, type EvidenceCandidate, type EvidenceEmbedder, type EvidenceEmbedding, type EvidenceItem, type EvidenceSelection, type EvidenceSource } from "./evidencePicker.ts";
 export { buildPrompt, buildPromptWithEvidence, type BuiltPrompt } from "./promptBuilder.ts";
 export {
+  buildAnswerContext,
+  dedupeCumulativeTurns,
+  formatAnswerContextSection,
+  type AnswerContext,
+  type AnswerContextTrace,
+  type ConversationRole,
+  type ConversationSource,
+  type ConversationStatus,
+  type ConversationTurn,
+} from "./conversationContext.ts";
+export {
   formatStructuredAnswerPayload,
   parseCodingAnswerPayload,
   parseInterviewAnswerPayload,

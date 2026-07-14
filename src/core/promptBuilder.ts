@@ -1,6 +1,7 @@
 import { modeById, type AssistantModeId } from "./modes.ts";
 import { compactTranscript } from "./transcriptBuffer.ts";
 import { formatEvidenceForPrompt, pickEvidence, type EvidenceItem, type EvidenceSelection } from "./evidencePicker.ts";
+import { buildAnswerContext, formatAnswerContextSection, type AnswerContextTrace } from "./conversationContext.ts";
 import type { GlobalContext } from "./context.ts";
 
 export interface BuiltPrompt {
@@ -13,6 +14,7 @@ export interface BuiltPrompt {
     approximateChars: number;
     selectedEvidence: EvidenceItem[];
     evidenceQueryTerms: string[];
+    answerContextTrace?: AnswerContextTrace;
   };
 }
 
@@ -48,6 +50,11 @@ const answerLanguageInstruction = (context: GlobalContext, userInput: string): s
 export const buildPromptWithEvidence = (context: GlobalContext, userInput: string, evidence: EvidenceSelection): BuiltPrompt => {
   const factualContext = withoutAssistantTurns(context);
   const factualEvidence = withoutAssistantEvidence(evidence);
+  const answerContext = buildAnswerContext({
+    transcript: context.transcript,
+    mode: context.activeMode,
+    userInput,
+  });
   const mode = modeById(context.activeMode);
   const includePersonalContext = context.activeMode !== "live_coding" || asksForExperienceContext(userInput);
   const includedSections: string[] = ["mode", "output_format"];
@@ -100,6 +107,9 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
       ...factualEvidence,
       items: factualEvidence.items.filter((item) => item.source === "screen_context" || item.source === "notes"),
     }));
+  add("recent_conversation", formatAnswerContextSection(answerContext.recentTurns));
+  add("previous_assistant_answers", formatAnswerContextSection(answerContext.previousAssistantAnswers));
+  add("current_question", formatAnswerContextSection([answerContext.currentQuestion]));
   add("latest_actionable_input", userInput);
   add("transcript", compactTranscript(factualContext.transcript, 6000, 80));
   add("screen_context", `kind: ${factualContext.screenContext.kind}\nconfidence: ${factualContext.screenContext.confidence}\n${factualContext.screenContext.visibleText}`);
@@ -112,6 +122,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     "The latest_actionable_input section is the highest-priority task. If it contains a clear technical, behavioral, system-design, or coding question, answer that question directly even if older transcript, screen text, or selected evidence is about another topic.",
     "Use transcript and screen_context only to understand surrounding context; never let stale earlier context override the latest_actionable_input.",
     "When user_input or transcript contains role-prefixed lines, treat interviewer as the interviewer and candidate as the user. Answer the latest interviewer question in light of what the candidate already said.",
+    "For manual Answer requests, treat current_question as the explicit question to answer. Use recent_conversation and previous_assistant_answers only to resolve references such as it, that, lo, eso, esa tecnologia, there, and in that case.",
     "If the candidate's prior answer is incomplete or technically wrong, provide a tactful correction the candidate can say aloud, for example: 'Actually, I would clarify that...' followed by the correct reasoning.",
     "Do not answer stale topics from earlier transcript turns. Focus on the latest interviewer/candidate exchange.",
     "If the latest interviewer turn is not an interview, technical, behavioral, system-design, or coding question, do not pivot to resume/CV topics. Return intent no_answer with a brief context-aware note or say no answer is needed.",
@@ -130,6 +141,10 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     mode.systemPromptFragment,
   ].join("\n");
   const user = sections.join("\n\n");
+  const answerContextTrace = {
+    ...answerContext.trace,
+    finalPromptCharacterCount: system.length + user.length,
+  };
   return {
     system,
     user,
@@ -140,6 +155,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
       approximateChars: system.length + user.length,
       selectedEvidence: factualEvidence.items,
       evidenceQueryTerms: factualEvidence.debug.queryTerms,
+      answerContextTrace,
     },
   };
 };
