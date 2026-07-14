@@ -30,6 +30,7 @@ interface AnswerDetailPayload {
 interface LiveTranscriptState {
   id: string;
   committed: string;
+  baseline?: string;
   lastUpdatedAt: number;
 }
 
@@ -57,6 +58,18 @@ const isDuplicateTranscript = (left: string, right: string): boolean => {
   const b = normalizeText(right);
   if (!a || !b) return false;
   return a === b || a.includes(b) || b.includes(a);
+};
+
+const transcriptDelta = (baseline = "", next = ""): string => {
+  const cleanBaseline = baseline.trim();
+  const cleanNext = next.trim();
+  if (!cleanBaseline || !cleanNext) return cleanNext;
+  if (normalizeText(cleanNext).startsWith(normalizeText(cleanBaseline))) {
+    return cleanNext.slice(cleanBaseline.length).replace(/^[\s.,;:!?¿¡"'`-]+/, "").trim() || cleanNext;
+  }
+  const index = normalizeText(cleanNext).lastIndexOf(normalizeText(cleanBaseline));
+  if (index < 0) return cleanNext;
+  return cleanNext.slice(index + cleanBaseline.length).replace(/^[\s.,;:!?¿¡"'`-]+/, "").trim() || cleanNext;
 };
 
 const visibleAssistantContent = (message: OverlayMessage): boolean =>
@@ -131,6 +144,7 @@ export default function OverlayApp() {
       const canReuse = Boolean(existing && now - existing.lastUpdatedAt < 8000);
       const id = canReuse && existing ? existing.id : `live-${role}-${now}`;
       const committed = canReuse && existing ? existing.committed : "";
+      const baseline = canReuse && existing ? existing.baseline ?? "" : "";
       const existingIndexBeforeUpdate = messagesStateRef.current.findIndex((item) => item.id === id);
       const assistantAfterExistingBeforeUpdate = existingIndexBeforeUpdate >= 0
         && messagesStateRef.current.slice(existingIndexBeforeUpdate + 1).some((item) => item.role === "assistant");
@@ -143,6 +157,7 @@ export default function OverlayApp() {
         liveTranscriptByRole.current[role] = {
           id,
           committed,
+          baseline,
           lastUpdatedAt: now,
         };
         return;
@@ -150,6 +165,7 @@ export default function OverlayApp() {
       liveTranscriptByRole.current[role] = {
         id,
         committed: nextCommitted,
+        baseline,
         lastUpdatedAt: now,
       };
 
@@ -158,14 +174,18 @@ export default function OverlayApp() {
         const assistantAfterExisting = existingIndex >= 0
           && current.slice(existingIndex + 1).some((item) => item.role === "assistant");
         const targetId = mode === "partial" && assistantAfterExisting ? `live-${role}-${now}` : id;
+        const targetBaseline = targetId === id ? baseline : current[existingIndex]?.text ?? "";
         const targetCommitted = targetId === id ? committed : "";
         const targetDisplayText = mode === "partial"
-          ? [targetCommitted, clean].filter(Boolean).join(" ")
+          ? targetBaseline
+            ? transcriptDelta(targetBaseline, clean)
+            : [targetCommitted, clean].filter(Boolean).join(" ")
           : nextCommitted;
         if (targetId !== id) {
           liveTranscriptByRole.current[role] = {
             id: targetId,
             committed: targetCommitted,
+            baseline: targetBaseline,
             lastUpdatedAt: now,
           };
         }
@@ -179,6 +199,7 @@ export default function OverlayApp() {
             liveTranscriptByRole.current[role] = {
               id: duplicate.id,
               committed: (duplicate.text ?? "").length >= clean.length ? duplicate.text ?? "" : clean,
+              baseline: undefined,
               lastUpdatedAt: now,
             };
             return current.map((item) =>
