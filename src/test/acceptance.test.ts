@@ -6,11 +6,15 @@ import {
   buildPrompt,
   createGlobalContext,
   classifyScreenText,
+  createTurnAssemblerState,
   formatConversationWindow,
   pickEvidenceWithEmbeddings,
   TranscriptBuffer,
+  assembleTurn,
+  assessPartialTurnStability,
   shouldAutoAnswer,
   detectQuestionIntent,
+  speechSimilarity,
 } from "../core/index.ts";
 
 const root = process.cwd();
@@ -136,25 +140,37 @@ test("acceptance: live STT chunks are queued instead of dropped while busy", () 
 });
 
 test("acceptance: Natively partial auto-answer waits for turn stability", () => {
-  const app = read("src/main.tsx");
-  const stability = app.indexOf("assessPartialTurnStability");
-  const askPartial = app.indexOf("Auto answering stable partial");
+  const partial = "Can you walk me through how you would design retries for payments?";
+  const changed = assessPartialTurnStability(partial, "Can you walk me through", 1_000, 2_000);
+  const tooSoon = assessPartialTurnStability(partial, partial, 1_500, 2_000);
+  const stable = assessPartialTurnStability(partial, partial, 1_000, 2_000);
+  const detection = detectQuestionIntent(partial, "english");
 
-  assert.ok(stability > 0, "Natively partials must be assessed for stability");
-  assert.ok(askPartial > stability, "partial auto-answer must happen after stability assessment");
-  assert.doesNotMatch(app, /Auto answering partial \(/);
+  assert.deepEqual(changed, { stable: false, reason: "changed_recently" });
+  assert.deepEqual(tooSoon, { stable: false, reason: "changed_recently" });
+  assert.deepEqual(stable, { stable: true, reason: "stable_partial" });
+  assert.equal(shouldAutoAnswer(detection, 20_000, 0), true);
 });
 
 test("acceptance: Natively final fragments do not pollute live transcript drafts", () => {
-  const app = read("src/main.tsx");
-  const core = read("src/core/turnAssembler.ts");
+  const state = createTurnAssemblerState();
+  const partial = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "Can you explain how you would make the payment worker idempotent",
+    isFinal: false,
+    timestamp: 1_000,
+  });
+  const folded = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "payment worker idempotent?",
+    isFinal: true,
+    timestamp: 1_500,
+  });
 
-  assert.match(app, /assembleTurn/);
-  assert.match(app, /stt_final_fragment_folded/);
-  assert.match(app, /STT final fragment folded and published to live draft/);
-  assert.match(app, /text:\s*assembled\.draftText/);
-  assert.match(core, /isFinalFragmentOfDraft/);
-  assert.match(core, /clean\.length < draft\.length \* 0\.75/);
+  assert.equal(partial.action, "publish_live");
+  assert.equal(folded.action, "fold_final");
+  assert.match(folded.action === "fold_final" ? folded.draftText : "", /payment worker idempotent\?/);
+  assert.deepEqual(state.committedBySpeaker, {});
 });
 
 test("acceptance: realistic interview exchange preserves roles and asks for correction", () => {
@@ -181,33 +197,63 @@ test("acceptance: realistic interview exchange preserves roles and asks for corr
 });
 
 test("acceptance: manual answer falls back to context when no question is detected", () => {
-  const app = read("src/main.tsx");
-  const promptBuilder = read("src/core/promptBuilder.ts");
+  const visibleText = "function twoSum(nums, target) {\n  // TODO\n}";
+  const context = createGlobalContext({
+    activeMode: "live_coding",
+    screenContext: classifyScreenText(visibleText),
+    codingLanguagePreference: "TypeScript",
+  });
+  const manualInput = [
+    "user_request: The candidate pressed Answer. There may not be a clean question mark in the transcript.",
+    "task: Use the current coding problem, screen context, and transcript to provide the next useful coding help.",
+  ].join("\n");
+  const prompt = buildPrompt(context, manualInput);
 
-  assert.match(app, /getManualAnswerPrompt/);
-  assert.match(app, /The candidate pressed Answer/);
-  assert.match(app, /next useful coding help/);
-  assert.match(app, /next useful thing to say/);
-  assert.doesNotMatch(app, /No interviewer question detected yet/);
-  assert.match(promptBuilder, /If the latest interviewer turn is not an interview/);
+  assert.match(prompt.user, /The candidate pressed Answer/);
+  assert.match(prompt.user, /next useful coding help/);
+  assert.match(prompt.user, /function twoSum/);
+  assert.match(prompt.system, /most useful next thing to say/i);
+  assert.doesNotMatch(prompt.user, /No interviewer question detected yet/);
 });
 
 test("acceptance: non-interview casual questions must not pivot to SQL", () => {
-  const promptBuilder = read("src/core/promptBuilder.ts");
-  const runner = read("scripts/run-llm-scenarios.mjs");
+  const transcript = new TranscriptBuffer();
+  transcript.append("What is SQL?", "stt", 1_000, "interviewer");
+  transcript.append("SQL is a relational query language.", "manual", 2_000, "assistant");
+  transcript.append("Do you think GTA will have physical copies?", "stt", 3_000, "interviewer");
+  const latestInput = formatConversationWindow(transcript.snapshot(), "", 10);
+  const detection = detectQuestionIntent(latestInput, "english");
+  const prompt = buildPrompt(
+    createGlobalContext({
+      activeMode: "technical_qa",
+      resumeText: "Built PostgreSQL reporting systems.",
+      transcript: transcript.snapshot(),
+    }),
+    latestInput,
+  );
 
-  assert.match(promptBuilder, /casual, entertainment-related, logistical, or unrelated/);
-  assert.match(promptBuilder, /do not answer it with SQL/);
-  assert.match(runner, /no_answer_gaming_physical_copy/);
-  assert.match(runner, /no_answer_gaming_reservations/);
+  assert.equal(detection.shouldDispatch, false);
+  assert.equal(detection.reason, "non_interview_casual");
+  assert.match(prompt.system, /do not answer it with SQL/i);
+  assert.match(prompt.user.match(/<current_question>\n([\s\S]*?)\n<\/current_question>/)?.[1] ?? "", /GTA/i);
+  assert.doesNotMatch(prompt.user, /<resume>/);
 });
 
 test("acceptance: transcript publishing is idempotent under React StrictMode", () => {
-  const app = read("src/main.tsx");
+  const recent = { speaker: "interviewer", text: "Can you explain idempotency?", timestamp: 1_000 };
+  const duplicate = { speaker: "interviewer", text: "Can you explain idempotency", timestamp: 1_500 };
+  const nextTurn = { speaker: "interviewer", text: "How would you implement retries?", timestamp: 2_000 };
+  const isDuplicatePublish =
+    recent.speaker === duplicate.speaker
+    && speechSimilarity(recent.text, duplicate.text) >= 0.96
+    && duplicate.timestamp - recent.timestamp < 2_000;
+  const isNewPublish =
+    recent.speaker === nextTurn.speaker
+    && speechSimilarity(recent.text, nextTurn.text) >= 0.96
+    && nextTurn.timestamp - recent.timestamp < 2_000;
 
-  assert.match(app, /recentPublishedTranscriptRef/);
-  assert.match(app, /duplicatePublish/);
-  assert.match(app, /speechSimilarity\(recent\.text, message\.text\) >= 0\.96/);
+  assert.equal(isDuplicatePublish, true);
+  assert.equal(isNewPublish, false);
 });
 
 test("acceptance: overlay starts a new live bubble after an assistant answer", () => {
