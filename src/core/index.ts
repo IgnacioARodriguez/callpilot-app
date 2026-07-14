@@ -128,6 +128,12 @@ export {
   type RetryPolicy,
 } from "./providerRetry.ts";
 export {
+  createSseParseState,
+  parseSseChunk,
+  type SseParseResult,
+  type SseParseState,
+} from "./sseStream.ts";
+export {
   createLatencyMetricRun,
   markLatencyStage,
   type LatencyMetricRun,

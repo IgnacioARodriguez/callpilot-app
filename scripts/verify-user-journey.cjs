@@ -64,6 +64,13 @@ const mockOpenAI = http.createServer(async (request, response) => {
           response.end();
           return;
         }
+        if (/MALFORMED_STREAM_TEST/i.test(promptInput)) {
+          response.write("data: {bad json}\n\n");
+          await sleep(30);
+          response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Recovered valid stream text." })}\n\n`);
+          response.end();
+          return;
+        }
         await sleep(90);
         response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Start with the tradeoff: " })}\n\n`);
         await sleep(90);
@@ -323,6 +330,17 @@ const run = async () => {
       }
     })`);
 
+    const malformedStream = await evaluate(client, `window.callpilotDesktop.generateAnswer({
+      provider: "openai",
+      modelName: "mock-openai-e2e",
+      apiKey: "callpilot-e2e-key",
+      prompt: {
+        system: "You are CallPilot malformed stream test.",
+        user: "MALFORMED_STREAM_TEST",
+        debug: { modeId: "technical_qa", includedSections: [], omittedSections: [] }
+      }
+    })`);
+
     const overlayStartedAt = Date.now();
     await evaluate(client, `window.callpilotDesktop.startSession({ mode: "live_coding" })`);
     let overlayOpenMs = Infinity;
@@ -459,6 +477,10 @@ const run = async () => {
         spanishText: contextualSpanish.text,
         englishText: contextualEnglish.text,
       },
+      streamingRobustness: {
+        malformedOk: Boolean(malformedStream.ok && /Recovered valid stream text/i.test(malformedStream.text || "")),
+        malformedText: malformedStream.text,
+      },
       overlay: {
         openMs: overlayOpenMs,
         ok: Number.isFinite(overlayOpenMs),
@@ -491,6 +513,7 @@ const run = async () => {
     if (!report.vision.ok || !report.vision.hasFunctionSignature) failures.push("vision failed coding extraction");
     if (!report.contextContinuity.spanishOk) failures.push("contextual Spanish HTML follow-up failed");
     if (!report.contextContinuity.englishOk) failures.push("contextual English Redis follow-up failed");
+    if (!report.streamingRobustness.malformedOk) failures.push("malformed stream recovery failed");
     if (report.vision.totalMs > thresholds.visionMs) failures.push(`vision too slow: ${report.vision.totalMs}ms`);
     if (!report.overlay.ok || report.overlay.openMs > thresholds.overlayOpenMs) failures.push(`overlay too slow: ${report.overlay.openMs}ms`);
     if (!report.setupUi.hasRoot || !report.setupUi.hasStartSession || !report.setupUi.hasSetupCards || !report.setupUi.hasContextFields) failures.push("setup UI did not render expected controls");

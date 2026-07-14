@@ -499,6 +499,32 @@ const readOpenAISseStream = async (response, onEvent, signal) => {
   const reader = response.body.getReader();
   let buffer = "";
   let fullText = "";
+  let malformedCount = 0;
+
+  const consumeRawEvent = (rawEvent) => {
+    const dataLines = rawEvent
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim());
+    for (const line of dataLines) {
+      if (!line) continue;
+      if (line === "[DONE]") continue;
+      try {
+        const streamEvent = JSON.parse(line);
+        if (streamEvent.type === "response.output_text.delta" && typeof streamEvent.delta === "string") {
+          fullText += streamEvent.delta;
+        }
+        onEvent?.(streamEvent);
+      } catch (error) {
+        malformedCount += 1;
+        appendTraceEvent("provider_stream_malformed_event", {
+          malformedCount,
+          previewHash: crypto.createHash("sha256").update(line).digest("hex").slice(0, 12),
+          previewLength: line.length,
+        });
+      }
+    }
+  };
 
   while (true) {
     if (signal?.aborted) {
@@ -511,20 +537,11 @@ const readOpenAISseStream = async (response, onEvent, signal) => {
     const events = buffer.split("\n\n");
     buffer = events.pop() || "";
     for (const rawEvent of events) {
-      const dataLines = rawEvent
-        .split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trim());
-      for (const line of dataLines) {
-        if (!line || line === "[DONE]") continue;
-        const event = JSON.parse(line);
-        if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-          fullText += event.delta;
-        }
-        onEvent?.(event);
-      }
+      consumeRawEvent(rawEvent);
     }
   }
+  const trailing = buffer.trim();
+  if (trailing) consumeRawEvent(trailing);
   return fullText.trim();
 };
 

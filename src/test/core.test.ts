@@ -58,6 +58,8 @@ import {
   retryDelayMs,
   shouldRetryProviderFailure,
   withRetry,
+  createSseParseState,
+  parseSseChunk,
 } from "../core/index.ts";
 
 test("fixed modes are available", () => {
@@ -127,6 +129,47 @@ test("withRetry does not retry cancelled requests", async () => {
     ),
     /cancelled/i,
   );
+});
+
+test("SSE parser handles split JSON events and missing done", () => {
+  let state = createSseParseState();
+  let parsed = parseSseChunk(state, 'data: {"type":"response.output_text.delta","del');
+  assert.equal(parsed.textDelta, "");
+  state = parsed.state;
+  parsed = parseSseChunk(state, 'ta":"hello"}\n\n');
+
+  assert.equal(parsed.textDelta, "hello");
+  assert.equal(parsed.state.done, false);
+  assert.equal(parsed.state.malformedCount, 0);
+});
+
+test("SSE parser counts malformed events without dropping valid deltas", () => {
+  let state = createSseParseState();
+  let parsed = parseSseChunk(state, [
+    "data: {bad json}",
+    "",
+    'data: {"type":"response.output_text.delta","delta":"good"}',
+    "",
+    "data: [DONE]",
+    "",
+    "",
+  ].join("\n"));
+  state = parsed.state;
+
+  assert.equal(parsed.textDelta, "good");
+  assert.equal(state.done, true);
+  assert.equal(state.malformedCount, 1);
+});
+
+test("SSE parser flushes partial final event when connection closes", () => {
+  const state = parseSseChunk(
+    createSseParseState(),
+    'data: {"type":"response.output_text.delta","delta":"partial"}',
+  ).state;
+  const parsed = parseSseChunk(state, "", { flush: true });
+
+  assert.equal(parsed.textDelta, "partial");
+  assert.equal(parsed.state.done, false);
 });
 
 test("prompt builder emits debug metadata", () => {
