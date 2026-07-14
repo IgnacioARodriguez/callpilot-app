@@ -176,6 +176,7 @@ function App() {
   const [isRecordingMic, setIsRecordingMic] = React.useState(false);
   const [recordingStatus, setRecordingStatus] = React.useState("");
   const [isGenerating, setIsGenerating] = React.useState(false);
+  const isGeneratingRef = React.useRef(false);
   const [latencyRuns, setLatencyRuns] = React.useState<LatencyMetricRun[]>([]);
   const [question, setQuestion] = React.useState(savedSession.question ?? "");
   const [answer, setAnswer] = React.useState(savedSession.answer ?? "");
@@ -235,6 +236,10 @@ function App() {
   React.useEffect(() => {
     transcriptRef.current = transcript;
   }, [transcript]);
+
+  React.useEffect(() => {
+    isGeneratingRef.current = isGenerating;
+  }, [isGenerating]);
 
   const context = React.useMemo(
     () =>
@@ -545,6 +550,14 @@ function App() {
   ]);
 
   const ask = React.useCallback(async (questionOverride?: string) => {
+    if (isGeneratingRef.current) {
+      setLiveAssistStatus("Already answering; repeated Answer press ignored");
+      void window.callpilotDesktop?.recordSessionEvent?.("manual_answer_ignored", {
+        reason: "answer_in_progress",
+        activeRequestId: activeAnswerRequestIdRef.current,
+      });
+      return;
+    }
     const effectiveQuestion = questionOverride ?? question;
     const requestId = `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     activeAnswerRequestIdRef.current = requestId;
@@ -558,7 +571,11 @@ function App() {
       builtPrompt = buildPrompt(context, effectiveQuestion);
     }
     setLastPrompt(builtPrompt);
+    if (builtPrompt.debug.answerContextTrace) {
+      void window.callpilotDesktop?.recordSessionEvent?.("answer_context_built", { ...builtPrompt.debug.answerContextTrace });
+    }
     setIsGenerating(true);
+    isGeneratingRef.current = true;
     const latencyRun = markLatencyStage(createLatencyMetricRun("answer"), "model_call_start");
     activeLatencyRunIdRef.current = latencyRun.id;
     firstDetailChunkSeenRef.current = false;
@@ -610,7 +627,7 @@ function App() {
         : `Generation failed: ${result.error ?? "unknown error"}`;
       if (activeAnswerRequestIdRef.current === requestId) {
         setAnswer(text);
-        if (structured) {
+        if (result.ok && structured) {
           void window.callpilotDesktop.publishStructuredAnswer?.({
             requestId,
             answer: structured,
@@ -618,7 +635,7 @@ function App() {
             timestamp: Date.now(),
           });
         }
-        appendAssistantTranscriptLine(text);
+        if (result.ok) appendAssistantTranscriptLine(text);
       }
     } finally {
       const activeRunId = activeLatencyRunIdRef.current;
@@ -627,7 +644,11 @@ function App() {
           run.id === activeRunId ? markLatencyStage(run, "response_complete") : run,
         ));
       }
-      if (activeAnswerRequestIdRef.current === requestId) setIsGenerating(false);
+      if (activeAnswerRequestIdRef.current === requestId) {
+        activeAnswerRequestIdRef.current = null;
+        setIsGenerating(false);
+        isGeneratingRef.current = false;
+      }
     }
   }, [appendAssistantTranscriptLine, context, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, providerLabel, question, sessionApiKey]);
 

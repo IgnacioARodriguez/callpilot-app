@@ -45,11 +45,25 @@ const mockOpenAI = http.createServer(async (request, response) => {
     request.on("end", async () => {
       const payload = JSON.parse(body || "{}");
       if (payload.stream) {
+        const promptInput = String(payload.input || "");
         response.writeHead(200, {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
         });
+        if (/En que contexto lo usarias/i.test(promptInput) || /When would you use it/i.test(promptInput)) {
+          const contextualText = /En que contexto lo usarias/i.test(promptInput)
+            ? (/Que es HTML|HTML/i.test(promptInput)
+              ? "Usaria HTML para estructurar contenido web semantico en una pagina o aplicacion."
+              : "No puedo resolver a que se refiere lo.")
+            : (/What is Redis|Redis/i.test(promptInput)
+              ? "I would use Redis for low-latency caching, counters, and short-lived session data."
+              : "I cannot resolve what it refers to.");
+          response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: contextualText })}\n\n`);
+          response.write("data: [DONE]\n\n");
+          response.end();
+          return;
+        }
         await sleep(90);
         response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Start with the tradeoff: " })}\n\n`);
         await sleep(90);
@@ -60,6 +74,19 @@ const mockOpenAI = http.createServer(async (request, response) => {
       }
 
       await sleep(payload.text?.format?.type === "json_schema" ? 160 : 180);
+      const promptInput = String(payload.input || "");
+      if (/En que contexto lo usarias/i.test(promptInput)) {
+        json(response, createOutputPayload(/Que es HTML|HTML/i.test(promptInput)
+          ? "Usaria HTML para estructurar contenido web semantico en una pagina o aplicacion."
+          : "No puedo resolver a que se refiere lo."));
+        return;
+      }
+      if (/When would you use it/i.test(promptInput)) {
+        json(response, createOutputPayload(/What is Redis|Redis/i.test(promptInput)
+          ? "I would use Redis for low-latency caching, counters, and short-lived session data."
+          : "I cannot resolve what it refers to."));
+        return;
+      }
       if (payload.text?.format?.type === "json_schema") {
         json(response, createOutputPayload(JSON.stringify({
           kind: "interview",
@@ -274,6 +301,28 @@ const run = async () => {
       resolve({ result, totalMs: performance.now() - t0 });
     })`);
 
+    const contextualSpanish = await evaluate(client, `window.callpilotDesktop.generateAnswer({
+      provider: "openai",
+      modelName: "mock-openai-e2e",
+      apiKey: "callpilot-e2e-key",
+      prompt: {
+        system: "You are CallPilot context test.",
+        user: "<recent_conversation>\\nInterviewer: Que es HTML?\\nAssistant suggestion: HTML es un lenguaje de marcado para estructurar paginas web.\\n</recent_conversation>\\n\\n<current_question>\\nInterviewer: En que contexto lo usarias?\\n</current_question>",
+        debug: { modeId: "technical_qa", includedSections: ["recent_conversation", "current_question"], omittedSections: [] }
+      }
+    })`);
+
+    const contextualEnglish = await evaluate(client, `window.callpilotDesktop.generateAnswer({
+      provider: "openai",
+      modelName: "mock-openai-e2e",
+      apiKey: "callpilot-e2e-key",
+      prompt: {
+        system: "You are CallPilot context test.",
+        user: "<recent_conversation>\\nInterviewer: What is Redis?\\nAssistant suggestion: Redis is an in-memory data store often used for caching.\\n</recent_conversation>\\n\\n<current_question>\\nInterviewer: When would you use it?\\n</current_question>",
+        debug: { modeId: "technical_qa", includedSections: ["recent_conversation", "current_question"], omittedSections: [] }
+      }
+    })`);
+
     const overlayStartedAt = Date.now();
     await evaluate(client, `window.callpilotDesktop.startSession({ mode: "live_coding" })`);
     let overlayOpenMs = Infinity;
@@ -404,6 +453,12 @@ const run = async () => {
         ok: vision.result.ok,
         hasFunctionSignature: /functionSignature|two_sum|Two Sum/i.test(vision.result.text || ""),
       },
+      contextContinuity: {
+        spanishOk: Boolean(contextualSpanish.ok && /HTML/i.test(contextualSpanish.text || "")),
+        englishOk: Boolean(contextualEnglish.ok && /Redis/i.test(contextualEnglish.text || "")),
+        spanishText: contextualSpanish.text,
+        englishText: contextualEnglish.text,
+      },
       overlay: {
         openMs: overlayOpenMs,
         ok: Number.isFinite(overlayOpenMs),
@@ -434,6 +489,8 @@ const run = async () => {
     if (!report.transcription.ok || !/approach/i.test(report.transcription.text)) failures.push("transcription failed expected text");
     if (report.transcription.totalMs > thresholds.transcriptionMs) failures.push(`transcription too slow: ${report.transcription.totalMs}ms`);
     if (!report.vision.ok || !report.vision.hasFunctionSignature) failures.push("vision failed coding extraction");
+    if (!report.contextContinuity.spanishOk) failures.push("contextual Spanish HTML follow-up failed");
+    if (!report.contextContinuity.englishOk) failures.push("contextual English Redis follow-up failed");
     if (report.vision.totalMs > thresholds.visionMs) failures.push(`vision too slow: ${report.vision.totalMs}ms`);
     if (!report.overlay.ok || report.overlay.openMs > thresholds.overlayOpenMs) failures.push(`overlay too slow: ${report.overlay.openMs}ms`);
     if (!report.setupUi.hasRoot || !report.setupUi.hasStartSession || !report.setupUi.hasSetupCards || !report.setupUi.hasContextFields) failures.push("setup UI did not render expected controls");
