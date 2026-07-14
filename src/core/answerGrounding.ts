@@ -3,7 +3,7 @@ import type { StructuredAnswerPayload } from "./answerPayload.ts";
 
 export interface AnswerGroundingAssessment {
   ok: boolean;
-  reason: "grounded" | "empty" | "unsupported_topic_drift";
+  reason: "grounded" | "empty" | "unsupported_topic_drift" | "topic_anchor_mismatch";
   overlapCount: number;
   unsupportedTerms: string[];
 }
@@ -27,6 +27,10 @@ const tokenize = (text: string): string[] =>
     .match(/[a-z0-9+#.-]{3,}/g)
     ?.map((token) => token.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
     .filter((token) => token.length >= 3 && !stopWords.has(token)) ?? [];
+
+const extractAcronymAnchors = (text: string): string[] =>
+  [...new Set(text.match(/\b[A-Z][A-Z0-9+#.-]{1,9}\b/g) ?? [])]
+    .filter((token) => !["OK"].includes(token));
 
 const answerText = (structured: StructuredAnswerPayload): string => {
   if (structured.kind === "coding") {
@@ -67,6 +71,19 @@ export const assessAnswerGrounding = (
   if (answerTerms.length === 0) return { ok: true, reason: "empty", overlapCount: 0, unsupportedTerms: [] };
   if (structured.kind === "interview" && structured.payload.intent === "no_answer") {
     return { ok: true, reason: "grounded", overlapCount: 0, unsupportedTerms: [] };
+  }
+
+  const userAcronyms = extractAcronymAnchors(userInput);
+  const answerAcronyms = extractAcronymAnchors(candidateText);
+  const missingUserAcronyms = userAcronyms.filter((term) => !answerAcronyms.includes(term));
+  const extraAnswerAcronyms = answerAcronyms.filter((term) => !userAcronyms.includes(term));
+  if (userAcronyms.length > 0 && missingUserAcronyms.length > 0 && extraAnswerAcronyms.length > 0) {
+    return {
+      ok: false,
+      reason: "topic_anchor_mismatch",
+      overlapCount: 0,
+      unsupportedTerms: extraAnswerAcronyms.slice(0, 12),
+    };
   }
 
   const groundingTerms = new Set(tokenize(groundingText(context, userInput)));

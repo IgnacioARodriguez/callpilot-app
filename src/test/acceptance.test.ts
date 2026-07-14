@@ -213,6 +213,14 @@ test("acceptance: overlay starts a new live bubble after an assistant answer", (
   assert.match(overlay, /targetId = mode === "partial" && assistantAfterExisting/);
 });
 
+test("acceptance: overlay shows the changing tail of long live transcripts", () => {
+  const overlay = read("src/overlay/OverlayApp.tsx");
+
+  assert.match(overlay, /liveTranscriptText/);
+  assert.match(overlay, /clean\.slice\(-260\)/);
+  assert.match(overlay, /message\.isStreaming \? liveTranscriptText/);
+});
+
 test("acceptance: LLM quality runner has a broad scenario corpus", () => {
   const runner = read("scripts/run-llm-scenarios.mjs");
   const scenarioLikeEntries = (runner.match(/(?:id:\s*"|makeTechnicalScenario\("|makeBehavioralScenario\("|makeCodingScenario\(")/g) ?? []).length;

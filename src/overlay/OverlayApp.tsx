@@ -97,6 +97,12 @@ const renderFormattedText = (text: string) => (
   </div>
 );
 
+const liveTranscriptText = (text = ""): string => {
+  const clean = text.trim();
+  if (clean.length <= 260) return clean;
+  return `...${clean.slice(-260)}`;
+};
+
 export default function OverlayApp() {
   const [messages, setMessages] = React.useState<OverlayMessage[]>([]);
   const [isRequestingAnswer, setIsRequestingAnswer] = React.useState(false);
@@ -390,7 +396,7 @@ export default function OverlayApp() {
                 {message.detail && <div className="cp-bubble__detail">{renderFormattedText(message.detail)}</div>}
               </>
             ) : (
-              message.text?.trim() ? <p>{message.text}</p> : null
+              message.text?.trim() ? <p>{message.isStreaming ? liveTranscriptText(message.text) : message.text}</p> : null
             )}
             </div>
           </div>

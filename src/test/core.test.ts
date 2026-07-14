@@ -515,6 +515,49 @@ test("answer grounding guard allows explicitly mentioned technical topics", () =
   assert.equal(assessment.ok, true);
 });
 
+test("answer grounding guard blocks acronym topic swaps from stale context", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("What is SQL?", "stt", 1_000, "interviewer");
+  transcript.append("**Respuesta:** SQL queries relational databases.", "manual", 2_000, "assistant");
+  const context = createGlobalContext({
+    activeMode: "technical_qa",
+    transcript: transcript.snapshot(),
+    screenContext: {
+      kind: "unknown",
+      confidence: 0.1,
+      visibleText: "Old note: SQL, DML, DDL",
+      summary: "stale SQL note",
+      capturedAt: 1_000,
+    },
+  });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "SQL is a language for querying relational databases.",
+      keyPoints: ["SQL", "DML", "DDL"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "Is it like HTML?", structured);
+
+  assert.equal(assessment.ok, false);
+  assert.equal(assessment.reason, "topic_anchor_mismatch");
+});
+
 test("live conversation drops microphone echo from recent interviewer audio", () => {
   const recent = [
     {
