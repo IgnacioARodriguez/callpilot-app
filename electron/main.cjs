@@ -91,6 +91,11 @@ const settingsDefaults = {
 
 const openAITranscriptionMaxBytes = 25 * 1024 * 1024;
 const openAIBaseUrl = () => (process.env.CALLPILOT_OPENAI_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
+const normalizeOpenAICompatibleChatUrl = (url) => {
+  const clean = String(url || "").trim().replace(/\/+$/, "");
+  if (!clean) return "";
+  return /\/chat\/completions$/i.test(clean) ? clean : `${clean}/chat/completions`;
+};
 const nativelyTranscriptionUrl = () => (process.env.CALLPILOT_NATIVELY_STT_URL || "wss://api.natively.software/v1/transcribe").trim();
 const nativelyLLMUrl = () => (process.env.CALLPILOT_NATIVELY_LLM_URL || "https://api.natively.software/v1/chat/completions").trim();
 const supportedAudioMimeTypes = new Set([
@@ -612,7 +617,7 @@ const providerPresets = {
     protocol: "openai_chat",
     defaultModel: process.env.CALLPILOT_NVIDIA_MODEL || "nvidia-default",
     auth: "bearer",
-    chatUrl: () => (process.env.CALLPILOT_NVIDIA_LLM_URL || "https://integrate.api.nvidia.com/v1/chat/completions").trim(),
+    chatUrl: () => normalizeOpenAICompatibleChatUrl(process.env.CALLPILOT_NVIDIA_LLM_URL || "https://integrate.api.nvidia.com/v1/chat/completions"),
     apiKey: (input) => (typeof input?.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim() : process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || ""),
   },
 };
