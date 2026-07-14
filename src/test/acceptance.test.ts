@@ -175,7 +175,7 @@ test("acceptance: realistic interview exchange preserves roles and asks for corr
   assert.match(prompt.user, /interviewer: What is SQL\?/);
   assert.match(prompt.user, /candidate: It is a programming language/);
   assert.match(prompt.user, /interviewer: Why would you describe it that way\?/);
-  assert.match(prompt.user, /PostgreSQL|audit logs|transaction consistency/);
+  assert.doesNotMatch(prompt.user, /PostgreSQL|audit logs|transaction consistency/);
   assert.match(prompt.system, /candidate's prior answer is incomplete or technically wrong/i);
   assert.match(prompt.system, /Do not answer stale topics/i);
 });

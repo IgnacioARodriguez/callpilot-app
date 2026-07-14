@@ -200,9 +200,45 @@ test("prompt builder grounds interview answers in resume, STAR stories, and job 
   assert.ok(prompt.debug.includedSections.includes("job_description"));
   assert.ok(prompt.debug.includedSections.includes("selected_evidence"));
   assert.ok(prompt.debug.selectedEvidence.some((item) => item.source === "star_stories"));
-  assert.ok(prompt.system.includes("Ground every interview answer"));
+  assert.ok(prompt.system.includes("Use resume, STAR stories"));
   assert.ok(prompt.user.includes("<company_name>\nEbury"));
   assert.ok(prompt.user.includes("<selected_evidence>"));
+});
+
+test("technical definitions do not force candidate background into the prompt", () => {
+  const context = createGlobalContext({
+    activeMode: "technical_qa",
+    companyName: "Mercado Pago",
+    resumeText: "Built payments reconciliation with PostgreSQL.",
+    starStories: "STAR: Used SQL for payment audits.",
+    jobDescription: "Payments backend role.",
+  });
+  const prompt = buildPrompt(context, "interviewer: Que es una base de datos relacional?");
+
+  assert.doesNotMatch(prompt.user, /<company_name>/);
+  assert.doesNotMatch(prompt.user, /<resume>/);
+  assert.doesNotMatch(prompt.user, /Mercado Pago|payments reconciliation|payment audits/i);
+});
+
+test("experience follow-ups include candidate background as memory aid", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Que es SQL?", "stt", 1_000, "interviewer");
+  transcript.append("SQL es un lenguaje para consultar bases de datos.", "manual", 2_000, "assistant");
+  transcript.append("Y como lo has usado?", "stt", 3_000, "interviewer");
+  const context = createGlobalContext({
+    activeMode: "technical_qa",
+    companyName: "Mercado Pago",
+    resumeText: "Used SQL in payment reconciliation pipelines with PostgreSQL.",
+    starStories: "STAR: Built auditable SQL reports for transaction mismatches.",
+    jobDescription: "Backend role.",
+    transcript: transcript.snapshot(),
+  });
+  const prompt = buildPrompt(context, "interviewer: Y como lo has usado?");
+
+  assert.match(prompt.user, /<resume>[\s\S]*payment reconciliation/i);
+  assert.match(prompt.user, /<star_stories>[\s\S]*auditable SQL/i);
+  assert.match(prompt.user, /<recent_conversation>[\s\S]*Que es SQL/i);
+  assert.match(prompt.user, /<current_question>[\s\S]*Y como lo has usado/i);
 });
 
 test("evidence picker selects STAR tradeoff evidence for SQL vs NoSQL questions", () => {
