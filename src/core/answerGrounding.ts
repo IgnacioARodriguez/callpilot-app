@@ -18,8 +18,11 @@ const stopWords = new Set([
 
 const normalize = (text: string) =>
   text
+    .replace(/Ã‚/g, "")
+    .replace(/Â/g, "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[Ã‚Â¿Ã‚Â¡Â¿Â¡¿¡]/g, "")
     .toLowerCase();
 
 const tokenize = (text: string): string[] =>
@@ -29,8 +32,10 @@ const tokenize = (text: string): string[] =>
     .filter((token) => token.length >= 3 && !stopWords.has(token)) ?? [];
 
 const extractCurrentTurnAnchors = (text: string): string[] =>
-  [...new Set(text.match(/\b[A-Z][A-Z0-9+#.-]{1,9}\b/g) ?? [])]
-    .filter((token) => !["OK"].includes(token));
+  [...new Set([
+    ...(text.match(/\b[A-Z][A-Z0-9+#.-]{1,9}\b/g) ?? []),
+    ...(text.match(/\b[A-Z][a-z][A-Za-z0-9+#.-]{2,24}\b/g) ?? []),
+  ])].filter((token) => !["OK"].includes(token));
 
 const answerText = (structured: StructuredAnswerPayload): string => {
   if (structured.kind === "coding") {
@@ -51,9 +56,25 @@ const answerText = (structured: StructuredAnswerPayload): string => {
 };
 
 const extractDefinitionSubject = (text: string): string | null => {
-  const normalized = text.replace(/[¿?]/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = normalize(text).replace(/[?]/g, " ").replace(/\s+/g, " ").trim();
   const match = normalized.match(/\b(?:what|que)\s+(?:is|are|es|son)\s+(.{2,80})$/i);
   return match?.[1]?.replace(/[.?!]+$/, "").trim() || null;
+};
+
+const extractExplicitQuestionSubject = (text: string): string | null => {
+  const normalized = normalize(text).replace(/[?]/g, " ").replace(/\s+/g, " ").trim();
+  const patterns = [
+    /\b(?:what|que)\s+(?:is|are|es|son)\s+(.{2,80})$/i,
+    /\b(?:para que)\s+(?:sirve|se usa|usarias|utilizarias)\s+(.{2,80})$/i,
+    /\b(?:what)\s+(?:is|are)\s+(.{2,80})\s+(?:used for|for)$/i,
+    /\b(?:explain|describe|explica|explicame|describe|describeme)\s+(.{2,80})$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const subject = match?.[1]?.replace(/[.?!]+$/, "").trim();
+    if (subject) return subject;
+  }
+  return null;
 };
 
 const extractAnswerDefinitionLead = (text: string): string | null => {
@@ -78,7 +99,11 @@ const groundingText = (context: GlobalContext, userInput: string): string =>
     context.jobDescription,
     context.userNotes,
     context.screenContext.visibleText,
-    context.transcript.messages.slice(-8).map((message) => `${message.speaker}: ${message.text}`).join("\n"),
+    context.transcript.messages
+      .filter((message) => message.speaker !== "assistant")
+      .slice(-8)
+      .map((message) => `${message.speaker}: ${message.text}`)
+      .join("\n"),
   ].join("\n");
 
 export const assessAnswerGrounding = (
@@ -93,6 +118,17 @@ export const assessAnswerGrounding = (
     return { ok: true, reason: "grounded", overlapCount: 0, unsupportedTerms: [] };
   }
 
+  const definitionSubject = extractDefinitionSubject(userInput);
+  const answerLead = extractAnswerDefinitionLead(candidateText);
+  if (definitionSubject && answerLead && !subjectMatches(definitionSubject, answerLead)) {
+    return {
+      ok: false,
+      reason: "definition_subject_mismatch",
+      overlapCount: 0,
+      unsupportedTerms: [answerLead],
+    };
+  }
+
   const userAnchors = extractCurrentTurnAnchors(userInput);
   const answerAnchors = extractCurrentTurnAnchors(candidateText);
   const missingUserAnchors = userAnchors.filter((term) => !answerAnchors.includes(term));
@@ -105,15 +141,21 @@ export const assessAnswerGrounding = (
       unsupportedTerms: extraAnswerAnchors.slice(0, 12),
     };
   }
-  const definitionSubject = extractDefinitionSubject(userInput);
-  const answerLead = extractAnswerDefinitionLead(candidateText);
-  if (definitionSubject && answerLead && !subjectMatches(definitionSubject, answerLead)) {
-    return {
-      ok: false,
-      reason: "definition_subject_mismatch",
-      overlapCount: 0,
-      unsupportedTerms: [answerLead],
-    };
+
+  const explicitSubject = extractExplicitQuestionSubject(userInput);
+  if (explicitSubject) {
+    const subjectTerms = tokenize(explicitSubject);
+    const candidateTerms = new Set(answerTerms);
+    const matchedSubjectTerms = subjectTerms.filter((term) => candidateTerms.has(term));
+    const subjectCoverage = subjectTerms.length === 0 ? 1 : matchedSubjectTerms.length / subjectTerms.length;
+    if (subjectTerms.length > 0 && subjectCoverage < 0.5) {
+      return {
+        ok: false,
+        reason: "topic_anchor_mismatch",
+        overlapCount: matchedSubjectTerms.length,
+        unsupportedTerms: subjectTerms.filter((term) => !candidateTerms.has(term)).slice(0, 12),
+      };
+    }
   }
 
   const groundingTerms = new Set(tokenize(groundingText(context, userInput)));

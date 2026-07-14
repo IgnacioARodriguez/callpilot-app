@@ -603,6 +603,129 @@ test("answer grounding guard blocks definition answers that replace the asked su
   assert.equal(assessment.reason, "definition_subject_mismatch");
 });
 
+test("answer grounding guard ignores prior assistant answers as evidence", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("**Respuesta:** RPC is a remote procedure call pattern.", "manual", 1_000, "assistant");
+  const context = createGlobalContext({
+    activeMode: "technical_qa",
+    transcript: transcript.snapshot(),
+  });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "RPC is a remote procedure call pattern.",
+      keyPoints: ["RPC"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "Para que sirve?", structured);
+
+  assert.equal(assessment.ok, false);
+});
+
+test("answer grounding guard handles Spanish definition subjects with punctuation noise", () => {
+  const context = createGlobalContext({ activeMode: "technical_qa" });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "SQL es un lenguaje para consultar bases de datos.",
+      keyPoints: ["consultas"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "Â¿Qué es una base de datos relacional?", structured);
+
+  assert.equal(assessment.ok, false);
+  assert.equal(assessment.reason, "definition_subject_mismatch");
+});
+
+test("answer grounding guard blocks answers that ignore explicit Spanish usage subjects", () => {
+  const context = createGlobalContext({ activeMode: "technical_qa" });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "SQL is a language for querying relational databases.",
+      keyPoints: ["queries", "relational databases"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "Para que sirve Kafka. Kafka.", structured);
+
+  assert.equal(assessment.ok, false);
+  assert.equal(assessment.reason, "topic_anchor_mismatch");
+});
+
+test("answer grounding guard allows answers focused on the explicit Spanish usage subject", () => {
+  const context = createGlobalContext({ activeMode: "technical_qa" });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "Kafka sirve para construir pipelines de eventos y comunicar servicios de forma asincronica.",
+      keyPoints: ["Kafka", "event streaming", "mensajeria asincronica"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "Para que sirve Kafka. Kafka.", structured);
+
+  assert.equal(assessment.ok, true);
+});
+
 test("live conversation drops microphone echo from recent interviewer audio", () => {
   const recent = [
     {
