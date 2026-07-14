@@ -97,6 +97,27 @@ const resultSummary = (result) => ({
   error: result?.error,
   text: textSummary(result?.text, 160),
 });
+const sanitizeTracePayload = (value, depth = 0) => {
+  if (depth > 4) return "[max_depth]";
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return textSummary(value, 140);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.slice(0, 16).map((item) => sanitizeTracePayload(item, depth + 1));
+  if (typeof value === "object") {
+    const output = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (/api.?key|token|secret|audio|arrayBuffer/i.test(key)) {
+        output[key] = "[redacted]";
+      } else if (/text|prompt|draft|normalized/i.test(key) && typeof nested === "string") {
+        output[key] = textSummary(nested, 140);
+      } else {
+        output[key] = sanitizeTracePayload(nested, depth + 1);
+      }
+    }
+    return output;
+  }
+  return String(value);
+};
 const appendTraceEvent = (type, payload = {}) => {
   if (!activeSessionTrace) return;
   activeSessionTrace.events.push({
@@ -1167,6 +1188,13 @@ ipcMain.handle("session:trace-status", () => activeSessionTrace ? {
   startedAt: activeSessionTrace.startedAt,
   updatedAt: activeSessionTrace.updatedAt,
 } : { ok: true, active: false });
+ipcMain.handle("session:trace-event", (_event, type, payload = {}) => {
+  const safeType = String(type || "").replace(/[^a-z0-9:_-]/gi, "_").slice(0, 80);
+  if (!safeType) return { ok: false, error: "missing_type" };
+  appendTraceEvent(safeType, sanitizeTracePayload(payload));
+  writeActiveSessionTrace("active");
+  return { ok: true };
+});
 ipcMain.handle("answer:request", () => {
   appendTraceEvent("manual_answer_requested", {});
   writeActiveSessionTrace("active");

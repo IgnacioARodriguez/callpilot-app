@@ -8,6 +8,7 @@ import {
   MODES,
   SESSION_LIBRARY_KEY,
   TranscriptBuffer,
+  assembleTurn,
   browserRecognitionLanguage,
   buildPrompt,
   buildPromptWithEvidence,
@@ -15,6 +16,7 @@ import {
   createGlobalContext,
   createLatencyMetricRun,
   createSessionSnapshot,
+  createTurnAssemblerState,
   defaultStealthState,
   formatConversationWindow,
   assessPrivacyState,
@@ -53,6 +55,7 @@ import {
   type StealthState,
   type TranscriptSpeaker,
   type TranscriptSnapshot,
+  type TurnAssemblerState,
 } from "./core";
 import OverlayApp from "./overlay/OverlayApp";
 import CodingOverlayApp from "./overlay/CodingOverlayApp";
@@ -200,7 +203,7 @@ function App() {
   const recentSpeechRef = React.useRef<RecentSpeech[]>([]);
   const lastNativelyPartialAnswerRef = React.useRef<{ text: string; timestamp: number }>({ text: "", timestamp: 0 });
   const nativelyPartialStabilityRef = React.useRef<Record<string, { text: string; timestamp: number }>>({});
-  const nativelyLiveDraftBySpeakerRef = React.useRef<Partial<Record<TranscriptSpeaker, { text: string; timestamp: number }>>>({});
+  const turnAssemblerRef = React.useRef<TurnAssemblerState>(createTurnAssemblerState());
   const lastSystemAudioSignalAtRef = React.useRef(0);
   const liveChunkBusyByIdRef = React.useRef(new Set<string>());
   const liveChunkQueueByIdRef = React.useRef(new Map<string, Array<{ blob: Blob; speaker: TranscriptSpeaker }>>());
@@ -308,47 +311,6 @@ function App() {
     return candidate;
   };
 
-  const mergeNativelyLiveDraft = (speaker: TranscriptSpeaker, text: string, isFinal: boolean): string => {
-    const clean = text.trim();
-    if (!clean) return "";
-    if (isFinal) {
-      nativelyLiveDraftBySpeakerRef.current[speaker] = { text: "", timestamp: 0 };
-      return clean;
-    }
-    const now = Date.now();
-    const previous = nativelyLiveDraftBySpeakerRef.current[speaker];
-    if (!previous || now - previous.timestamp > 5000) {
-      nativelyLiveDraftBySpeakerRef.current[speaker] = { text: clean, timestamp: now };
-      return clean;
-    }
-    const prev = previous.text.trim();
-    const prevLower = prev.toLowerCase();
-    const cleanLower = clean.toLowerCase();
-    let next = clean;
-    if (cleanLower.startsWith(prevLower)) {
-      next = clean;
-    } else if (prevLower.includes(cleanLower)) {
-      next = prev;
-    } else if (clean.length > prev.length && speechSimilarity(prev, clean) >= 0.55) {
-      next = clean;
-    } else if (clean.length < prev.length * 0.55 && !/[?Â¿.!]$/.test(prev)) {
-      next = `${prev} ${clean}`;
-    } else {
-      next = clean;
-    }
-    nativelyLiveDraftBySpeakerRef.current[speaker] = { text: next, timestamp: now };
-    return next;
-  };
-
-  const isNativelyFinalFragment = (speaker: TranscriptSpeaker, text: string): boolean => {
-    const draft = nativelyLiveDraftBySpeakerRef.current[speaker]?.text.trim();
-    const clean = text.trim();
-    if (!draft || !clean) return false;
-    const draftLower = draft.toLowerCase();
-    const cleanLower = clean.toLowerCase();
-    return clean.length < draft.length * 0.75
-      && (draftLower.includes(cleanLower) || speechSimilarity(draft, clean) >= 0.72);
-  };
 
   const appendTranscript = () => {
     if (!transcriptDraft.trim()) return;
@@ -676,7 +638,7 @@ function App() {
   }, [context, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, providerLabel, sessionApiKey]);
 
   const getLatestInterviewPrompt = React.useCallback(() => {
-    const liveInterviewerText = nativelyLiveDraftBySpeakerRef.current.interviewer?.text.trim();
+    const liveInterviewerText = turnAssemblerRef.current.draftsBySpeaker.interviewer?.text.trim();
     const conversationWindow = formatConversationWindow(transcriptRef.current, liveInterviewerText, 10);
     if (conversationWindow) return conversationWindow;
     if (liveInterviewerText) return `interviewer_partial: ${liveInterviewerText}`;
@@ -742,6 +704,14 @@ function App() {
       return;
     }
     const detection = detectQuestionIntent(normalized, preferredLanguage);
+    void window.callpilotDesktop?.recordSessionEvent?.("autoanswer_decision", {
+      source,
+      speaker,
+      autoAnswerEnabled: autoAnswerEnabledRef.current,
+      detection,
+      cooldownMs: liveSettings.autoAnswerCooldownMs,
+      minConfidence: liveSettings.autoAnswerMinConfidence,
+    });
     if (!autoAnswerEnabledRef.current) {
       setLiveAssistStatus(detection.shouldDispatch ? `Turn ready (${detection.reason})` : "Listening");
       return;
@@ -760,8 +730,15 @@ function App() {
       const speaker: TranscriptSpeaker = payload.streamId.startsWith("mic-") ? "candidate" : "interviewer";
       const normalized = stripKnownTranscriptHistory(normalizeTechnicalTranscript(payload.text), speaker);
       if (!normalized) return;
-      if (!payload.isFinal) {
-        const liveText = mergeNativelyLiveDraft(speaker, normalized, false);
+      const assembled = assembleTurn(turnAssemblerRef.current, {
+        speaker,
+        text: normalized,
+        isFinal: payload.isFinal,
+        timestamp: Date.now(),
+      });
+      if (assembled.action === "ignore") return;
+      if (assembled.action === "publish_live") {
+        const liveText = assembled.text;
         setDesktopStatus(`Natively partial: ${liveText.slice(0, 80)}`);
         void window.callpilotDesktop?.publishLiveTranscript?.({
           id: `live-${payload.streamId}`,
@@ -777,6 +754,16 @@ function App() {
           const detection = detectQuestionIntent(liveText, preferredLanguage);
           const previous = lastNativelyPartialAnswerRef.current;
           const isNewEnough = speechSimilarity(previous.text, detection.normalizedText) < 0.82 || now - previous.timestamp > 8000;
+          void window.callpilotDesktop?.recordSessionEvent?.("autoanswer_partial_decision", {
+            provider: "natively",
+            streamId: payload.streamId,
+            speaker,
+            stability,
+            detection,
+            isNewEnough,
+            cooldownMs: liveSettings.autoAnswerCooldownMs,
+            minConfidence: liveSettings.autoAnswerMinConfidence,
+          });
           if (
             stability.stable
             && isNewEnough
@@ -793,12 +780,18 @@ function App() {
         return;
       }
       delete nativelyPartialStabilityRef.current[payload.streamId];
-      if (isNativelyFinalFragment(speaker, normalized)) {
-        setDesktopStatus("Natively final fragment folded into live draft");
+      if (assembled.action === "fold_final") {
+        void window.callpilotDesktop?.recordSessionEvent?.("stt_final_fragment_folded", {
+          provider: "natively",
+          streamId: payload.streamId,
+          speaker,
+          text: assembled.text,
+          draftText: assembled.draftText,
+        });
+        setDesktopStatus("STT final fragment folded into live draft");
         return;
       }
-      const finalText = mergeNativelyLiveDraft(speaker, normalized, true);
-      handleFinalTranscript(finalText, "stt", speaker);
+      handleFinalTranscript(assembled.text, "stt", speaker);
       setDesktopStatus("Natively STT transcribed audio");
     });
     const unsubscribeStatus = window.callpilotDesktop?.onNativelyStatus?.((payload) => {
@@ -836,7 +829,7 @@ function App() {
     liveChunkBusyByIdRef.current.clear();
     liveChunkQueueByIdRef.current.clear();
     localSegmentChunksRef.current = [];
-    nativelyLiveDraftBySpeakerRef.current = {};
+    turnAssemblerRef.current = createTurnAssemblerState();
     nativelyPartialStabilityRef.current = {};
     nativelySessionsRef.current.forEach((session) => {
       session.processor.disconnect();

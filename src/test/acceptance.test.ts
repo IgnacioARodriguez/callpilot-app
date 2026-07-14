@@ -145,10 +145,12 @@ test("acceptance: Natively partial auto-answer waits for turn stability", () => 
 
 test("acceptance: Natively final fragments do not pollute live transcript drafts", () => {
   const app = read("src/main.tsx");
+  const core = read("src/core/turnAssembler.ts");
 
-  assert.match(app, /isNativelyFinalFragment/);
-  assert.match(app, /Natively final fragment folded into live draft/);
-  assert.match(app, /clean\.length < draft\.length \* 0\.75/);
+  assert.match(app, /assembleTurn/);
+  assert.match(app, /stt_final_fragment_folded/);
+  assert.match(core, /isFinalFragmentOfDraft/);
+  assert.match(core, /clean\.length < draft\.length \* 0\.75/);
 });
 
 test("acceptance: realistic interview exchange preserves roles and asks for correction", () => {

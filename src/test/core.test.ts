@@ -7,6 +7,7 @@ import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_TRANSCRIPTION_MODEL,
   TranscriptBuffer,
+  assembleTurn,
   buildOllamaChatRequest,
   buildRealtimeTranscriptionSessionUpdate,
   buildOpenAIImageAnalysisRequest,
@@ -18,6 +19,7 @@ import {
   createSessionSnapshot,
   createGlobalContext,
   defaultStealthState,
+  createTurnAssemblerState,
   detectQuestionIntent,
   cleanOcrText,
   extractOllamaModels,
@@ -350,6 +352,33 @@ test("live conversation auto answer respects cooldown", () => {
 
   assert.equal(shouldAutoAnswer(detection, 20_000, 0), true);
   assert.equal(shouldAutoAnswer(detection, 25_000, 20_000), false);
+});
+
+test("turn assembler folds provider final fragments into the live draft", () => {
+  const state = createTurnAssemblerState();
+  const partial = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "Solution: optimize it and write code or pseudo-code on the spot. The interviewer expects reasoning.",
+    isFinal: false,
+    timestamp: 1_000,
+  });
+  const fragment = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "Solution: optimize it",
+    isFinal: true,
+    timestamp: 1_200,
+  });
+  const nextPartial = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "Solution: optimize it and write code or pseudo-code on the spot. The interviewer expects reasoning and complexity.",
+    isFinal: false,
+    timestamp: 1_400,
+  });
+
+  assert.equal(partial.action, "publish_live");
+  assert.equal(fragment.action, "fold_final");
+  assert.equal(nextPartial.action, "publish_live");
+  assert.match(nextPartial.action === "publish_live" ? nextPartial.text : "", /complexity/);
 });
 
 test("live conversation drops microphone echo from recent interviewer audio", () => {

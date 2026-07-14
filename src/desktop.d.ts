@@ -117,6 +117,7 @@ declare global {
       startSession: (options?: { mode?: AssistantModeId }) => Promise<{ ok: boolean; error?: string }>;
       endSession: () => Promise<{ ok: boolean; error?: string; tracePath?: string }>;
       getSessionTraceStatus: () => Promise<{ ok: boolean; active: boolean; id?: string; path?: string; eventCount?: number; startedAt?: string; updatedAt?: string }>;
+      recordSessionEvent: (type: string, payload?: Record<string, unknown>) => Promise<{ ok: boolean }>;
       requestAnswer: () => Promise<{ ok: boolean; error?: string }>;
       publishTranscriptMessage: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishLiveTranscript: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;

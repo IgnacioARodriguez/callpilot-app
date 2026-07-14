@@ -35,6 +35,14 @@ export {
   type RecentSpeech,
 } from "./conversationDedupe.ts";
 export {
+  assembleTurn,
+  createTurnAssemblerState,
+  isFinalFragmentOfDraft,
+  mergeTurnDraft,
+  type TurnAssemblerState,
+  type TurnAssemblyDecision,
+} from "./turnAssembler.ts";
+export {
   DEFAULT_LIVE_TRANSCRIPTION_SETTINGS,
   browserRecognitionLanguage,
   buildRealtimeTranscriptionSessionUpdate,
