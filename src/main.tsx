@@ -340,6 +340,16 @@ function App() {
     return next;
   };
 
+  const isNativelyFinalFragment = (speaker: TranscriptSpeaker, text: string): boolean => {
+    const draft = nativelyLiveDraftBySpeakerRef.current[speaker]?.text.trim();
+    const clean = text.trim();
+    if (!draft || !clean) return false;
+    const draftLower = draft.toLowerCase();
+    const cleanLower = clean.toLowerCase();
+    return clean.length < draft.length * 0.75
+      && (draftLower.includes(cleanLower) || speechSimilarity(draft, clean) >= 0.72);
+  };
+
   const appendTranscript = () => {
     if (!transcriptDraft.trim()) return;
     const next = new TranscriptBuffer(transcript);
@@ -783,6 +793,10 @@ function App() {
         return;
       }
       delete nativelyPartialStabilityRef.current[payload.streamId];
+      if (isNativelyFinalFragment(speaker, normalized)) {
+        setDesktopStatus("Natively final fragment folded into live draft");
+        return;
+      }
       const finalText = mergeNativelyLiveDraft(speaker, normalized, true);
       handleFinalTranscript(finalText, "stt", speaker);
       setDesktopStatus("Natively STT transcribed audio");

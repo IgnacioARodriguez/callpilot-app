@@ -143,6 +143,14 @@ test("acceptance: Natively partial auto-answer waits for turn stability", () => 
   assert.doesNotMatch(app, /Auto answering partial \(/);
 });
 
+test("acceptance: Natively final fragments do not pollute live transcript drafts", () => {
+  const app = read("src/main.tsx");
+
+  assert.match(app, /isNativelyFinalFragment/);
+  assert.match(app, /Natively final fragment folded into live draft/);
+  assert.match(app, /clean\.length < draft\.length \* 0\.75/);
+});
+
 test("acceptance: realistic interview exchange preserves roles and asks for correction", () => {
   const transcript = new TranscriptBuffer();
   transcript.append("What is SQL?", "stt", 1000, "interviewer");
