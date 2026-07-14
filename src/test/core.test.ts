@@ -685,7 +685,7 @@ test("turn assembler strips confirmed prefix even when provider inserts filler b
     isFinal: false,
     timestamp: 1_200,
   });
-  const committed = assembleTurn(state, {
+  const folded = assembleTurn(state, {
     speaker: "interviewer",
     text: "Maybe I can make that also a string or an integer or something.",
     isFinal: true,
@@ -698,10 +698,37 @@ test("turn assembler strips confirmed prefix even when provider inserts filler b
     timestamp: 1_800,
   });
 
-  assert.equal(committed.action, "commit");
+  assert.equal(folded.action, "fold_final");
   assert.equal(next.action, "publish_live");
-  assert.match(next.action === "publish_live" ? next.text : "", /^Yep\./);
+  assert.match(next.action === "publish_live" ? next.text : "", /Yep\./);
   assert.doesNotMatch(next.action === "publish_live" ? next.text : "", /^ID of a certain book/);
+});
+
+test("turn assembler applies overlapping final fragments that complete partial words", () => {
+  const state = createTurnAssemblerState();
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "And I think what could make sense here is having the ID correspond to the book obj",
+    isFinal: false,
+    timestamp: 1_000,
+  });
+  const folded = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "ake sense here is having the ID correspond to the book object.",
+    isFinal: true,
+    timestamp: 1_200,
+  });
+  const next = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "And I think what could make sense here is having the ID correspond to the book object. Yep.",
+    isFinal: false,
+    timestamp: 1_400,
+  });
+
+  assert.equal(folded.action, "fold_final");
+  assert.equal(folded.action === "fold_final" ? folded.draftText : "", "And I think what could make sense here is having the ID correspond to the book object.");
+  assert.equal(next.action, "publish_live");
+  assert.equal(next.action === "publish_live" ? next.text : "", "And I think what could make sense here is having the ID correspond to the book object. Yep.");
 });
 
 test("answer grounding guard blocks unsupported topic drift", () => {

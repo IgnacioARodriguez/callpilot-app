@@ -50,8 +50,34 @@ export const isFinalFragmentOfDraft = (
   const draft = normalize(draftText);
   const clean = normalize(finalText);
   if (!draft || !clean) return false;
+  const draftLower = draft.toLowerCase();
+  const cleanLower = clean.toLowerCase();
+  const hasUsefulOverlap = Array.from({ length: draft.length }, (_, index) => draft.slice(index))
+    .some((tail) => tail.length >= 16 && cleanLower.startsWith(tail.toLowerCase()));
+  if (hasUsefulOverlap && clean.length < draft.length * 0.9) return true;
   return clean.length < draft.length * 0.75
-    && (draft.toLowerCase().includes(clean.toLowerCase()) || speechSimilarity(draft, clean) >= 0.72);
+    && (draftLower.includes(cleanLower) || speechSimilarity(draft, clean) >= 0.72);
+};
+
+const mergeOverlappingFinalFragment = (draftText: string, finalText: string): string => {
+  const draft = normalize(draftText);
+  const fragment = normalize(finalText);
+  if (!draft || !fragment) return draft || fragment;
+
+  const draftLower = draft.toLowerCase();
+  const fragmentLower = fragment.toLowerCase();
+  if (draftLower.includes(fragmentLower)) return draft;
+  if (fragmentLower.startsWith(draftLower)) return fragment;
+
+  for (let index = 0; index < draft.length; index += 1) {
+    const tail = draft.slice(index);
+    if (tail.length < 16) continue;
+    if (fragmentLower.startsWith(tail.toLowerCase())) {
+      return `${draft.slice(0, index)}${fragment}`.trim();
+    }
+  }
+
+  return mergeTurnDraft(draft, fragment);
 };
 
 const hasQuestionSignal = (text: string): boolean =>
@@ -124,8 +150,9 @@ export const assembleTurn = (
   }
 
   if (previous?.text && isFinalFragmentOfDraft(previous.text, incrementalClean)) {
-    state.draftsBySpeaker[input.speaker] = { text: previous.text, timestamp: now };
-    return { action: "fold_final", reason: "final_fragment", text: incrementalClean, draftText: previous.text };
+    const next = mergeOverlappingFinalFragment(previous.text, incrementalClean);
+    state.draftsBySpeaker[input.speaker] = { text: next, timestamp: now };
+    return { action: "fold_final", reason: "final_fragment", text: incrementalClean, draftText: next };
   }
   if (previous?.text && isShortNonQuestionFinal(incrementalClean)) {
     const next = mergeTurnDraft(previous.text, incrementalClean);
