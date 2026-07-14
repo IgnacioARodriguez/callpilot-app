@@ -217,6 +217,19 @@ test("prompt tells model not to answer stale topics or non-questions", () => {
   assert.match(prompt.system, /at most two compact/i);
 });
 
+test("prompt gives latest actionable input priority over stale context", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("We were chatting about videogames and market rumors.", "stt", 1_000, "interviewer");
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "technical_qa", transcript: transcript.snapshot() }),
+    "interviewer: Para que sirve Kafka?",
+  );
+
+  assert.match(prompt.user, /<latest_actionable_input>\s*interviewer: Para que sirve Kafka\?/);
+  assert.match(prompt.system, /latest_actionable_input section is the highest-priority task/i);
+  assert.match(prompt.system, /answer that question directly even if older transcript/i);
+});
+
 test("prompt excludes previous assistant suggestions from factual transcript", () => {
   const transcript = new TranscriptBuffer();
   transcript.append("What is SQL?", "stt", 1000, "interviewer");
@@ -238,6 +251,8 @@ test("live conversation detects interview questions in English and Spanish", () 
   const shortSpanish = detectQuestionIntent("¿Qué es SQL?", "spanish");
   const shortEnglish = detectQuestionIntent("What is SQL?", "english");
   const partialSpanish = detectQuestionIntent("Que es S", "spanish");
+  const incompleteUsage = detectQuestionIntent("Para que sirve", "spanish");
+  const completeUsage = detectQuestionIntent("Para que sirve Kafka", "spanish");
   const filler = detectQuestionIntent("ok thanks", "auto");
   const implicit = detectQuestionIntent("me interesaria que me cuentes tu approach aca", "spanish");
 
@@ -247,6 +262,9 @@ test("live conversation detects interview questions in English and Spanish", () 
   assert.equal(shortEnglish.shouldDispatch, true);
   assert.equal(partialSpanish.shouldDispatch, true);
   assert.equal(assessPartialTurnStability("Que es S", "Que es S", 1000, 2200).stable, false);
+  assert.equal(incompleteUsage.shouldDispatch, false);
+  assert.equal(incompleteUsage.reason, "incomplete_question");
+  assert.equal(completeUsage.shouldDispatch, true);
   assert.equal(filler.shouldAnswer, false);
   assert.equal(implicit.shouldDispatch, true);
 });
@@ -369,6 +387,12 @@ test("live conversation focuses the latest question inside accumulated STT parti
   assert.equal(extractLatestQuestionFocus(text), "What is a relational database?");
   assert.equal(detection.reason, "definition_question");
   assert.equal(detection.normalizedText, "What is a relational database?");
+});
+
+test("live conversation focuses complete usage questions after incomplete prefixes", () => {
+  const text = "Para que sirve interviewer: Kafka. Para que sirve Kafka?";
+
+  assert.equal(extractLatestQuestionFocus(text), "Para que sirve Kafka?");
 });
 
 test("turn assembler folds provider final fragments into the live draft", () => {

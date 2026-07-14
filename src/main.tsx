@@ -23,6 +23,7 @@ import {
   assessPrivacyState,
   assessPartialTurnStability,
   detectQuestionIntent,
+  extractLatestQuestionFocus,
   liveTranscriptionPlan,
   markLatencyStage,
   normalizeLiveTranscriptionSettings,
@@ -655,6 +656,8 @@ function App() {
   const getLatestInterviewPrompt = React.useCallback(() => {
     const liveInterviewerText = turnAssemblerRef.current.draftsBySpeaker.interviewer?.text.trim();
     const conversationWindow = formatConversationWindow(transcriptRef.current, liveInterviewerText, 10);
+    const focusedQuestion = extractLatestQuestionFocus(conversationWindow);
+    if (focusedQuestion && focusedQuestion !== conversationWindow) return `interviewer: ${focusedQuestion}`;
     if (conversationWindow) return conversationWindow;
     if (liveInterviewerText) return `interviewer_partial: ${liveInterviewerText}`;
     const lastInterviewerTurn = [...transcriptRef.current.messages]

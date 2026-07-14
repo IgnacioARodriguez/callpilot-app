@@ -17,9 +17,11 @@ const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
 const normalizeForPatterns = (text: string): string =>
   normalize(text)
+    .replace(/Ã‚/g, "")
+    .replace(/Â/g, "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[¿¡]/g, "")
+    .replace(/[Ã‚Â¿Ã‚Â¡Â¿Â¡¿¡]/g, "")
     .toLowerCase();
 
 const fillerPatterns = [
@@ -45,25 +47,28 @@ const spanishPatterns = [
 
 const shortDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}][\p{L}\p{N} .+#/-]{0,40}\??$/iu;
 const truncatedDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}]$/iu;
+const incompleteUsageQuestion = /\b(para que sirve|what is it used for|what is used for)\s*\??$/iu;
 
-const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|explica|explicame|describe|describeme)\b/i;
+const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/i;
 
 export const extractLatestQuestionFocus = (text: string): string => {
   const normalized = normalize(text);
   if (!normalized) return "";
-  const segments = normalized
-    .split(/(?<=[?¿.!])\s+|(?:\s+[—–-]\s+)|(?:\s{2,})/)
+  const withRoleBreaks = normalized.replace(/\b(interviewer|candidate|interviewer_partial):/gi, "\n$1:");
+  const segments = withRoleBreaks
+    .split(/(?<=[?¿.!])\s+|(?:\s+[—–-]\s+)|(?:\s{2,})|\n+/u)
     .map((segment) => segment.trim())
     .filter(Boolean);
   const candidates = (segments.length ? segments : [normalized])
     .filter((segment) => questionStarter.test(normalizeForPatterns(segment)) || /[?¿]/.test(segment));
   const latest = candidates.at(-1);
   if (!latest) return normalized;
-  const index = normalized.toLowerCase().lastIndexOf(latest.toLowerCase());
-  if (index <= 0) return latest;
+  const cleanedLatest = latest.replace(/^(interviewer|interviewer_partial):\s*/i, "").trim();
+  const index = normalized.toLowerCase().lastIndexOf(cleanedLatest.toLowerCase());
+  if (index <= 0) return cleanedLatest;
   const prefix = normalized.slice(Math.max(0, index - 90), index).trim();
-  const usefulPrefix = /\b(interviewer|entrevistador|you asked|me pregunt|follow.?up)\b/i.test(prefix) ? prefix : "";
-  return [usefulPrefix, latest].filter(Boolean).join(" ").trim();
+  const usefulPrefix = /\b(entrevistador|you asked|me pregunt|follow.?up)\b/i.test(prefix) ? prefix : "";
+  return [usefulPrefix, cleanedLatest].filter(Boolean).join(" ").trim();
 };
 
 export const detectQuestionIntent = (
@@ -74,6 +79,9 @@ export const detectQuestionIntent = (
   const patternText = normalizeForPatterns(normalizedText);
   if (!normalizedText) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0, reason: "empty", normalizedText };
+  }
+  if (incompleteUsageQuestion.test(patternText)) {
+    return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "incomplete_question", normalizedText };
   }
   if (normalizedText.length < 5 || fillerPatterns.some((pattern) => pattern.test(patternText))) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "too_short_or_filler", normalizedText };
@@ -120,6 +128,9 @@ export const assessPartialTurnStability = (
   const current = normalize(currentText);
   const previous = normalize(previousText);
   if (truncatedDefinitionQuestion.test(normalizeForPatterns(current))) {
+    return { stable: false, reason: "truncated_definition" };
+  }
+  if (incompleteUsageQuestion.test(normalizeForPatterns(current))) {
     return { stable: false, reason: "truncated_definition" };
   }
   if (current.length < 12) return { stable: false, reason: "too_short" };
