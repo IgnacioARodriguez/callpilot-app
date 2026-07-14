@@ -189,7 +189,7 @@ export default function OverlayApp() {
             lastUpdatedAt: now,
           };
         }
-        if (mode === "final") {
+        if (mode === "final" && role !== "assistant") {
           const duplicate = [...current].reverse().find((item) =>
             item.role === role
             && item.text

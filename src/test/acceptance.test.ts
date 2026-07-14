@@ -218,6 +218,12 @@ test("acceptance: overlay starts a new live bubble after an assistant answer", (
   assert.match(overlay, /transcriptDelta\(targetBaseline, clean\)/);
 });
 
+test("acceptance: repeated assistant errors stay visible as separate answer attempts", () => {
+  const overlay = read("src/overlay/OverlayApp.tsx");
+
+  assert.match(overlay, /mode === "final" && role !== "assistant"/);
+});
+
 test("acceptance: overlay shows the changing tail of long live transcripts", () => {
   const overlay = read("src/overlay/OverlayApp.tsx");
 
