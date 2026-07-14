@@ -809,6 +809,12 @@ function App() {
       }
       delete nativelyPartialStabilityRef.current[payload.streamId];
       if (assembled.action === "fold_final") {
+        void window.callpilotDesktop?.publishLiveTranscript?.({
+          id: `live-${payload.streamId}`,
+          speaker,
+          text: assembled.draftText,
+          timestamp: Date.now(),
+        });
         void window.callpilotDesktop?.recordSessionEvent?.("stt_final_fragment_folded", {
           provider: "natively",
           streamId: payload.streamId,
@@ -816,7 +822,7 @@ function App() {
           text: assembled.text,
           draftText: assembled.draftText,
         });
-        setDesktopStatus("STT final fragment folded into live draft");
+        setDesktopStatus("STT final fragment folded and published to live draft");
         return;
       }
       handleFinalTranscript(assembled.text, "stt", speaker);

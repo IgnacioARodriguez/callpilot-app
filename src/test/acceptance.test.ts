@@ -149,6 +149,8 @@ test("acceptance: Natively final fragments do not pollute live transcript drafts
 
   assert.match(app, /assembleTurn/);
   assert.match(app, /stt_final_fragment_folded/);
+  assert.match(app, /STT final fragment folded and published to live draft/);
+  assert.match(app, /text:\s*assembled\.draftText/);
   assert.match(core, /isFinalFragmentOfDraft/);
   assert.match(core, /clean\.length < draft\.length \* 0\.75/);
 });
