@@ -751,7 +751,17 @@ function App() {
         isFinal: payload.isFinal,
         timestamp: Date.now(),
       });
-      if (assembled.action === "ignore") return;
+      if (assembled.action === "ignore") {
+        if (assembled.reason === "short_final_fragment") {
+          void window.callpilotDesktop?.recordSessionEvent?.("stt_short_final_ignored", {
+            provider: "natively",
+            streamId: payload.streamId,
+            speaker,
+            text: assembled.text,
+          });
+        }
+        return;
+      }
       if (assembled.action === "publish_live") {
         const liveText = assembled.text;
         setDesktopStatus(`Natively partial: ${liveText.slice(0, 80)}`);

@@ -12,6 +12,7 @@ export interface TurnAssemblerState {
 
 export type TurnAssemblyDecision =
   | { action: "ignore"; reason: "empty" }
+  | { action: "ignore"; reason: "short_final_fragment"; text: string }
   | { action: "publish_live"; reason: "partial"; text: string }
   | { action: "fold_final"; reason: "final_fragment"; text: string; draftText: string }
   | { action: "commit"; reason: "final" | "final_replaces_draft"; text: string };
@@ -51,6 +52,15 @@ export const isFinalFragmentOfDraft = (
     && (draft.toLowerCase().includes(clean.toLowerCase()) || speechSimilarity(draft, clean) >= 0.72);
 };
 
+const hasQuestionSignal = (text: string): boolean =>
+  /[?¿]$/.test(text.trim())
+  || /\b(what|why|how|when|where|which|who|que|por que|como|cuando|donde|cual|quien)\b/i.test(text);
+
+const isShortNonQuestionFinal = (text: string): boolean => {
+  const clean = normalize(text);
+  return clean.length < 24 && !hasQuestionSignal(clean);
+};
+
 export const assembleTurn = (
   state: TurnAssemblerState,
   input: {
@@ -75,6 +85,14 @@ export const assembleTurn = (
   if (previous?.text && isFinalFragmentOfDraft(previous.text, clean)) {
     state.draftsBySpeaker[input.speaker] = { text: previous.text, timestamp: now };
     return { action: "fold_final", reason: "final_fragment", text: clean, draftText: previous.text };
+  }
+  if (previous?.text && isShortNonQuestionFinal(clean)) {
+    const next = mergeTurnDraft(previous.text, clean);
+    state.draftsBySpeaker[input.speaker] = { text: next, timestamp: now };
+    return { action: "fold_final", reason: "final_fragment", text: clean, draftText: next };
+  }
+  if (!previous?.text && isShortNonQuestionFinal(clean)) {
+    return { action: "ignore", reason: "short_final_fragment", text: clean };
   }
 
   const finalText = previous?.text ? mergeTurnDraft(previous.text, clean) : clean;

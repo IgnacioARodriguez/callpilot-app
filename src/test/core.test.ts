@@ -383,6 +383,66 @@ test("turn assembler folds provider final fragments into the live draft", () => 
   assert.match(nextPartial.action === "publish_live" ? nextPartial.text : "", /complexity/);
 });
 
+test("turn assembler does not commit short non-question STT final fragments", () => {
+  const state = createTurnAssemblerState();
+
+  assert.deepEqual(assembleTurn(state, {
+    speaker: "interviewer",
+    text: "To remember",
+    isFinal: false,
+    timestamp: 1_000,
+  }), { action: "publish_live", reason: "partial", text: "To remember" });
+
+  const folded = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "To remember",
+    isFinal: true,
+    timestamp: 1_100,
+  });
+  const ignored = assembleTurn(createTurnAssemblerState(), {
+    speaker: "interviewer",
+    text: "Uh.",
+    isFinal: true,
+    timestamp: 1_200,
+  });
+  const question = assembleTurn(createTurnAssemblerState(), {
+    speaker: "interviewer",
+    text: "What is SQL?",
+    isFinal: true,
+    timestamp: 1_300,
+  });
+
+  assert.equal(folded.action, "fold_final");
+  assert.equal(ignored.action, "ignore");
+  assert.equal(ignored.reason, "short_final_fragment");
+  assert.equal(question.action, "commit");
+});
+
+test("turn assembler keeps growing live draft after folded short finals", () => {
+  const state = createTurnAssemblerState();
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "To remember",
+    isFinal: false,
+    timestamp: 1_000,
+  });
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "To remember",
+    isFinal: true,
+    timestamp: 1_100,
+  });
+  const next = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "To remember page. Uh. Remember page",
+    isFinal: false,
+    timestamp: 1_300,
+  });
+
+  assert.equal(next.action, "publish_live");
+  assert.match(next.action === "publish_live" ? next.text : "", /Remember page/);
+});
+
 test("answer grounding guard blocks unsupported topic drift", () => {
   const context = createGlobalContext({
     activeMode: "technical_qa",
