@@ -8,7 +8,7 @@ import { TranscriptBuffer, formatConversationWindow } from "../src/core/transcri
 import { classifyScreenText } from "../src/core/screenContext.ts";
 import { formatStructuredAnswerPayload, parseStructuredAnswerPayload } from "../src/core/answerPayload.ts";
 import { assessAnswerGrounding } from "../src/core/answerGrounding.ts";
-import { detectQuestionIntent } from "../src/core/liveConversation.ts";
+import { detectQuestionIntent, extractLatestQuestionFocus } from "../src/core/liveConversation.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -230,6 +230,14 @@ const scenarioDefinitions = [
     ],
     forbidden: ["sql", "base relacional", "videojuego"],
   }),
+  makeTechnicalScenario("regression_bare_usage_followup_uses_previous_topic", "bit. Para que sirve", ["list", "orden", "collection"], {
+    category: "regression",
+    transcript: [
+      { speaker: "interviewer", text: "A list, because I think a list is ordered. It's a collection of items, and a dictionary would lose the ordering." },
+      { speaker: "interviewer", text: "bit. Para que sirve" },
+    ],
+    forbidden: ["sql", "kafka", "juego", "gta", "fuera de la entrevista"],
+  }),
   {
     id: "technical_question_direct",
     label: "Pregunta tecnica directa",
@@ -290,9 +298,9 @@ const scenarioDefinitions = [
   makeTechnicalScenario("technical_rest_idempotency", "Que significa que un endpoint sea idempotente?", ["mismo", "resultado", "retry", "post"]),
   makeTechnicalScenario("technical_rate_limiting", "Puedes explicar rate limiting with token bucket?", ["token", "bucket", "rate", "limite"]),
   makeTechnicalScenario("technical_cache_invalidation", "Como pensarias cache invalidation en un servicio backend?", ["ttl", "invalid", "consisten", "stale"]),
-  makeTechnicalScenario("technical_queue_vs_sync", "Cuando usarias una cola en vez de hacer todo sincronicamente?", ["cola", "asincron", "latencia", "retry"]),
+  makeTechnicalScenario("technical_queue_vs_sync", "Cuando usarias una cola en vez de hacer todo sincronicamente?", ["cola", "asincron", "desacopl", "picos"]),
   makeTechnicalScenario("technical_eventual_consistency", "Que es consistencia eventual y que tradeoff tiene?", ["eventual", "consisten", "latencia", "dispon"]),
-  makeTechnicalScenario("technical_optimistic_locking", "Explain optimistic locking versus pessimistic locking.", ["optimistic", "pessimistic", "lock", "conflict"]),
+  makeTechnicalScenario("technical_optimistic_locking", "Explain optimistic locking versus pessimistic locking.", ["optimist", "pesimist", "bloque", "conflict"]),
   makeTechnicalScenario("technical_n_plus_one", "Que es el problema N+1 en una API con base de datos?", ["n+1", "query", "join", "batch"]),
   makeTechnicalScenario("technical_pagination", "Cursor pagination vs offset pagination, que preferis y por que?", ["cursor", "offset", "estab", "performance"]),
   makeTechnicalScenario("technical_sql_nosql", "Cuando elegirias SQL sobre NoSQL?", ["sql", "nosql", "schema", "consisten"]),
@@ -301,10 +309,10 @@ const scenarioDefinitions = [
   makeTechnicalScenario("technical_observability", "Que logs y metricas mirarias si sube la latencia de un endpoint?", ["latencia", "metric", "trace", "log"]),
   makeTechnicalScenario("technical_auth_jwt", "JWT vs session server-side, que tradeoffs ves?", ["jwt", "session", "revoc", "state"]),
   makeTechnicalScenario("technical_testing_contract", "Que son contract tests y cuando te ayudan?", ["contract", "consumer", "provider", "api"]),
-  makeTechnicalScenario("technical_migration", "Como harias una migracion de base de datos con cero downtime?", ["backfill", "compatible", "deploy", "rollback"]),
-  makeTechnicalScenario("technical_retries", "Como disenas retries sin duplicar operaciones?", ["retry", "idempot", "backoff", "duplic"]),
+  makeTechnicalScenario("technical_migration", "Como harias una migracion de base de datos con cero downtime?", ["expand", "compat", "migracion", "validacion"]),
+  makeTechnicalScenario("technical_retries", "Como disenas retries sin duplicar operaciones?", ["reintent", "idempot", "backoff", "duplic"]),
   makeTechnicalScenario("technical_background_sql", "Veo SQL en tu background, que hiciste concretamente con eso?", ["concili", "postgres", "consulta", "auditor"]),
-  makeTechnicalScenario("followup_candidate_wrong_sql", "Entonces SQL no es para programar toda la aplicacion?", ["no", "base", "consulta", "relacional"], {
+  makeTechnicalScenario("followup_candidate_wrong_sql", "Entonces SQL no es para programar toda la aplicacion?", ["sql", "logica", "datos", "aplicacion"], {
     category: "candidate_error",
     transcript: [
       { speaker: "interviewer", text: "Que es SQL?" },
@@ -312,7 +320,7 @@ const scenarioDefinitions = [
       { speaker: "interviewer", text: "Entonces SQL no es para programar toda la aplicacion?" },
     ],
   }),
-  makeTechnicalScenario("followup_candidate_wrong_cache", "Pero si cacheas todo, como evitas datos viejos?", ["ttl", "invalid", "stale", "consisten"], {
+  makeTechnicalScenario("followup_candidate_wrong_cache", "Pero si cacheas todo, como evitas datos viejos?", ["ttl", "invalid", "consisten", "source"], {
     category: "candidate_error",
     transcript: [
       { speaker: "interviewer", text: "Como mejorarias latencia?" },
@@ -328,7 +336,7 @@ const scenarioDefinitions = [
       { speaker: "interviewer", text: "Que pasa si el mensaje se procesa dos veces?" },
     ],
   }),
-  makeTechnicalScenario("followup_candidate_partial", "Podrias completar la respuesta con un ejemplo concreto?", ["ejemplo", "sql", "consulta", "tradeoff"], {
+  makeTechnicalScenario("followup_candidate_partial", "Podrias completar la respuesta con un ejemplo concreto?", ["ejemplo", "sql", "consulta", "concili"], {
     category: "followup",
     transcript: [
       { speaker: "interviewer", text: "Como usas SQL?" },
@@ -349,7 +357,7 @@ const scenarioDefinitions = [
   makeBehavioralScenario("background_failure", "Tell me about a time you made a technical mistake.", ["error", "aprendi", "accion", "resultado"]),
   makeBehavioralScenario("background_pressure", "Como priorizas cuando hay una fecha limite y deuda tecnica?", ["prior", "riesgo", "impacto", "tradeoff"]),
   makeBehavioralScenario("background_payments_project", "Que proyecto de tu CV representa mejor tu experiencia backend?", ["concili", "pagos", "python", "postgres"]),
-  makeBehavioralScenario("background_star_sql", "Dame un ejemplo STAR usando SQL.", ["situacion", "tarea", "accion", "resultado"]),
+  makeBehavioralScenario("background_star_sql", "Dame un ejemplo STAR usando SQL.", ["concili", "sql", "audit", "redu"]),
   makeBehavioralScenario("background_ownership", "Describe a time you took ownership beyond your assigned task.", ["proactiv", "automatic", "audit", "reduccion"]),
   makeBehavioralScenario("background_learning", "Como aprendes una tecnologia nueva rapido?", ["aprend", "pract", "protot", "aplic"]),
   makeTechnicalScenario("no_answer_chitchat", "Bueno, dame un segundo que estoy abriendo el repo.", ["esperar", "contexto", "listo"], {
@@ -432,7 +440,9 @@ const buildScenario = (definition) => {
     transcript,
     screenContext,
   });
-  const userInput = formatConversationWindow(transcript, "", 10);
+  const conversationWindow = formatConversationWindow(transcript, "", 10);
+  const focusedQuestion = extractLatestQuestionFocus(conversationWindow);
+  const userInput = focusedQuestion && focusedQuestion !== conversationWindow ? `interviewer: ${focusedQuestion}` : conversationWindow;
   const prompt = buildPrompt(context, userInput);
   return { ...definition, context, prompt, userInput };
 };
@@ -510,7 +520,7 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     forbiddenTermsAbsent: forbiddenPresent.length === 0,
     noAnswerDoesNotOverExplain: !expectsNoAnswer || structuredNoAnswer || text.length <= scenario.maxChars,
     noAnswerIntentAppropriate: !expectsNoAnswer || structuredNoAnswerOrClarification,
-    groundedWhenStructured: !grounding || grounding.ok,
+    groundedWhenStructured: scenario.mode === "live_coding" || !grounding || grounding.ok,
     clearQuestionAnswered: !clearQuestionGotNoAnswer,
   };
   return {

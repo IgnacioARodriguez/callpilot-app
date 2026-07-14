@@ -200,9 +200,20 @@ const extractJsonObject = (text: string): unknown | null => {
         if (!cleaned || cleaned === "null" || cleaned === "true" || cleaned === "false") return `${prefix}${cleaned}`;
         return `${prefix}"${cleaned.replace(/"/g, "\\\"")}"`;
       });
+    const stripTrailingNumericFields = (input: string) => {
+      const index = input.search(/,\s*\d+\s*:\s*\{/);
+      if (index < 0) return input;
+      const prefix = input.slice(0, index);
+      const openBraces = (prefix.match(/{/g) ?? []).length;
+      const closeBraces = (prefix.match(/}/g) ?? []).length;
+      return `${prefix}${"}".repeat(Math.max(0, openBraces - closeBraces))}`;
+    };
     const repairs = [
       value,
       quoteBareIntent(value),
+      quoteBareIntent(value.replace(/`,\s*"/g, "\", \"")),
+      stripTrailingNumericFields(quoteBareIntent(value)),
+      stripTrailingNumericFields(quoteBareIntent(value.replace(/`,\s*"/g, "\", \""))),
     ];
     for (const repaired of repairs) {
       try {
@@ -355,7 +366,7 @@ export const formatStructuredAnswerPayload = (structured: StructuredAnswerPayloa
       `**Respuesta:** ${stripLeadingLabel(payload.spokenAnswer)}`,
       payload.keyPoints.length ? `**Puntos:** ${payload.keyPoints.join(" | ")}` : "",
       payload.assumptions.length ? `**Supuestos:** ${payload.assumptions.join(" | ")}` : "",
-      payload.followUpHint ? `**Follow-up:** ${payload.followUpHint}` : "",
+      payload.intent !== "no_answer" && payload.followUpHint ? `**Follow-up:** ${payload.followUpHint}` : "",
     ];
     return lines.filter(Boolean).join("\n\n");
   }

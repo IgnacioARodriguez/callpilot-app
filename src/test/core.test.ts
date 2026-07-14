@@ -435,6 +435,43 @@ test("structured renderer removes duplicated model labels", () => {
   assert.doesNotMatch(rendered, /\*\*Respuesta:\*\*\s+\*\*Respuesta:\*\*/);
 });
 
+test("structured renderer hides no-answer follow-up drift", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: false,
+      intent: "no_answer",
+      responseType: null,
+      spokenAnswer: "Entendido, quedo a la espera de la siguiente pregunta.",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: "Prepara SQL, APIs o sistemas distribuidos.",
+    },
+  }));
+
+  const rendered = structured ? formatStructuredAnswerPayload(structured) : "";
+
+  assert.match(rendered, /quedo a la espera/);
+  assert.doesNotMatch(rendered, /SQL|APIs|sistemas distribuidos/);
+});
+
+test("structured answer parser tolerates provider JSON with stray backticks and numeric fields", () => {
+  const withBacktick = parseStructuredAnswerPayload(
+    '{"kind":"interview","payload":{"version":"1","answerNeeded":true,"intent":"technical_qa","spokenAnswer":"Token bucket answer","keyPoints":["Tasa fija (r)`, "Capacidad maxima"],"correction":{"needed":false},"assumptions":[],"evidenceRefs":[],"followUpHint":null}}',
+  );
+  const withNumericField = parseStructuredAnswerPayload(
+    '{"kind":"interview","payload":{"version":"1","answerNeeded":true,"intent":"technical_qa","spokenAnswer":"SQL example","keyPoints":[],"correction":{"needed":false},"assumptions":[],"evidenceRefs":[],"followUpHint":null},0:{"Respuesta":"extra"}}',
+  );
+
+  assert.equal(withBacktick?.kind, "interview");
+  assert.equal(withNumericField?.kind, "interview");
+  assert.match(withBacktick ? formatStructuredAnswerPayload(withBacktick) : "", /Token bucket/);
+  assert.match(withNumericField ? formatStructuredAnswerPayload(withNumericField) : "", /SQL example/);
+});
+
 test("structured answer json schema requires every payload property for strict providers", () => {
   const payloadSchema = STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA.schema.properties.payload;
   const propertyNames = Object.keys(payloadSchema.properties);
@@ -471,6 +508,21 @@ test("live conversation focuses complete usage questions after incomplete prefix
   const text = "Para que sirve interviewer: Kafka. Para que sirve Kafka?";
 
   assert.equal(extractLatestQuestionFocus(text), "Para que sirve Kafka?");
+});
+
+test("live conversation resolves bare usage follow-ups from prior technical context", () => {
+  const text = [
+    "interviewer: A list, because I think a list is ordered. It's a collection of items, and a dictionary would lose the ordering.",
+    "interviewer: bit. Para que sirve",
+  ].join("\n");
+  const focus = extractLatestQuestionFocus(text);
+  const detection = detectQuestionIntent(text, "auto");
+
+  assert.match(focus, /^Para que sirve \(contexto anterior:/);
+  assert.match(focus, /list/);
+  assert.match(focus, /dictionary/);
+  assert.equal(detection.shouldDispatch, true);
+  assert.notEqual(detection.reason, "incomplete_question");
 });
 
 test("turn assembler folds provider final fragments into the live draft", () => {

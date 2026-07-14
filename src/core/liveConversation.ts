@@ -48,9 +48,49 @@ const spanishPatterns = [
 const shortDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}][\p{L}\p{N} .+#/-]{0,40}\??$/iu;
 const truncatedDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}]$/iu;
 const incompleteUsageQuestion = /\b(para que sirve|what is it used for|what is used for)\s*\??$/iu;
+const bareUsageQuestion = /^(?:interviewer(?:_partial)?\s*:\s*)?(?:[\p{L}\p{N}]+\.\s*)?(para que sirve|what is it used for|what is used for)\s*\??$/iu;
 const casualEntertainmentQuestion = /\b(gta|videojuego|videojuegos|juego|juegos|fisico|digital|reservas?)\b/iu;
 
 const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/i;
+
+const roleLinePattern = /^(interviewer|interviewer_partial|candidate|assistant)\s*:\s*(.+)$/i;
+
+const tokenizeContext = (text: string): string[] =>
+  normalizeForPatterns(text)
+    .match(/[a-z0-9+#.-]{3,}/g)
+    ?.map((token) => token.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
+    .filter((token) => !new Set([
+      "and", "because", "but", "con", "del", "for", "los", "las", "que", "the", "una", "would", "you",
+      "interviewer", "candidate", "assistant", "para", "sirve",
+    ]).has(token)) ?? [];
+
+export const resolveEllipticalQuestionFocus = (text: string, focus: string): string => {
+  if (!bareUsageQuestion.test(normalize(focus))) return focus;
+  const roleLines = normalize(text)
+    .replace(/\b(interviewer|candidate|assistant|interviewer_partial):/gi, "\n$1:")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  let focusIndex = -1;
+  for (let index = roleLines.length - 1; index >= 0; index -= 1) {
+    if (normalizeForPatterns(roleLines[index]).endsWith(normalizeForPatterns(focus))) {
+      focusIndex = index;
+      break;
+    }
+  }
+  const priorLines = (focusIndex >= 0 ? roleLines.slice(0, focusIndex) : roleLines)
+    .reverse()
+    .filter((line) => !/^assistant\s*:/i.test(line));
+  const prior = priorLines
+    .map((line) => line.match(roleLinePattern)?.[2] ?? line)
+    .find((line) => tokenizeContext(line).length >= 3);
+  if (!prior) return focus;
+  const anchor = tokenizeContext(prior)
+    .filter((token) => !["think", "mean", "like", "also", "little", "things", "collection", "items"].includes(token))
+    .slice(0, 10)
+    .join(" ");
+  return anchor ? `${focus} (contexto anterior: ${anchor})` : focus;
+};
 
 export const extractLatestQuestionFocus = (text: string): string => {
   const normalized = normalize(text);
@@ -66,10 +106,10 @@ export const extractLatestQuestionFocus = (text: string): string => {
   if (!latest) return normalized;
   const cleanedLatest = latest.replace(/^(interviewer|interviewer_partial):\s*/i, "").trim();
   const index = normalized.toLowerCase().lastIndexOf(cleanedLatest.toLowerCase());
-  if (index <= 0) return cleanedLatest;
+  if (index <= 0) return resolveEllipticalQuestionFocus(normalized, cleanedLatest);
   const prefix = normalized.slice(Math.max(0, index - 90), index).trim();
   const usefulPrefix = /\b(entrevistador|you asked|me pregunt|follow.?up)\b/i.test(prefix) ? prefix : "";
-  return [usefulPrefix, cleanedLatest].filter(Boolean).join(" ").trim();
+  return resolveEllipticalQuestionFocus(normalized, [usefulPrefix, cleanedLatest].filter(Boolean).join(" ").trim());
 };
 
 export const detectQuestionIntent = (
@@ -81,7 +121,7 @@ export const detectQuestionIntent = (
   if (!normalizedText) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0, reason: "empty", normalizedText };
   }
-  if (incompleteUsageQuestion.test(patternText)) {
+  if (incompleteUsageQuestion.test(patternText) && bareUsageQuestion.test(normalizedText)) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "incomplete_question", normalizedText };
   }
   if (casualEntertainmentQuestion.test(patternText)) {

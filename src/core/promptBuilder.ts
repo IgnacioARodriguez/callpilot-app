@@ -34,6 +34,17 @@ const withoutAssistantEvidence = (evidence: EvidenceSelection): EvidenceSelectio
   items: evidence.items.filter((item) => item.source !== "transcript" || !/\bassistant\s*:/i.test(item.text)),
 });
 
+const answerLanguageInstruction = (context: GlobalContext, userInput: string): string => {
+  if (context.preferredLanguage === "english") return "Answer in English.";
+  if (context.preferredLanguage === "spanish") return "Responde en espanol.";
+  const latestInput = userInput.split(/\n+/).filter(Boolean).at(-1) ?? userInput;
+  const englishSignals = /\b(what|why|how|when|where|which|who|can|could|would|should|tell me|explain|describe|list|dictionary|ordered|collection)\b/i.test(latestInput);
+  const spanishSignals = /\b(que|como|cuando|donde|cual|quien|puedes|podrias|explica|contame|sirve)\b/i.test(latestInput);
+  if (englishSignals && !spanishSignals) return "Answer in English because the latest interviewer turn is in English.";
+  if (spanishSignals && !englishSignals) return "Responde en espanol porque el ultimo turno del entrevistador esta en espanol.";
+  return "Use the same language as the latest interviewer turn; if unclear, use the candidate's preferred language.";
+};
+
 export const buildPromptWithEvidence = (context: GlobalContext, userInput: string, evidence: EvidenceSelection): BuiltPrompt => {
   const factualContext = withoutAssistantTurns(context);
   const factualEvidence = withoutAssistantEvidence(evidence);
@@ -79,6 +90,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
   add("target_use_case", factualContext.targetUseCase);
   add("interview_type", factualContext.interviewType);
   add("preferred_language", factualContext.preferredLanguage);
+  add("answer_language_instruction", answerLanguageInstruction(factualContext, userInput));
   add("coding_language_preference", factualContext.codingLanguagePreference);
   add("user_notes", factualContext.userNotes);
   add("response_constraints", factualContext.responseConstraints.join("\n"));
