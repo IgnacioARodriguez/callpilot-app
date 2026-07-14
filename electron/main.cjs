@@ -14,6 +14,50 @@ let codingWindow = null;
 let shortcutHealth = [];
 const ocrWorkers = new Map();
 const nativelyStreams = new Map();
+const activeAnswerControllers = new Map();
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(Object.assign(new Error("Request cancelled"), { name: "AbortError" }));
+    return;
+  }
+  const timeout = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => {
+    clearTimeout(timeout);
+    reject(Object.assign(new Error("Request cancelled"), { name: "AbortError" }));
+  }, { once: true });
+});
+
+const isAbortError = (error) => error?.name === "AbortError" || /aborted|cancelled|canceled/i.test(String(error?.message || error || ""));
+const isTransientStatus = (status) => [429, 500, 502, 503, 504].includes(Number(status));
+const retryDelayMs = (attempt) => Math.min(1200, 180 * (2 ** Math.max(0, attempt - 1))) + Math.round(Math.random() * 60);
+
+const fetchWithRetry = async (url, options = {}, meta = {}) => {
+  const maxAttempts = meta.maxAttempts ?? 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(url, options);
+      if (!isTransientStatus(response.status) || attempt >= maxAttempts) return response;
+      appendTraceEvent("provider_retry_scheduled", {
+        requestId: meta.requestId,
+        provider: meta.provider,
+        attempt,
+        status: response.status,
+      });
+      await sleep(retryDelayMs(attempt), options.signal);
+    } catch (error) {
+      if (isAbortError(error) || attempt >= maxAttempts) throw error;
+      appendTraceEvent("provider_retry_scheduled", {
+        requestId: meta.requestId,
+        provider: meta.provider,
+        attempt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await sleep(retryDelayMs(attempt), options.signal);
+    }
+  }
+  throw new Error("provider_retry_exhausted");
+};
 
 const stealthState = {
   callPrivacyAllowed: false,
@@ -449,7 +493,7 @@ const structuredAnswerPayloadJsonSchema = {
   },
 };
 
-const readOpenAISseStream = async (response, onEvent) => {
+const readOpenAISseStream = async (response, onEvent, signal) => {
   if (!response.body) return "";
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
@@ -457,6 +501,10 @@ const readOpenAISseStream = async (response, onEvent) => {
   let fullText = "";
 
   while (true) {
+    if (signal?.aborted) {
+      await reader.cancel().catch(() => {});
+      throw Object.assign(new Error("Request cancelled"), { name: "AbortError" });
+    }
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -564,13 +612,14 @@ const createAnswerRequestId = (input) => {
   return requested || `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
-const generateWithOllamaChat = async ({ provider, input, prompt, modelName }) => {
+const generateWithOllamaChat = async ({ provider, input, prompt, modelName, signal }) => {
   const baseUrl = normalizeOllamaBaseUrl(input?.ollamaBaseUrl || provider.baseUrl?.());
   const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
   const requestId = input.requestId;
   try {
-    const response = await fetch(`${baseUrl}/api/chat`, {
+    const response = await fetchWithRetry(`${baseUrl}/api/chat`, {
       method: "POST",
+      signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: modelName,
@@ -581,7 +630,7 @@ const generateWithOllamaChat = async ({ provider, input, prompt, modelName }) =>
           { role: "user", content: String(prompt?.user ?? "") },
         ],
       }),
-    });
+    }, { requestId, provider: provider.id });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error ?? `ollama_http_${response.status}` };
@@ -593,7 +642,7 @@ const generateWithOllamaChat = async ({ provider, input, prompt, modelName }) =>
   }
 };
 
-const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, modelName }) => {
+const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, modelName, signal }) => {
   const apiKey = provider.apiKey?.(input) ?? "";
   const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
   const requestId = input.requestId;
@@ -601,8 +650,9 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
     return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_api_key` };
   }
   try {
-    const response = await fetch(provider.chatUrl(), {
+    const response = await fetchWithRetry(provider.chatUrl(), {
       method: "POST",
+      signal,
       headers: {
         "Content-Type": "application/json",
         ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
@@ -616,7 +666,7 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
           { role: "user", content: String(prompt?.user ?? "") },
         ],
       }),
-    });
+    }, { requestId, provider: provider.id });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? payload?.error ?? `${provider.id}_http_${response.status}` };
@@ -628,7 +678,7 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
   }
 };
 
-const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName, event }) => {
+const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName, event, signal }) => {
   const apiKey = provider.apiKey?.(input) ?? "";
   const requestId = input.requestId;
   if (!apiKey) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_api_key` };
@@ -643,8 +693,9 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
       store: false,
     };
     if (input?.structuredOutput) {
-      const structuredResponse = await fetch(`${provider.baseUrl()}/v1/responses`, {
+      const structuredResponse = await fetchWithRetry(`${provider.baseUrl()}/v1/responses`, {
         method: "POST",
+        signal,
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`,
@@ -660,7 +711,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
             },
           },
         }),
-      });
+      }, { requestId, provider: provider.id });
       const payload = await structuredResponse.json().catch(() => ({}));
       if (!structuredResponse.ok) {
         return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? `${provider.id}_structured_http_${structuredResponse.status}` };
@@ -671,14 +722,16 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
 
     let detailSequence = 0;
     const sendDetailChunk = (chunk) => {
+      if (signal?.aborted) return;
       detailSequence += 1;
       const payload = { requestId, sequence: detailSequence, text: chunk, done: false };
       event.sender.send("answer:detail-chunk", payload);
       sendToOverlay("answer:detail-chunk", payload);
     };
 
-    const detailResponse = await fetch(`${provider.baseUrl()}/v1/responses`, {
+    const detailResponse = await fetchWithRetry(`${provider.baseUrl()}/v1/responses`, {
       method: "POST",
+      signal,
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
@@ -687,7 +740,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
         ...requestBase,
         stream: true,
       }),
-    });
+    }, { requestId, provider: provider.id });
     if (!detailResponse.ok) {
       const payload = await detailResponse.json().catch(() => ({}));
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? `${provider.id}_http_${detailResponse.status}` };
@@ -697,7 +750,8 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
       if (streamEvent.type === "response.output_text.delta" && typeof streamEvent.delta === "string") {
         sendDetailChunk(streamEvent.delta);
       }
-    });
+    }, signal);
+    if (signal?.aborted) throw Object.assign(new Error("Request cancelled"), { name: "AbortError" });
     const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
     event.sender.send("answer:detail-chunk", completedPayload);
     sendToOverlay("answer:detail-chunk", completedPayload);
@@ -710,6 +764,12 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
       error: text ? undefined : `empty_${provider.id}_response`,
     };
   } catch (error) {
+    if (isAbortError(error)) {
+      const cancelledPayload = { requestId, sequence: 0, text: "", done: true, cancelled: true };
+      event.sender.send("answer:detail-chunk", cancelledPayload);
+      sendToOverlay("answer:detail-chunk", cancelledPayload);
+      return { ok: false, text: "", provider: provider.id, modelName, requestId, error: "cancelled", cancelled: true };
+    }
     const failedPayload = { requestId, sequence: 0, text: "", done: true, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
     event.sender.send("answer:detail-chunk", failedPayload);
     sendToOverlay("answer:detail-chunk", failedPayload);
@@ -1214,6 +1274,17 @@ ipcMain.handle("answer:request", () => {
   sendToOverlay("answer:manual-status", { ok: true, status: "sent_to_main" });
   return { ok: true };
 });
+ipcMain.handle("answer:cancel", (_event, requestId) => {
+  const id = typeof requestId === "string" ? requestId : "";
+  const controller = activeAnswerControllers.get(id);
+  if (!controller) return { ok: false, status: "not_found" };
+  controller.abort();
+  activeAnswerControllers.delete(id);
+  appendTraceEvent("answer_cancelled", { requestId: id });
+  writeActiveSessionTrace("active");
+  sendToOverlay("answer:manual-status", { ok: true, status: "cancelled", requestId: id });
+  return { ok: true, status: "cancelled", requestId: id };
+});
 ipcMain.handle("transcript:publish", (_event, message) => {
   appendTraceEvent("transcript_final", {
     speaker: message?.speaker,
@@ -1458,6 +1529,8 @@ ipcMain.handle("model:generate", async (_event, input) => {
   const modelName = resolveAnswerModel(provider, input);
   const requestId = createAnswerRequestId(input);
   const normalizedInput = { ...(input || {}), requestId };
+  const controller = new AbortController();
+  activeAnswerControllers.set(requestId, controller);
   const prompt = input?.prompt;
   appendTraceEvent("model_generate_started", {
     requestId,
@@ -1475,11 +1548,11 @@ ipcMain.handle("model:generate", async (_event, input) => {
     if (provider.protocol === "mock") {
       result = { ok: true, text: createMockAnswer(prompt), provider: provider.id, modelName, requestId };
     } else if (provider.protocol === "ollama_chat") {
-      result = await generateWithOllamaChat({ provider, input: normalizedInput, prompt, modelName });
+      result = await generateWithOllamaChat({ provider, input: normalizedInput, prompt, modelName, signal: controller.signal });
     } else if (provider.protocol === "openai_chat") {
-      result = await generateWithOpenAICompatibleChat({ provider, input: normalizedInput, prompt, modelName });
+      result = await generateWithOpenAICompatibleChat({ provider, input: normalizedInput, prompt, modelName, signal: controller.signal });
     } else if (provider.protocol === "openai_responses") {
-      result = await generateWithOpenAIResponses({ provider, input: normalizedInput, prompt, modelName, event: _event });
+      result = await generateWithOpenAIResponses({ provider, input: normalizedInput, prompt, modelName, event: _event, signal: controller.signal });
     } else {
       result = { ok: false, text: "", provider: provider.id, modelName, requestId, error: `unsupported_provider_protocol:${provider.protocol}` };
     }
@@ -1490,8 +1563,11 @@ ipcMain.handle("model:generate", async (_event, input) => {
       provider: provider.id,
       modelName,
       requestId,
-      error: error instanceof Error ? error.message : "model_generation_failed",
+      error: isAbortError(error) ? "cancelled" : error instanceof Error ? error.message : "model_generation_failed",
+      cancelled: isAbortError(error),
     };
+  } finally {
+    activeAnswerControllers.delete(requestId);
   }
   appendTraceEvent("model_generate_completed", {
     requestId,

@@ -117,6 +117,17 @@ export {
   type AppSettings,
 } from "./settings.ts";
 export {
+  DEFAULT_RETRY_POLICY,
+  isAbortError,
+  isTransientStatus,
+  retryDelayMs,
+  shouldRetryProviderFailure,
+  waitForRetry,
+  withRetry,
+  type RetryDecision,
+  type RetryPolicy,
+} from "./providerRetry.ts";
+export {
   createLatencyMetricRun,
   markLatencyStage,
   type LatencyMetricRun,

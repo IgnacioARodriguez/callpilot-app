@@ -119,6 +119,7 @@ declare global {
       getSessionTraceStatus: () => Promise<{ ok: boolean; active: boolean; id?: string; path?: string; eventCount?: number; startedAt?: string; updatedAt?: string }>;
       recordSessionEvent: (type: string, payload?: Record<string, unknown>) => Promise<{ ok: boolean }>;
       requestAnswer: () => Promise<{ ok: boolean; error?: string }>;
+      cancelAnswer: (requestId: string) => Promise<{ ok: boolean; status?: string; requestId?: string; error?: string }>;
       publishTranscriptMessage: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishLiveTranscript: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishStructuredAnswer: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => Promise<{ ok: boolean }>;

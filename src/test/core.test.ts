@@ -55,6 +55,9 @@ import {
   upsertSession,
   validateAudioTranscriptionInput,
   withNoAnswerForUngroundedDrift,
+  retryDelayMs,
+  shouldRetryProviderFailure,
+  withRetry,
 } from "../core/index.ts";
 
 test("fixed modes are available", () => {
@@ -75,6 +78,55 @@ test("latency metrics record elapsed stages", () => {
   assert.equal(marked.id, run.id);
   assert.equal(marked.events[0].stage, "first_token");
   assert.equal(marked.events[0].elapsedMs, 250);
+});
+
+test("provider retry policy retries transient failures only", () => {
+  assert.deepEqual(
+    shouldRetryProviderFailure({ attempt: 1, maxAttempts: 3, status: 429 }),
+    { retry: true, reason: "transient_http_429" },
+  );
+  assert.deepEqual(
+    shouldRetryProviderFailure({ attempt: 1, maxAttempts: 3, status: 503 }),
+    { retry: true, reason: "transient_http_503" },
+  );
+  assert.equal(shouldRetryProviderFailure({ attempt: 1, maxAttempts: 3, status: 401, authError: true }).retry, false);
+  assert.equal(shouldRetryProviderFailure({ attempt: 1, maxAttempts: 3, validationError: true }).retry, false);
+  assert.equal(shouldRetryProviderFailure({ attempt: 3, maxAttempts: 3, status: 500 }).retry, false);
+  assert.equal(retryDelayMs(2, { maxAttempts: 3, baseDelayMs: 100, maxDelayMs: 1000, jitterRatio: 0.2 }, () => 0), 200);
+});
+
+test("withRetry backs off and stops when operation succeeds", async () => {
+  const attempts: number[] = [];
+  const delays: number[] = [];
+  const result = await withRetry(
+    async (attempt) => {
+      attempts.push(attempt);
+      return attempt < 3
+        ? { ok: false, status: attempt === 1 ? 500 : 429 }
+        : { ok: true, status: 200 };
+    },
+    {
+      policy: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100, jitterRatio: 0 },
+      shouldRetryResult: (result, attempt) => shouldRetryProviderFailure({ attempt, maxAttempts: 3, status: result.status }),
+      sleep: async (ms) => { delays.push(ms); },
+      random: () => 0,
+    },
+  );
+
+  assert.deepEqual(attempts, [1, 2, 3]);
+  assert.deepEqual(delays, [10, 20]);
+  assert.equal(result.ok, true);
+});
+
+test("withRetry does not retry cancelled requests", async () => {
+  const error = new DOMException("Request cancelled", "AbortError");
+  await assert.rejects(
+    withRetry(
+      async () => { throw error; },
+      { sleep: async () => undefined },
+    ),
+    /cancelled/i,
+  );
 });
 
 test("prompt builder emits debug metadata", () => {

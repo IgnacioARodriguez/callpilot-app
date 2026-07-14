@@ -652,6 +652,17 @@ function App() {
     }
   }, [appendAssistantTranscriptLine, context, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, providerLabel, question, sessionApiKey]);
 
+  const cancelAnswer = React.useCallback(async () => {
+    const requestId = activeAnswerRequestIdRef.current;
+    if (!requestId) return;
+    activeAnswerRequestIdRef.current = null;
+    isGeneratingRef.current = false;
+    setIsGenerating(false);
+    setLiveAssistStatus("Answer cancelled");
+    void window.callpilotDesktop?.recordSessionEvent?.("manual_answer_cancel_requested", { requestId });
+    await window.callpilotDesktop?.cancelAnswer?.(requestId).catch(() => undefined);
+  }, []);
+
   const warmAnswerModel = React.useCallback(async () => {
     if (modelProvider === "mock" || !window.callpilotDesktop?.generateAnswer) return;
     const warmPrompt = buildPrompt(context, "warmup: responde solo OK");
@@ -2008,6 +2019,23 @@ function App() {
       setAnswer(`${payload.headline}${keywords}`);
     });
     const disposeDetail = window.callpilotDesktop?.onAnswerDetailChunk?.((chunk) => {
+      if (typeof chunk === "object" && chunk && "requestId" in chunk) {
+        const payload = chunk as { requestId?: string; text?: string; done?: boolean; cancelled?: boolean; error?: string };
+        if (payload.cancelled || payload.error === "cancelled") return;
+        if (payload.requestId && activeAnswerRequestIdRef.current && payload.requestId !== activeAnswerRequestIdRef.current) return;
+        if (payload.done) return;
+        if (typeof payload.text === "string") {
+          const activeRunId = activeLatencyRunIdRef.current;
+          if (activeRunId && !firstDetailChunkSeenRef.current) {
+            firstDetailChunkSeenRef.current = true;
+            setLatencyRuns((current) => current.map((run) =>
+              run.id === activeRunId ? markLatencyStage(run, "first_token") : run,
+            ));
+          }
+          setAnswer((current) => `${current}${payload.text}`);
+        }
+        return;
+      }
       const activeRunId = activeLatencyRunIdRef.current;
       if (activeRunId && !firstDetailChunkSeenRef.current) {
         firstDetailChunkSeenRef.current = true;
