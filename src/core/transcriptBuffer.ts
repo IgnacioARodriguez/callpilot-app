@@ -15,6 +15,8 @@ export interface TranscriptSnapshot {
   updatedAt: number;
 }
 
+export const DEFAULT_MAX_TRANSCRIPT_MESSAGES = 800;
+
 export const createEmptyTranscriptSnapshot = (now = Date.now()): TranscriptSnapshot => ({
   messages: [],
   paused: false,
@@ -64,12 +66,16 @@ export class TranscriptBuffer {
   private paused: boolean;
   private updatedAt: number;
   private sequence: number;
+  private maxMessages: number;
 
-  constructor(snapshot = createEmptyTranscriptSnapshot()) {
-    this.messages = snapshot.messages.map((message) => ({ ...message }));
+  constructor(snapshot = createEmptyTranscriptSnapshot(), maxMessages = DEFAULT_MAX_TRANSCRIPT_MESSAGES) {
+    this.maxMessages = Number.isFinite(maxMessages)
+      ? Math.max(0, Math.floor(maxMessages))
+      : DEFAULT_MAX_TRANSCRIPT_MESSAGES;
+    this.messages = this.takeRecent(snapshot.messages).map((message) => ({ ...message }));
     this.paused = snapshot.paused;
     this.updatedAt = snapshot.updatedAt;
-    this.sequence = this.messages.length;
+    this.sequence = snapshot.messages.length;
   }
 
   append(text: string, source: TranscriptSource = "manual", timestamp = Date.now(), speaker: TranscriptSpeaker = "interviewer"): TranscriptMessage | null {
@@ -79,6 +85,7 @@ export class TranscriptBuffer {
     this.sequence += 1;
     const message = { id: `tr-${timestamp}-${this.sequence}`, text: cleanText, timestamp, source, speaker };
     this.messages = [...this.messages, message];
+    this.trimToMaxMessages();
     return { ...message };
   }
 
@@ -110,5 +117,15 @@ export class TranscriptBuffer {
       paused: this.paused,
       updatedAt: this.updatedAt,
     };
+  }
+
+  private trimToMaxMessages(): void {
+    if (this.messages.length <= this.maxMessages) return;
+    this.messages = this.takeRecent(this.messages);
+  }
+
+  private takeRecent(messages: TranscriptMessage[]): TranscriptMessage[] {
+    if (this.maxMessages <= 0) return [];
+    return messages.slice(-this.maxMessages);
   }
 }

@@ -2256,6 +2256,12 @@ function App() {
                 <MonitorUp size={18} />
                 Start interview overlay
               </button>
+              {isGenerating && (
+                <button className="status" onClick={cancelAnswer}>
+                  <Square size={16} />
+                  Stop answer
+                </button>
+              )}
             </div>
             <div className="launch-includes">
               <span><Mic size={14} /> Starts listening</span>

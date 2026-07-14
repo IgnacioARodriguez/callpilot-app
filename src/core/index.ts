@@ -36,7 +36,7 @@ export {
   type OcrLanguage,
   type OcrResult,
 } from "./ocr.ts";
-export { TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, formatConversationWindow, type TranscriptSnapshot, type TranscriptSpeaker } from "./transcriptBuffer.ts";
+export { DEFAULT_MAX_TRANSCRIPT_MESSAGES, TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, formatConversationWindow, type TranscriptSnapshot, type TranscriptSpeaker } from "./transcriptBuffer.ts";
 export {
   assessPartialTurnStability,
   detectQuestionIntent,

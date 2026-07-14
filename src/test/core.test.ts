@@ -310,6 +310,17 @@ test("transcript compaction includes conversation participants", () => {
   assert.match(compacted, /assistant: Use a STAR story/);
 });
 
+test("transcript buffer caps retained messages while preserving the newest turns", () => {
+  const buffer = new TranscriptBuffer(undefined, 3);
+  for (let index = 1; index <= 5; index += 1) {
+    buffer.append(`turn ${index}`, "stt", index * 1000, index % 2 === 0 ? "candidate" : "interviewer");
+  }
+
+  assert.deepEqual(buffer.snapshot().messages.map((message) => message.text), ["turn 3", "turn 4", "turn 5"]);
+  assert.match(buffer.compact(1000), /turn 5/);
+  assert.doesNotMatch(buffer.compact(1000), /turn 1/);
+});
+
 test("conversation window preserves interviewer and candidate roles", () => {
   const buffer = new TranscriptBuffer();
   buffer.append("What is SQL?", "stt", 1000, "interviewer");
