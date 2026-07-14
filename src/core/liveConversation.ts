@@ -48,6 +48,7 @@ const spanishPatterns = [
 const shortDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}][\p{L}\p{N} .+#/-]{0,40}\??$/iu;
 const truncatedDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}]$/iu;
 const incompleteUsageQuestion = /\b(para que sirve|what is it used for|what is used for)\s*\??$/iu;
+const casualEntertainmentQuestion = /\b(gta|videojuego|videojuegos|juego|juegos|fisico|digital|reservas?)\b/iu;
 
 const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/i;
 
@@ -83,15 +84,18 @@ export const detectQuestionIntent = (
   if (incompleteUsageQuestion.test(patternText)) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "incomplete_question", normalizedText };
   }
+  if (casualEntertainmentQuestion.test(patternText)) {
+    return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "non_interview_casual", normalizedText };
+  }
   if (normalizedText.length < 5 || fillerPatterns.some((pattern) => pattern.test(patternText))) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "too_short_or_filler", normalizedText };
   }
 
   const patterns =
     preferredLanguage === "spanish"
-      ? spanishPatterns
+      ? [...spanishPatterns, ...englishPatterns]
       : preferredLanguage === "english"
-        ? englishPatterns
+        ? [...englishPatterns, ...spanishPatterns]
         : [...englishPatterns, ...spanishPatterns];
   const matches = patterns.filter((pattern) => pattern.test(patternText)).length;
   const hasQuestionMark = /[?¿]/.test(normalizedText);

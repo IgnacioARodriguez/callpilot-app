@@ -18,5 +18,6 @@ Thumbs.db
 
 coverage/
 .nyc_output/
+reports/llm-scenarios-*.json
 
 *.local

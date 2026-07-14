@@ -193,29 +193,47 @@ const extractJsonObject = (text: string): unknown | null => {
   if (!trimmed) return null;
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
   const candidate = fenced || trimmed;
+  const parseLenient = (value: string): unknown | null => {
+    const quoteBareIntent = (input: string) =>
+      input.replace(/("intent"\s*:\s*)([^"',{}\]\s][^,}\n\r]*)/g, (_match, prefix: string, raw: string) => {
+        const cleaned = String(raw).trim();
+        if (!cleaned || cleaned === "null" || cleaned === "true" || cleaned === "false") return `${prefix}${cleaned}`;
+        return `${prefix}"${cleaned.replace(/"/g, "\\\"")}"`;
+      });
+    const repairs = [
+      value,
+      quoteBareIntent(value),
+    ];
+    for (const repaired of repairs) {
+      try {
+        return JSON.parse(repaired);
+      } catch {}
+    }
+    return null;
+  };
   try {
     return JSON.parse(candidate);
   } catch {
     const openBraces = (candidate.match(/{/g) ?? []).length;
     const closeBraces = (candidate.match(/}/g) ?? []).length;
     if (openBraces > closeBraces && openBraces - closeBraces <= 3) {
-      try {
-        return JSON.parse(`${candidate}${"}".repeat(openBraces - closeBraces)}`);
-      } catch {}
+      const parsed = parseLenient(`${candidate}${"}".repeat(openBraces - closeBraces)}`);
+      if (parsed) return parsed;
     }
     const start = candidate.indexOf("{");
     const end = candidate.lastIndexOf("}");
     if (start < 0 || end <= start) return null;
     const sliced = candidate.slice(start, end + 1);
+    const parsed = parseLenient(sliced);
+    if (parsed) return parsed;
     try {
       return JSON.parse(sliced);
     } catch {
       const slicedOpenBraces = (sliced.match(/{/g) ?? []).length;
       const slicedCloseBraces = (sliced.match(/}/g) ?? []).length;
       if (slicedOpenBraces > slicedCloseBraces && slicedOpenBraces - slicedCloseBraces <= 3) {
-        try {
-          return JSON.parse(`${sliced}${"}".repeat(slicedOpenBraces - slicedCloseBraces)}`);
-        } catch {}
+        const repaired = parseLenient(`${sliced}${"}".repeat(slicedOpenBraces - slicedCloseBraces)}`);
+        if (repaired) return repaired;
       }
       return null;
     }
@@ -225,7 +243,8 @@ const extractJsonObject = (text: string): unknown | null => {
 export const parseInterviewAnswerPayload = (value: unknown): InterviewAnswerPayload | null => {
   const record = asRecord(value);
   if (!record) return null;
-  const spokenAnswer = asString(record.spokenAnswer);
+  const narration = asRecord(record.narration) ?? {};
+  const spokenAnswer = asString(record.spokenAnswer) || asString(narration.spokenAnswer);
   if (!spokenAnswer) return null;
   const correction = asRecord(record.correction) ?? {};
   const intent = asString(record.intent);
@@ -253,9 +272,9 @@ export const parseCodingAnswerPayload = (value: unknown): CodingAnswerPayload | 
   const record = asRecord(value);
   if (!record) return null;
   const solution = asRecord(record.solution);
-  const narration = asRecord(record.narration);
-  if (!solution || !narration) return null;
-  const spokenAnswer = asString(narration.spokenAnswer);
+  const narration = asRecord(record.narration) ?? {};
+  if (!solution) return null;
+  const spokenAnswer = asString(narration.spokenAnswer) || asString(record.spokenAnswer);
   const code = asString(solution.code);
   if (!spokenAnswer && !code) return null;
   const problem = asRecord(record.problem) ?? {};

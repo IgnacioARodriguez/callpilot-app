@@ -253,6 +253,7 @@ test("live conversation detects interview questions in English and Spanish", () 
   const partialSpanish = detectQuestionIntent("Que es S", "spanish");
   const incompleteUsage = detectQuestionIntent("Para que sirve", "spanish");
   const completeUsage = detectQuestionIntent("Para que sirve Kafka", "spanish");
+  const casualGaming = detectQuestionIntent("Cuantas reservas crees que puede tener GTA?", "spanish");
   const filler = detectQuestionIntent("ok thanks", "auto");
   const implicit = detectQuestionIntent("me interesaria que me cuentes tu approach aca", "spanish");
 
@@ -265,6 +266,8 @@ test("live conversation detects interview questions in English and Spanish", () 
   assert.equal(incompleteUsage.shouldDispatch, false);
   assert.equal(incompleteUsage.reason, "incomplete_question");
   assert.equal(completeUsage.shouldDispatch, true);
+  assert.equal(casualGaming.shouldDispatch, false);
+  assert.equal(casualGaming.reason, "non_interview_casual");
   assert.equal(filler.shouldAnswer, false);
   assert.equal(implicit.shouldDispatch, true);
 });
@@ -325,6 +328,81 @@ test("structured coding answers parse and render code block", () => {
   assert.equal(structured?.kind, "coding");
   assert.match(rendered, /```python/);
   assert.match(rendered, /O\(n\)/);
+});
+
+test("structured coding answers accept provider payloads with root spokenAnswer", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "initial_solution",
+      spokenAnswer: "Uso un stack para validar cierres.",
+      problem: { title: "Valid Parentheses", summary: "Validate brackets", language: "Python" },
+      solution: {
+        approachSteps: ["Push openings", "Check closings"],
+        code: "def is_valid(s):\n    return True",
+        complexity: { time: "O(n)", space: "O(n)", rationale: "One pass" },
+        edgeCases: ["empty"],
+      },
+    },
+  }));
+
+  const rendered = structured ? formatStructuredAnswerPayload(structured) : "";
+
+  assert.equal(structured?.kind, "coding");
+  assert.match(rendered, /Uso un stack/);
+  assert.match(rendered, /```python/);
+});
+
+test("structured interview answers accept provider payloads with narration spokenAnswer", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      spokenAnswer: "",
+      keyPoints: ["Deadlock: espera circular", "Mitigacion: timeouts"],
+      correction: { needed: false },
+      narration: { spokenAnswer: "Un deadlock ocurre cuando dos procesos quedan esperando recursos entre si." },
+    },
+  }));
+
+  const rendered = structured ? formatStructuredAnswerPayload(structured) : "";
+
+  assert.equal(structured?.kind, "interview");
+  assert.match(rendered, /deadlock ocurre/);
+  assert.doesNotMatch(rendered, /^\s*\{/);
+});
+
+test("answer grounding guard allows focused technical answers with valid extra details", () => {
+  const context = createGlobalContext({ activeMode: "technical_qa" });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "Un indice en SQL es una estructura como un B-Tree que acelera lecturas, aunque puede empeorar escrituras.",
+      keyPoints: ["SQL", "lecturas", "escrituras"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "interviewer: Que es un indice en SQL y cuando puede empeorar una consulta?", structured);
+
+  assert.equal(assessment.ok, true);
 });
 
 test("structured answer parser repairs small missing closing braces", () => {
@@ -746,6 +824,74 @@ test("answer grounding guard allows answers focused on the explicit Spanish usag
 
   assert.ok(structured);
   const assessment = assessAnswerGrounding(context, "Para que sirve Kafka. Kafka.", structured);
+
+  assert.equal(assessment.ok, true);
+});
+
+test("answer grounding guard allows general knowledge for the latest explicit subject", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Estamos hablando de videojuegos y reservas de GTA.", "stt", 1_000, "interviewer");
+  transcript.append("Que es una base de datos relacional?", "stt", 2_000, "interviewer");
+  const context = createGlobalContext({
+    activeMode: "technical_qa",
+    transcript: transcript.snapshot(),
+  });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "Una base de datos relacional organiza datos en tablas relacionadas mediante claves y puede usar propiedades ACID para consistencia.",
+      keyPoints: ["tablas", "claves", "consistencia"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(
+    context,
+    "interviewer: Estamos hablando de videojuegos y reservas de GTA.\ninterviewer: Que es una base de datos relacional?",
+    structured,
+  );
+
+  assert.equal(assessment.ok, true);
+});
+
+test("answer grounding guard allows follow-up usage decisions for explicit subjects", () => {
+  const context = createGlobalContext({ activeMode: "technical_qa" });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "No usaria Kafka cuando la escala es baja o la sobrecarga operativa supera el beneficio del desacoplamiento.",
+      keyPoints: ["Kafka", "overhead", "baja escala"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "interviewer: Y cuando no usarias Kafka?", structured);
 
   assert.equal(assessment.ok, true);
 });

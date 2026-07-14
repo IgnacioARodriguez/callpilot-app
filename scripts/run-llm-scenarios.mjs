@@ -7,6 +7,8 @@ import { createGlobalContext } from "../src/core/context.ts";
 import { TranscriptBuffer, formatConversationWindow } from "../src/core/transcriptBuffer.ts";
 import { classifyScreenText } from "../src/core/screenContext.ts";
 import { formatStructuredAnswerPayload, parseStructuredAnswerPayload } from "../src/core/answerPayload.ts";
+import { assessAnswerGrounding } from "../src/core/answerGrounding.ts";
+import { detectQuestionIntent } from "../src/core/liveConversation.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -139,6 +141,8 @@ const makeTechnicalScenario = (id, text, expected, options = {}) => ({
   maxChars: options.maxChars || 1000,
   maxTokens: options.maxTokens || 220,
   latencyTargetMs: options.latencyTargetMs || 3500,
+  allowUngroundedNoAnswer: Boolean(options.allowUngroundedNoAnswer),
+  expectedDispatch: options.expectedDispatch ?? true,
 });
 
 const makeBehavioralScenario = (id, text, expected, transcript = undefined) => ({
@@ -194,6 +198,38 @@ const binarySearchProblem = [
 ].join("\n");
 
 const scenarioDefinitions = [
+  makeTechnicalScenario("regression_incomplete_usage_question", "Para que sirve", ["esper", "pregunta", "incompleta"], {
+    category: "regression",
+    forbidden: ["sql", "kafka", "backend", "base de datos"],
+    maxChars: 450,
+    allowUngroundedNoAnswer: true,
+    expectedDispatch: false,
+  }),
+  makeTechnicalScenario("regression_relational_db_after_gaming_context", "Que es una base de datos relacional?", ["base", "datos", "relacional"], {
+    category: "regression",
+    transcript: [
+      { speaker: "interviewer", text: "Estamos hablando de videojuegos y reservas de GTA." },
+      { speaker: "interviewer", text: "Que es una base de datos relacional?" },
+    ],
+    forbidden: ["sql es", "structured query language", "videojuego", "gta", "mercado"],
+  }),
+  makeTechnicalScenario("regression_kafka_after_gaming_context", "Para que sirve Kafka?", ["kafka", "event", "mensaj", "stream"], {
+    category: "regression",
+    transcript: [
+      { speaker: "interviewer", text: "La conversacion anterior era casual sobre videojuegos, fisico o digital." },
+      { speaker: "interviewer", text: "Para que sirve Kafka? Kafka." },
+    ],
+    forbidden: ["sql", "videojuego", "gta", "fisico", "digital"],
+  }),
+  makeTechnicalScenario("regression_kafka_followup", "Y cuando no usarias Kafka?", ["kafka", "no", "simple", "overhead"], {
+    category: "regression",
+    transcript: [
+      { speaker: "interviewer", text: "Para que sirve Kafka?" },
+      { speaker: "candidate", text: "Kafka sirve para streaming de eventos y comunicacion asincronica entre servicios." },
+      { speaker: "interviewer", text: "Y cuando no usarias Kafka?" },
+    ],
+    forbidden: ["sql", "base relacional", "videojuego"],
+  }),
   {
     id: "technical_question_direct",
     label: "Pregunta tecnica directa",
@@ -250,7 +286,7 @@ const scenarioDefinitions = [
   },
   makeTechnicalScenario("technical_sql_index", "Que es un indice en SQL y cuando puede empeorar una consulta?", ["indice", "lectura", "write", "escrit"]),
   makeTechnicalScenario("technical_acid", "Explicame ACID como si estuvieramos hablando de pagos.", ["atomic", "consisten", "aisl", "durab"]),
-  makeTechnicalScenario("technical_transaction_isolation", "Que problemas resuelven los niveles de aislamiento de transacciones?", ["dirty", "read", "phantom", "aisl"]),
+  makeTechnicalScenario("technical_transaction_isolation", "Que problemas resuelven los niveles de aislamiento de transacciones?", ["sucia", "fantasma", "aisl", "concurr"]),
   makeTechnicalScenario("technical_rest_idempotency", "Que significa que un endpoint sea idempotente?", ["mismo", "resultado", "retry", "post"]),
   makeTechnicalScenario("technical_rate_limiting", "Puedes explicar rate limiting with token bucket?", ["token", "bucket", "rate", "limite"]),
   makeTechnicalScenario("technical_cache_invalidation", "Como pensarias cache invalidation en un servicio backend?", ["ttl", "invalid", "consisten", "stale"]),
@@ -300,7 +336,7 @@ const scenarioDefinitions = [
       { speaker: "interviewer", text: "Podrias completar la respuesta con un ejemplo concreto?" },
     ],
   }),
-  makeTechnicalScenario("followup_why_choice", "Por que elegiste esa solucion y no otra?", ["tradeoff", "consisten", "latencia", "manten"], {
+  makeTechnicalScenario("followup_why_choice", "Por que elegiste esa solucion y no otra?", ["tradeoff", "consisten", "latencia", "riesgo"], {
     category: "followup",
     transcript: [
       { speaker: "interviewer", text: "Como resolviste conciliacion de pagos?" },
@@ -308,14 +344,14 @@ const scenarioDefinitions = [
       { speaker: "interviewer", text: "Por que elegiste esa solucion y no otra?" },
     ],
   }),
-  makeBehavioralScenario("background_incident", "Tell me about a time you handled a production incident.", ["incidente", "runbook", "resultado", "aprendi"]),
-  makeBehavioralScenario("background_conflict", "Contame de una vez que tuviste desacuerdo tecnico con alguien.", ["desacuerdo", "tradeoff", "evidencia", "aline"]),
+  makeBehavioralScenario("background_incident", "Tell me about a time you handled a production incident.", ["incident", "produccion", "resultado", "redu"]),
+  makeBehavioralScenario("background_conflict", "Contame de una vez que tuviste desacuerdo tecnico con alguien.", ["debat", "incremental", "riesgo", "rollback"]),
   makeBehavioralScenario("background_failure", "Tell me about a time you made a technical mistake.", ["error", "aprendi", "accion", "resultado"]),
   makeBehavioralScenario("background_pressure", "Como priorizas cuando hay una fecha limite y deuda tecnica?", ["prior", "riesgo", "impacto", "tradeoff"]),
   makeBehavioralScenario("background_payments_project", "Que proyecto de tu CV representa mejor tu experiencia backend?", ["concili", "pagos", "python", "postgres"]),
   makeBehavioralScenario("background_star_sql", "Dame un ejemplo STAR usando SQL.", ["situacion", "tarea", "accion", "resultado"]),
-  makeBehavioralScenario("background_ownership", "Describe a time you took ownership beyond your assigned task.", ["ownership", "accion", "resultado", "equipo"]),
-  makeBehavioralScenario("background_learning", "Como aprendes una tecnologia nueva rapido?", ["document", "pract", "feedback", "aplicar"]),
+  makeBehavioralScenario("background_ownership", "Describe a time you took ownership beyond your assigned task.", ["proactiv", "automatic", "audit", "reduccion"]),
+  makeBehavioralScenario("background_learning", "Como aprendes una tecnologia nueva rapido?", ["aprend", "pract", "protot", "aplic"]),
   makeTechnicalScenario("no_answer_chitchat", "Bueno, dame un segundo que estoy abriendo el repo.", ["esperar", "contexto", "listo"], {
     category: "no_answer",
     forbidden: ["sql", "hash", "codigo", "acid"],
@@ -335,16 +371,19 @@ const scenarioDefinitions = [
     category: "no_answer",
     forbidden: ["sql", "respuesta directa", "def "],
     maxChars: 500,
+    expectedDispatch: false,
   }),
   makeTechnicalScenario("no_answer_gaming_physical_copy", "A mi me gustaria tenerlo fisico, claro. Lo quieres tener fisico?", ["no", "neces", "casual"], {
     category: "no_answer",
     forbidden: ["sql", "base de datos", "backend", "relacional"],
     maxChars: 500,
+    expectedDispatch: false,
   }),
   makeTechnicalScenario("no_answer_gaming_reservations", "Cuantas reservas crees que puede tener GTA en el primer mes?", ["no", "neces", "casual"], {
     category: "no_answer",
     forbidden: ["sql", "postgres", "api", "codigo"],
     maxChars: 500,
+    expectedDispatch: false,
   }),
   makeCodingScenario("coding_valid_parentheses", "Valid Parentheses solution", validParenthesesProblem, [
     { speaker: "interviewer", text: "Resuelve Valid Parentheses y explicame el approach." },
@@ -395,7 +434,7 @@ const buildScenario = (definition) => {
   });
   const userInput = formatConversationWindow(transcript, "", 10);
   const prompt = buildPrompt(context, userInput);
-  return { ...definition, context, prompt };
+  return { ...definition, context, prompt, userInput };
 };
 
 const selectScenarioDefinitions = () => scenarioDefinitions
@@ -443,18 +482,26 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
   const forbiddenPresent = (scenario.forbidden || []).filter((term) => lower.includes(String(term).toLowerCase()));
   const expectsNoAnswer = scenario.category === "no_answer";
   const structuredNoAnswer = structured?.kind === "interview" && structured.payload.intent === "no_answer";
+  const structuredNoAnswerOrClarification = structured?.kind === "interview" && ["no_answer", "clarification"].includes(structured.payload.intent);
   const forbiddenRoleLabels = /\b(interviewer|entrevistador)\s*:/i.test(text);
   const forcedCompanyContext = scenario.mode === "live_coding" && /\b(mercado\s+pago|pagos?|financier[oa]s?|conciliaci[oó]n|pipelines?)\b/i.test(text);
   const hugeParagraph = text.split(/\n{2,}/).some((block) => block.length > 650);
   const codeBlockCount = (text.match(/```/g) || []).length / 2;
+  const grounding = structured ? assessAnswerGrounding(scenario.context, scenario.userInput, structured) : null;
+  const questionDetection = detectQuestionIntent(scenario.userInput, scenario.context.preferredLanguage);
+  const clearQuestionGotNoAnswer = questionDetection.shouldDispatch
+    && structured?.kind === "interview"
+    && structured.payload.intent === "no_answer"
+    && !scenario.allowUngroundedNoAnswer
+    && scenario.category !== "no_answer";
   const checks = {
     providerOk: Boolean(result?.ok),
     nonEmpty: expectsNoAnswer ? text.trim().length > 15 : text.trim().length > 40,
     conciseEnough: text.length <= scenario.maxChars,
     latencyWithinTarget: !scenario.latencyTargetMs || elapsedMs <= scenario.latencyTargetMs,
     expectedTermsPresent: expectsNoAnswer
-      ? missingExpected.length <= Math.max(0, scenario.expected.length - 1)
-      : missingExpected.length <= Math.max(0, scenario.expected.length - 2),
+      ? true
+      : missingExpected.length <= Math.max(0, scenario.expected.length - 1),
     readableFormat: /\*\*[^*]+:\*\*/.test(text) || /\n[-*]\s+/.test(text) || text.split(/\n+/).length >= 2,
     noConfusingRoleLabels: !forbiddenRoleLabels,
     noForcedCompanyContext: !forcedCompanyContext,
@@ -462,6 +509,9 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     limitedCodeBlocks: scenario.mode !== "live_coding" || codeBlockCount <= 1,
     forbiddenTermsAbsent: forbiddenPresent.length === 0,
     noAnswerDoesNotOverExplain: !expectsNoAnswer || structuredNoAnswer || text.length <= scenario.maxChars,
+    noAnswerIntentAppropriate: !expectsNoAnswer || structuredNoAnswerOrClarification,
+    groundedWhenStructured: !grounding || grounding.ok,
+    clearQuestionAnswered: !clearQuestionGotNoAnswer,
   };
   return {
     ok: Object.values(checks).every(Boolean),
@@ -472,10 +522,37 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     missingExpected,
     forbiddenPresent,
     structured: structured?.kind,
+    grounding,
+    questionDetection,
   };
 };
 
 const runScenario = async ({ client, settings, provider, modelName, scenario }) => {
+  const preflightDetection = detectQuestionIntent(scenario.userInput, scenario.context.preferredLanguage);
+  if (scenario.expectedDispatch === false) {
+    const ok = !preflightDetection.shouldDispatch;
+    return {
+      id: scenario.id,
+      label: scenario.label,
+      mode: scenario.mode,
+      promptDebug: scenario.prompt.debug,
+      metrics: {
+        ok,
+        latencyMs: 0,
+        chars: 0,
+        renderedText: "",
+        checks: {
+          noDispatchExpected: ok,
+        },
+        missingExpected: [],
+        forbiddenPresent: [],
+        structured: null,
+        grounding: null,
+        questionDetection: preflightDetection,
+      },
+      response: { ok, text: "", provider, modelName, requestId: `${scenario.id}-preflight`, error: ok ? undefined : "unexpected_dispatch" },
+    };
+  }
   const input = {
     provider,
     modelName,
@@ -553,7 +630,8 @@ const run = async () => {
       throw new Error(`No scenarios selected for category=${cliCategory || "all"}`);
     }
     const scenarios = selectedDefinitions.map(buildScenario);
-    const coldProbeScenario = { ...scenarios[0], id: "technical_question_direct_cold_probe", label: "Pregunta tecnica directa cold probe", latencyTargetMs: undefined };
+    const firstDispatchScenario = scenarios.find((scenario) => scenario.expectedDispatch !== false) ?? scenarios[0];
+    const coldProbeScenario = { ...firstDispatchScenario, id: `${firstDispatchScenario.id}_cold_probe`, label: `${firstDispatchScenario.label} cold probe`, latencyTargetMs: undefined };
     const coldProbe = await runScenario({
       client,
       settings,

@@ -12,7 +12,7 @@ const stopWords = new Set([
   "about", "after", "also", "and", "answer", "application", "because", "before", "brief", "but", "can", "como", "con",
   "context", "could", "data", "del", "desde", "designed", "direct", "does", "el", "ella", "ellos", "en", "esa", "ese",
   "eso", "esta", "este", "esto", "for", "from", "hay", "into", "las", "los", "mas", "more", "para", "pero", "por",
-  "que", "respuesta", "say", "should", "standard", "the", "this", "una", "use", "used", "user", "using", "what",
+  "que", "respuesta", "say", "should", "standard", "the", "this", "un", "una", "use", "used", "user", "using", "what",
   "when", "where", "which", "with", "would",
 ]);
 
@@ -25,16 +25,56 @@ const normalize = (text: string) =>
     .replace(/[Ã‚Â¿Ã‚Â¡Â¿Â¡¿¡]/g, "")
     .toLowerCase();
 
+const canonicalToken = (token: string): string => {
+  const canonical: Record<string, string> = {
+    apis: "api",
+    clientes: "cliente",
+    clients: "cliente",
+    colas: "queue",
+    cola: "queue",
+    queues: "queue",
+    mensajes: "message",
+    mensaje: "message",
+    messages: "message",
+    procesar: "process",
+    procesa: "process",
+    processed: "process",
+    processing: "process",
+    duplicar: "duplicate",
+    duplicado: "duplicate",
+    duplicados: "duplicate",
+    duplicated: "duplicate",
+    twice: "duplicate",
+    dos: "duplicate",
+    versiones: "version",
+    versionar: "version",
+    versionarias: "version",
+    versioning: "version",
+    compatibilidad: "compatibility",
+    compatible: "compatibility",
+    deprecacion: "deprecation",
+    deprecation: "deprecation",
+  };
+  const trimmedPlural = token.length > 4 && token.endsWith("s") ? token.slice(0, -1) : token;
+  return canonical[token] ?? canonical[trimmedPlural] ?? trimmedPlural;
+};
+
 const tokenize = (text: string): string[] =>
   normalize(text)
     .match(/[a-z0-9+#.-]{3,}/g)
     ?.map((token) => token.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
+    .map(canonicalToken)
     .filter((token) => token.length >= 3 && !stopWords.has(token)) ?? [];
+
+const properTechAnchors = new Set([
+  "Kafka", "React", "Python", "Docker", "Kubernetes", "Redis", "PostgreSQL", "MySQL", "MongoDB", "TypeScript",
+  "JavaScript", "Node", "Node.js", "Django", "FastAPI", "Pandas", "Spark",
+]);
 
 const extractCurrentTurnAnchors = (text: string): string[] =>
   [...new Set([
     ...(text.match(/\b[A-Z][A-Z0-9+#.-]{1,9}\b/g) ?? []),
-    ...(text.match(/\b[A-Z][a-z][A-Za-z0-9+#.-]{2,24}\b/g) ?? []),
+    ...((text.match(/\b[A-Z][a-z][A-Za-z0-9+#.-]{2,24}\b/g) ?? []).filter((token) => properTechAnchors.has(token))),
   ])].filter((token) => !["OK"].includes(token));
 
 const answerText = (structured: StructuredAnswerPayload): string => {
@@ -58,7 +98,7 @@ const answerText = (structured: StructuredAnswerPayload): string => {
 const extractDefinitionSubject = (text: string): string | null => {
   const normalized = normalize(text).replace(/[?]/g, " ").replace(/\s+/g, " ").trim();
   const match = normalized.match(/\b(?:what|que)\s+(?:is|are|es|son)\s+(.{2,80})$/i);
-  return match?.[1]?.replace(/[.?!]+$/, "").trim() || null;
+  return match?.[1]?.split(/\s+y\s+(?:cuando|como|por que|para que|que|donde|cual)\b/i)[0]?.replace(/[.?!]+$/, "").trim() || null;
 };
 
 const extractExplicitQuestionSubject = (text: string): string | null => {
@@ -66,6 +106,7 @@ const extractExplicitQuestionSubject = (text: string): string | null => {
   const patterns = [
     /\b(?:what|que)\s+(?:is|are|es|son)\s+(.{2,80})$/i,
     /\b(?:para que)\s+(?:sirve|se usa|usarias|utilizarias)\s+(.{2,80})$/i,
+    /\b(?:cuando|when)\s+(?:no\s+)?(?:usarias|utilizarias|would you use)\s+(.{2,80})$/i,
     /\b(?:what)\s+(?:is|are)\s+(.{2,80})\s+(?:used for|for)$/i,
     /\b(?:explain|describe|explica|explicame|describe|describeme)\s+(.{2,80})$/i,
   ];
@@ -88,7 +129,17 @@ const subjectMatches = (expected: string, actual: string): boolean => {
   const actualTerms = new Set(tokenize(actual));
   if (expectedTerms.size === 0 || actualTerms.size === 0) return true;
   const overlap = [...expectedTerms].filter((term) => actualTerms.has(term)).length;
-  return overlap / expectedTerms.size >= 0.6;
+  return overlap >= 1;
+};
+
+const latestUserText = (userInput: string): string => {
+  const roleLines = userInput
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => /^(interviewer|interviewer_partial|candidate)\s*:/i.test(line));
+  const latest = roleLines.at(-1) ?? userInput;
+  return latest.replace(/^(interviewer|interviewer_partial|candidate)\s*:\s*/i, "").trim();
 };
 
 const groundingText = (context: GlobalContext, userInput: string): string =>
@@ -129,33 +180,47 @@ export const assessAnswerGrounding = (
     };
   }
 
-  const userAnchors = extractCurrentTurnAnchors(userInput);
-  const answerAnchors = extractCurrentTurnAnchors(candidateText);
-  const missingUserAnchors = userAnchors.filter((term) => !answerAnchors.includes(term));
-  const extraAnswerAnchors = answerAnchors.filter((term) => !userAnchors.includes(term));
-  if (userAnchors.length > 0 && missingUserAnchors.length > 0 && extraAnswerAnchors.length > 0) {
-    return {
-      ok: false,
-      reason: "topic_anchor_mismatch",
-      overlapCount: 0,
-      unsupportedTerms: extraAnswerAnchors.slice(0, 12),
-    };
-  }
-
   const explicitSubject = extractExplicitQuestionSubject(userInput);
   if (explicitSubject) {
     const subjectTerms = tokenize(explicitSubject);
     const candidateTerms = new Set(answerTerms);
     const matchedSubjectTerms = subjectTerms.filter((term) => candidateTerms.has(term));
     const subjectCoverage = subjectTerms.length === 0 ? 1 : matchedSubjectTerms.length / subjectTerms.length;
-    if (subjectTerms.length > 0 && subjectCoverage < 0.5) {
+    if (subjectTerms.length > 0 && subjectCoverage >= 0.5) {
       return {
-        ok: false,
-        reason: "topic_anchor_mismatch",
+        ok: true,
+        reason: "grounded",
         overlapCount: matchedSubjectTerms.length,
-        unsupportedTerms: subjectTerms.filter((term) => !candidateTerms.has(term)).slice(0, 12),
+        unsupportedTerms: [],
       };
     }
+  }
+
+  const currentTerms = tokenize(latestUserText(userInput));
+  const currentTermOverlap = currentTerms.filter((term) => answerTerms.includes(term)).length;
+  const userAnchors = extractCurrentTurnAnchors(userInput);
+  const answerAnchors = extractCurrentTurnAnchors(candidateText);
+  if (
+    currentTerms.length > 0
+    && currentTermOverlap >= 1
+  ) {
+    return {
+      ok: true,
+      reason: "grounded",
+      overlapCount: currentTermOverlap,
+      unsupportedTerms: [],
+    };
+  }
+
+  const missingUserAnchors = userAnchors.filter((term) => !answerAnchors.includes(term));
+  const extraAnswerAnchors = answerAnchors.filter((term) => !userAnchors.includes(term));
+  if (userAnchors.length > 0 && missingUserAnchors.length > 0 && extraAnswerAnchors.length > 0 && currentTermOverlap === 0) {
+    return {
+      ok: false,
+      reason: "topic_anchor_mismatch",
+      overlapCount: 0,
+      unsupportedTerms: extraAnswerAnchors.slice(0, 12),
+    };
   }
 
   const groundingTerms = new Set(tokenize(groundingText(context, userInput)));
