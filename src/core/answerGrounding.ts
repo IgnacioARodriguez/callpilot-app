@@ -3,7 +3,7 @@ import type { StructuredAnswerPayload } from "./answerPayload.ts";
 
 export interface AnswerGroundingAssessment {
   ok: boolean;
-  reason: "grounded" | "empty" | "unsupported_topic_drift" | "topic_anchor_mismatch";
+  reason: "grounded" | "empty" | "unsupported_topic_drift" | "topic_anchor_mismatch" | "definition_subject_mismatch";
   overlapCount: number;
   unsupportedTerms: string[];
 }
@@ -50,6 +50,26 @@ const answerText = (structured: StructuredAnswerPayload): string => {
   ].join(" ");
 };
 
+const extractDefinitionSubject = (text: string): string | null => {
+  const normalized = text.replace(/[¿?]/g, " ").replace(/\s+/g, " ").trim();
+  const match = normalized.match(/\b(?:what|que)\s+(?:is|are|es|son)\s+(.{2,80})$/i);
+  return match?.[1]?.replace(/[.?!]+$/, "").trim() || null;
+};
+
+const extractAnswerDefinitionLead = (text: string): string | null => {
+  const normalized = text.replace(/\*\*/g, "").replace(/^(respuesta|answer)\s*:\s*/i, "").replace(/\s+/g, " ").trim();
+  const match = normalized.match(/^(.{2,60}?)\s+(?:is|are|es|son)\b/i);
+  return match?.[1]?.replace(/[,:;]+$/, "").trim() || null;
+};
+
+const subjectMatches = (expected: string, actual: string): boolean => {
+  const expectedTerms = new Set(tokenize(expected));
+  const actualTerms = new Set(tokenize(actual));
+  if (expectedTerms.size === 0 || actualTerms.size === 0) return true;
+  const overlap = [...expectedTerms].filter((term) => actualTerms.has(term)).length;
+  return overlap / expectedTerms.size >= 0.6;
+};
+
 const groundingText = (context: GlobalContext, userInput: string): string =>
   [
     userInput,
@@ -83,6 +103,16 @@ export const assessAnswerGrounding = (
       reason: "topic_anchor_mismatch",
       overlapCount: 0,
       unsupportedTerms: extraAnswerAnchors.slice(0, 12),
+    };
+  }
+  const definitionSubject = extractDefinitionSubject(userInput);
+  const answerLead = extractAnswerDefinitionLead(candidateText);
+  if (definitionSubject && answerLead && !subjectMatches(definitionSubject, answerLead)) {
+    return {
+      ok: false,
+      reason: "definition_subject_mismatch",
+      overlapCount: 0,
+      unsupportedTerms: [answerLead],
     };
   }
 

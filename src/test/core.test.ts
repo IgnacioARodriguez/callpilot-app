@@ -28,6 +28,7 @@ import {
   extractOpenAICompatibleChatText,
   extractOpenAIResponseText,
   extractOpenAITranscriptionText,
+  extractLatestQuestionFocus,
   formatStructuredAnswerPayload,
   formatConversationWindow,
   assessPartialTurnStability,
@@ -356,6 +357,20 @@ test("live conversation auto answer respects cooldown", () => {
   assert.equal(shouldAutoAnswer(detection, 25_000, 20_000), false);
 });
 
+test("live conversation focuses the latest question inside accumulated STT partials", () => {
+  const text = [
+    "Earlier implementation discussion about pages and classes.",
+    "I would use one object per item.",
+    "What is a relational database?",
+  ].join(" ");
+
+  const detection = detectQuestionIntent(text, "english");
+
+  assert.equal(extractLatestQuestionFocus(text), "What is a relational database?");
+  assert.equal(detection.reason, "definition_question");
+  assert.equal(detection.normalizedText, "What is a relational database?");
+});
+
 test("turn assembler folds provider final fragments into the live draft", () => {
   const state = createTurnAssemblerState();
   const partial = assembleTurn(state, {
@@ -556,6 +571,36 @@ test("answer grounding guard blocks technical anchor swaps from stale context", 
 
   assert.equal(assessment.ok, false);
   assert.equal(assessment.reason, "topic_anchor_mismatch");
+});
+
+test("answer grounding guard blocks definition answers that replace the asked subject", () => {
+  const context = createGlobalContext({ activeMode: "technical_qa" });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "GraphQL is a query language often used to fetch API data.",
+      keyPoints: ["queries"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "What is an API?", structured);
+
+  assert.equal(assessment.ok, false);
+  assert.equal(assessment.reason, "definition_subject_mismatch");
 });
 
 test("live conversation drops microphone echo from recent interviewer audio", () => {

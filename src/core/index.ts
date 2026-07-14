@@ -29,6 +29,7 @@ export { TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, for
 export {
   assessPartialTurnStability,
   detectQuestionIntent,
+  extractLatestQuestionFocus,
   shouldAutoAnswer,
   type PartialTurnStability,
   type QuestionDetection,

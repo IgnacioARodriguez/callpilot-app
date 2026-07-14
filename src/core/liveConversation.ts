@@ -46,11 +46,31 @@ const spanishPatterns = [
 const shortDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}][\p{L}\p{N} .+#/-]{0,40}\??$/iu;
 const truncatedDefinitionQuestion = /\b(que|what)\s+(es|son|is|are)\s+[\p{L}\p{N}]$/iu;
 
+const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|explica|explicame|describe|describeme)\b/i;
+
+export const extractLatestQuestionFocus = (text: string): string => {
+  const normalized = normalize(text);
+  if (!normalized) return "";
+  const segments = normalized
+    .split(/(?<=[?¿.!])\s+|(?:\s+[—–-]\s+)|(?:\s{2,})/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const candidates = (segments.length ? segments : [normalized])
+    .filter((segment) => questionStarter.test(normalizeForPatterns(segment)) || /[?¿]/.test(segment));
+  const latest = candidates.at(-1);
+  if (!latest) return normalized;
+  const index = normalized.toLowerCase().lastIndexOf(latest.toLowerCase());
+  if (index <= 0) return latest;
+  const prefix = normalized.slice(Math.max(0, index - 90), index).trim();
+  const usefulPrefix = /\b(interviewer|entrevistador|you asked|me pregunt|follow.?up)\b/i.test(prefix) ? prefix : "";
+  return [usefulPrefix, latest].filter(Boolean).join(" ").trim();
+};
+
 export const detectQuestionIntent = (
   text: string,
   preferredLanguage: PreferredLanguage = "auto",
 ): QuestionDetection => {
-  const normalizedText = normalize(text);
+  const normalizedText = extractLatestQuestionFocus(text);
   const patternText = normalizeForPatterns(normalizedText);
   if (!normalizedText) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0, reason: "empty", normalizedText };
