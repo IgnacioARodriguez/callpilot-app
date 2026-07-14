@@ -8,6 +8,7 @@ import {
   MODES,
   SESSION_LIBRARY_KEY,
   TranscriptBuffer,
+  assessAnswerGrounding,
   assembleTurn,
   browserRecognitionLanguage,
   buildPrompt,
@@ -39,6 +40,7 @@ import {
   speechSimilarity,
   serializeSession,
   upsertSession,
+  withNoAnswerForUngroundedDrift,
   type AssistantModeId,
   type EvidenceEmbedder,
   type EvidenceEmbedding,
@@ -588,7 +590,20 @@ function App() {
         ollamaBaseUrl,
         maxTokens: context.activeMode === "live_coding" ? 360 : 220,
       });
-      const structured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
+      const parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
+      const grounding = parsedStructured ? assessAnswerGrounding(context, effectiveQuestion, parsedStructured) : null;
+      if (grounding) {
+        void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
+          requestId,
+          ok: grounding.ok,
+          reason: grounding.reason,
+          overlapCount: grounding.overlapCount,
+          unsupportedTerms: grounding.unsupportedTerms,
+        });
+      }
+      const structured = parsedStructured && grounding
+        ? withNoAnswerForUngroundedDrift(parsedStructured, grounding)
+        : parsedStructured;
       const text = result.ok
         ? structured ? formatStructuredAnswerPayload(structured) : result.text
         : `Generation failed: ${result.error ?? "unknown error"}`;

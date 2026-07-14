@@ -206,6 +206,13 @@ test("acceptance: transcript publishing is idempotent under React StrictMode", (
   assert.match(app, /speechSimilarity\(recent\.text, message\.text\) >= 0\.96/);
 });
 
+test("acceptance: overlay starts a new live bubble after an assistant answer", () => {
+  const overlay = read("src/overlay/OverlayApp.tsx");
+
+  assert.match(overlay, /assistantAfterExisting/);
+  assert.match(overlay, /targetId = mode === "partial" && assistantAfterExisting/);
+});
+
 test("acceptance: LLM quality runner has a broad scenario corpus", () => {
   const runner = read("scripts/run-llm-scenarios.mjs");
   const scenarioLikeEntries = (runner.match(/(?:id:\s*"|makeTechnicalScenario\("|makeBehavioralScenario\("|makeCodingScenario\(")/g) ?? []).length;

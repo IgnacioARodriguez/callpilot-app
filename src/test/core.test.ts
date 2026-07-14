@@ -7,6 +7,7 @@ import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_TRANSCRIPTION_MODEL,
   TranscriptBuffer,
+  assessAnswerGrounding,
   assembleTurn,
   buildOllamaChatRequest,
   buildRealtimeTranscriptionSessionUpdate,
@@ -52,6 +53,7 @@ import {
   STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA,
   upsertSession,
   validateAudioTranscriptionInput,
+  withNoAnswerForUngroundedDrift,
 } from "../core/index.ts";
 
 test("fixed modes are available", () => {
@@ -379,6 +381,78 @@ test("turn assembler folds provider final fragments into the live draft", () => 
   assert.equal(fragment.action, "fold_final");
   assert.equal(nextPartial.action, "publish_live");
   assert.match(nextPartial.action === "publish_live" ? nextPartial.text : "", /complexity/);
+});
+
+test("answer grounding guard blocks unsupported topic drift", () => {
+  const context = createGlobalContext({
+    activeMode: "technical_qa",
+    transcript: new TranscriptBuffer().snapshot(),
+    preferredLanguage: "english",
+  });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "SQL is used to query relational databases with joins and transactions.",
+      keyPoints: ["relational database"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(
+    context,
+    "The reading application remembers where the user left off in a book. Correct?",
+    structured,
+  );
+  const guarded = withNoAnswerForUngroundedDrift(structured, assessment);
+
+  assert.equal(assessment.ok, false);
+  assert.equal(guarded.kind, "interview");
+  if (guarded.kind === "interview") {
+    assert.equal(guarded.payload.intent, "no_answer");
+    assert.equal(guarded.payload.answerNeeded, false);
+  }
+});
+
+test("answer grounding guard allows explicitly mentioned technical topics", () => {
+  const context = createGlobalContext({ activeMode: "technical_qa" });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      responseType: null,
+      spokenAnswer: "SQL is a language for querying relational databases.",
+      keyPoints: ["queries", "relational databases"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "What is SQL?", structured);
+
+  assert.equal(assessment.ok, true);
 });
 
 test("live conversation drops microphone echo from recent interviewer audio", () => {

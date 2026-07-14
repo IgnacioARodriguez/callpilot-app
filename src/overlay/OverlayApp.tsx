@@ -133,10 +133,6 @@ export default function OverlayApp() {
         };
         return;
       }
-      const displayText = mode === "partial"
-        ? [committed, clean].filter(Boolean).join(" ")
-        : nextCommitted;
-
       liveTranscriptByRole.current[role] = {
         id,
         committed: nextCommitted,
@@ -144,6 +140,21 @@ export default function OverlayApp() {
       };
 
       setMessages((current) => {
+        const existingIndex = current.findIndex((item) => item.id === id);
+        const assistantAfterExisting = existingIndex >= 0
+          && current.slice(existingIndex + 1).some((item) => item.role === "assistant");
+        const targetId = mode === "partial" && assistantAfterExisting ? `live-${role}-${now}` : id;
+        const targetCommitted = targetId === id ? committed : "";
+        const targetDisplayText = mode === "partial"
+          ? [targetCommitted, clean].filter(Boolean).join(" ")
+          : nextCommitted;
+        if (targetId !== id) {
+          liveTranscriptByRole.current[role] = {
+            id: targetId,
+            committed: targetCommitted,
+            lastUpdatedAt: now,
+          };
+        }
         if (mode === "final") {
           const duplicate = [...current].reverse().find((item) =>
             item.role === role
@@ -167,13 +178,13 @@ export default function OverlayApp() {
             ).filter(hasMessageContent);
           }
         }
-        const exists = current.some((item) => item.id === id);
+        const exists = current.some((item) => item.id === targetId);
         if (exists) {
           return current.map((item) =>
-            item.id === id ? { ...item, role, text: displayText, isStreaming: mode === "partial" } : item,
+            item.id === targetId ? { ...item, role, text: targetDisplayText, isStreaming: mode === "partial" } : item,
           ).filter(hasMessageContent);
         }
-        return [...current, { id, role, text: displayText, isStreaming: mode === "partial" }]
+        return [...current, { id: targetId, role, text: targetDisplayText, isStreaming: mode === "partial" }]
           .filter(hasMessageContent)
           .slice(-80);
       });
