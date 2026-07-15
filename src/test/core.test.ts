@@ -359,6 +359,19 @@ test("prompt tells model not to answer stale topics or non-questions", () => {
   assert.match(prompt.system, /at most two compact/i);
 });
 
+test("prompt filters stale casual context before standalone technical questions", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Estamos hablando de videojuegos y reservas de GTA.", "stt", 1_000, "interviewer");
+  transcript.append("Que es una base de datos relacional?", "stt", 2_000, "interviewer");
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "technical_qa", transcript: transcript.snapshot() }),
+    "interviewer: Que es una base de datos relacional?",
+  );
+
+  assert.match(prompt.user, /Que es una base de datos relacional/);
+  assert.doesNotMatch(prompt.user, /GTA|videojuegos|reservas/i);
+});
+
 test("prompt gives latest actionable input priority over stale context", () => {
   const transcript = new TranscriptBuffer();
   transcript.append("We were chatting about videogames and market rumors.", "stt", 1_000, "interviewer");
@@ -400,6 +413,7 @@ test("live conversation detects interview questions in English and Spanish", () 
   const completeUsage = detectQuestionIntent("Para que sirve Kafka", "spanish");
   const casualGaming = detectQuestionIntent("Cuantas reservas crees que puede tener GTA?", "spanish");
   const filler = detectQuestionIntent("ok thanks", "auto");
+  const pause = detectQuestionIntent("Bueno, dame un segundo que estoy abriendo el repo.", "spanish");
   const implicit = detectQuestionIntent("me interesaria que me cuentes tu approach aca", "spanish");
 
   assert.equal(english.shouldAnswer, true);
@@ -414,6 +428,8 @@ test("live conversation detects interview questions in English and Spanish", () 
   assert.equal(casualGaming.shouldDispatch, false);
   assert.equal(casualGaming.reason, "non_interview_casual");
   assert.equal(filler.shouldAnswer, false);
+  assert.equal(pause.shouldDispatch, false);
+  assert.equal(pause.reason, "non_question_pause");
   assert.equal(implicit.shouldDispatch, true);
 });
 
@@ -663,7 +679,7 @@ test("live conversation resolves bare usage follow-ups from prior technical cont
   const focus = extractLatestQuestionFocus(text);
   const detection = detectQuestionIntent(text, "auto");
 
-  assert.match(focus, /^Para que sirve \(contexto anterior:/);
+  assert.match(focus, /^Para que sirve .*list/i);
   assert.match(focus, /list/);
   assert.match(focus, /dictionary/);
   assert.equal(detection.shouldDispatch, true);

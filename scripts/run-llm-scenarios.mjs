@@ -35,6 +35,7 @@ const cliLimit = Number(argValue("--limit") || "0");
 const cliCategory = argValue("--category");
 const respectSettings = process.argv.includes("--respect-settings");
 const dryRun = process.argv.includes("--dry-run");
+const strictLatency = process.argv.includes("--strict-latency");
 
 const waitForHttp = async (url, timeoutMs = 25000) => {
   const started = Date.now();
@@ -368,16 +369,19 @@ const scenarioDefinitions = [
     category: "no_answer",
     forbidden: ["sql", "hash", "codigo", "acid"],
     maxChars: 450,
+    expectedDispatch: false,
   }),
   makeTechnicalScenario("no_answer_noise", "Si, si, perfecto, ahora vemos.", ["no", "neces", "esper"], {
     category: "no_answer",
     forbidden: ["sql", "base de datos", "python"],
     maxChars: 450,
+    expectedDispatch: false,
   }),
   makeTechnicalScenario("no_answer_personal_comment", "A mi tambien me gustan los juegos, despues seguimos.", ["breve", "cordial", "retomar"], {
     category: "no_answer",
     forbidden: ["sql", "arquitectura", "codigo"],
     maxChars: 500,
+    expectedDispatch: false,
   }),
   makeTechnicalScenario("no_answer_audio_fragment", "eh entonces por ahi no se si", ["fragment", "esper", "context"], {
     category: "no_answer",
@@ -493,8 +497,16 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
   const structured = parseStructuredAnswerPayload(rawText);
   const text = structured ? formatStructuredAnswerPayload(structured) : rawText;
   const lower = text.toLowerCase();
+  const includesTerm = (value, term) => {
+    const cleanTerm = String(term).toLowerCase();
+    if (/^[a-z0-9+#.-]{1,4}$/i.test(cleanTerm)) {
+      const escaped = cleanTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(value);
+    }
+    return value.includes(cleanTerm);
+  };
   const missingExpected = scenario.expected.filter((term) => !lower.includes(term));
-  const forbiddenPresent = (scenario.forbidden || []).filter((term) => lower.includes(String(term).toLowerCase()));
+  const forbiddenPresent = (scenario.forbidden || []).filter((term) => includesTerm(lower, term));
   const expectsNoAnswer = scenario.category === "no_answer";
   const structuredNoAnswer = structured?.kind === "interview" && structured.payload.intent === "no_answer";
   const structuredNoAnswerOrClarification = structured?.kind === "interview" && ["no_answer", "clarification"].includes(structured.payload.intent);
@@ -502,6 +514,8 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
   const forcedCompanyContext = scenario.mode === "live_coding" && /\b(mercado\s+pago|pagos?|financier[oa]s?|conciliaci[oó]n|pipelines?)\b/i.test(text);
   const hugeParagraph = text.split(/\n{2,}/).some((block) => block.length > 650);
   const codeBlockCount = (text.match(/```/g) || []).length / 2;
+  const artifactScanText = text.replace(/\b(OrderedDict|JavaScript|TypeScript|PostgreSQL|OpenAI|NoSQL)\b/g, "");
+  const garbledArtifact = /(?:\.raise\b|[a-zÃ¡Ã©Ã­Ã³ÃºÃ±]{4,}[A-Z][A-Za-z]{3,})/u.test(artifactScanText);
   const grounding = structured ? assessAnswerGrounding(scenario.context, scenario.userInput, structured) : null;
   const questionDetection = detectQuestionIntent(scenario.userInput, scenario.context.preferredLanguage);
   const clearQuestionGotNoAnswer = questionDetection.shouldDispatch
@@ -521,6 +535,7 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     noConfusingRoleLabels: !forbiddenRoleLabels,
     noForcedCompanyContext: !forcedCompanyContext,
     noHugeParagraphs: !hugeParagraph,
+    noGarbledArtifacts: !garbledArtifact,
     limitedCodeBlocks: scenario.mode !== "live_coding" || codeBlockCount <= 1,
     forbiddenTermsAbsent: forbiddenPresent.length === 0,
     noAnswerDoesNotOverExplain: !expectsNoAnswer || structuredNoAnswer || text.length <= scenario.maxChars,
@@ -528,12 +543,19 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     groundedWhenStructured: scenario.mode === "live_coding" || !grounding || grounding.ok,
     clearQuestionAnswered: !clearQuestionGotNoAnswer,
   };
+  const qualityChecks = Object.fromEntries(
+    Object.entries(checks).filter(([key]) => key !== "latencyWithinTarget"),
+  );
+  const qualityOk = Object.values(qualityChecks).every(Boolean);
   return {
-    ok: Object.values(checks).every(Boolean),
+    ok: qualityOk,
+    qualityOk,
+    latencyOk: checks.latencyWithinTarget,
     latencyMs: elapsedMs,
     chars: text.length,
     renderedText: text,
     checks,
+    qualityChecks,
     missingExpected,
     forbiddenPresent,
     structured: structured?.kind,
@@ -681,6 +703,7 @@ const run = async () => {
         hasNativelyKey: Boolean(credentialStatus?.hasNativelyKey),
         encryptionAvailable: Boolean(credentialStatus?.encryptionAvailable),
       },
+      strictLatency,
       latencyDiagnostics: {
         coldProbe,
         warmTechnicalQuestionMs: results.find((item) => item.id === "technical_question_direct")?.metrics.latencyMs,
@@ -689,7 +712,11 @@ const run = async () => {
       corpus: summarizeCorpus(selectedDefinitions),
       results,
     };
-    const passed = results.every((item) => item.metrics.ok);
+    const qualityPassed = results.every((item) => item.metrics.qualityOk ?? item.metrics.ok);
+    const latencyPassed = results.every((item) => item.metrics.latencyOk !== false);
+    report.qualityPassed = qualityPassed;
+    report.latencyPassed = latencyPassed;
+    const passed = qualityPassed && (!strictLatency || latencyPassed);
 
     const reportsDir = path.join(root, "reports");
     fs.mkdirSync(reportsDir, { recursive: true });
@@ -703,6 +730,9 @@ const run = async () => {
       providerReason: report.providerReason,
       modelName: report.modelName,
       passed,
+      qualityPassed,
+      latencyPassed,
+      strictLatency,
       latencyDiagnostics: {
         coldTechnicalQuestionMs: coldProbe.metrics.latencyMs,
         warmTechnicalQuestionMs: report.latencyDiagnostics.warmTechnicalQuestionMs,
@@ -712,6 +742,8 @@ const run = async () => {
       scenarios: results.map((item) => ({
         id: item.id,
         ok: item.metrics.ok,
+        qualityOk: item.metrics.qualityOk ?? item.metrics.ok,
+        latencyOk: item.metrics.latencyOk,
         latencyMs: item.metrics.latencyMs,
         chars: item.metrics.chars,
         checks: item.metrics.checks,

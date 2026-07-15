@@ -30,6 +30,13 @@ const fillerPatterns = [
   /^\s*(yes|no|si)\s*[.!?]?\s*$/i,
 ];
 
+const nonQuestionTurnPatterns = [
+  /\b(dame|dame un|dame otro|give me|just give me)\s+(un\s+)?(segundo|momento|minute|second|moment)\b/i,
+  /\b(estoy|i'?m)\s+(abriendo|opening|buscando|looking|checking|revisando)\b/i,
+  /\b(ahora vemos|despues seguimos|despu[eé]s seguimos|luego seguimos|we'?ll continue|we can continue)\b/i,
+  /\b(no hace falta responder|no need to answer|espera|wait)\b/i,
+];
+
 const englishPatterns = [
   /\?$/,
   /\b(can|could|would|will|do|does|did|are|is|was|were|have|has|had)\s+(you|we|i|it|this|that|they)\b/i,
@@ -89,7 +96,11 @@ export const resolveEllipticalQuestionFocus = (text: string, focus: string): str
     .filter((token) => !["think", "mean", "like", "also", "little", "things", "collection", "items"].includes(token))
     .slice(0, 10)
     .join(" ");
-  return anchor ? `${focus} (contexto anterior: ${anchor})` : focus;
+  if (!anchor) return focus;
+  const subject = anchor.split(/\s+/).slice(0, 4).join(" ");
+  if (/para que sirve/i.test(focus)) return `Para que sirve ${subject}? (contexto anterior: ${anchor})`;
+  if (/what is (it )?used for/i.test(focus)) return `What is ${subject} used for? (previous context: ${anchor})`;
+  return `${focus} (contexto anterior: ${anchor})`;
 };
 
 export const extractLatestQuestionFocus = (text: string): string => {
@@ -126,6 +137,9 @@ export const detectQuestionIntent = (
   }
   if (casualEntertainmentQuestion.test(patternText)) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "non_interview_casual", normalizedText };
+  }
+  if (nonQuestionTurnPatterns.some((pattern) => pattern.test(normalizedText))) {
+    return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "non_question_pause", normalizedText };
   }
   if (normalizedText.length < 5 || fillerPatterns.some((pattern) => pattern.test(patternText))) {
     return { shouldAnswer: false, shouldDispatch: false, confidence: 0.1, reason: "too_short_or_filler", normalizedText };

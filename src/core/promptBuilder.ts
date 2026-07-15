@@ -41,10 +41,31 @@ const withoutAssistantTurns = (context: GlobalContext): GlobalContext => ({
   },
 });
 
+const casualContextPattern = /\b(gta|videojuego|videojuegos|juego|juegos|fisico|f[ií]sico|digital|reservas?)\b/i;
+
+const withoutStaleCasualTurns = (context: GlobalContext, userInput: string): GlobalContext => {
+  if (casualContextPattern.test(userInput)) return context;
+  return {
+    ...context,
+    transcript: {
+      ...context.transcript,
+      messages: context.transcript.messages.filter((message) => !casualContextPattern.test(message.text)),
+    },
+  };
+};
+
 const withoutAssistantEvidence = (evidence: EvidenceSelection): EvidenceSelection => ({
   ...evidence,
   items: evidence.items.filter((item) => item.source !== "transcript" || !/\bassistant\s*:/i.test(item.text)),
 });
+
+const withoutStaleCasualEvidence = (evidence: EvidenceSelection, userInput: string): EvidenceSelection => {
+  if (casualContextPattern.test(userInput)) return evidence;
+  return {
+    ...evidence,
+    items: evidence.items.filter((item) => item.source !== "transcript" || !casualContextPattern.test(item.text)),
+  };
+};
 
 const answerLanguageInstruction = (context: GlobalContext, userInput: string): string => {
   if (context.preferredLanguage === "english") return "Answer in English.";
@@ -58,10 +79,11 @@ const answerLanguageInstruction = (context: GlobalContext, userInput: string): s
 };
 
 export const buildPromptWithEvidence = (context: GlobalContext, userInput: string, evidence: EvidenceSelection): BuiltPrompt => {
-  const factualContext = withoutAssistantTurns(context);
-  const factualEvidence = withoutAssistantEvidence(evidence);
+  const factualContext = withoutStaleCasualTurns(withoutAssistantTurns(context), userInput);
+  const conversationContext = withoutStaleCasualTurns(context, userInput);
+  const factualEvidence = withoutStaleCasualEvidence(withoutAssistantEvidence(evidence), userInput);
   const answerContext = buildAnswerContext({
-    transcript: context.transcript,
+    transcript: conversationContext.transcript,
     mode: context.activeMode,
     userInput,
   });
@@ -131,11 +153,14 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     "Use resume, STAR stories, company, role, and job description only when the current question asks about the candidate's experience, background, projects, personal tradeoffs, company fit, or how the candidate has used something.",
     "The latest_actionable_input section is the highest-priority task. If it contains a clear technical, behavioral, system-design, or coding question, answer that question directly even if older transcript, screen text, or selected evidence is about another topic.",
     "Use transcript and screen_context only to understand surrounding context; never let stale earlier context override the latest_actionable_input.",
+    "If latest_actionable_input rewrites or resolves an elliptical question such as 'what is it used for' or 'para que sirve', answer the resolved subject in latest_actionable_input and ignore noisy raw STT prefixes in transcript.",
+    "If older transcript turns are casual or unrelated to the latest technical question, do not use their topic, entities, or examples in the answer.",
     "When user_input or transcript contains role-prefixed lines, treat interviewer as the interviewer and candidate as the user. Answer the latest interviewer question in light of what the candidate already said.",
     "For manual Answer requests, treat current_question as the explicit question to answer. Use recent_conversation and previous_assistant_answers only to resolve references such as it, that, lo, eso, esa tecnologia, there, and in that case.",
     "If the candidate's prior answer is incomplete or technically wrong, provide a tactful correction the candidate can say aloud, for example: 'Actually, I would clarify that...' followed by the correct reasoning.",
     "Do not answer stale topics from earlier transcript turns. Focus on the latest interviewer/candidate exchange.",
     "If the latest interviewer turn is not an interview, technical, behavioral, system-design, or coding question, do not pivot to resume/CV topics. Return intent no_answer with a brief context-aware note or say no answer is needed.",
+    "For pauses, filler, logistical remarks, or chitchat such as 'give me a second', 'I'm opening the repo', 'we'll continue later', or similar, do not ask a follow-up question and do not explain your reasoning. If not using JSON, answer only: 'No hace falta responder todavía.' or 'No answer needed yet.'",
     "If the latest question is casual, entertainment-related, logistical, or unrelated to the candidate interview, do not answer it with SQL, backend, coding, or CV evidence unless explicitly asked.",
     "Keep the final spoken answer short enough to read during a live call: usually 3 to 5 compact lines with at most two compact supporting points. Do not provide both a long explanation and a separate final script; choose the script-like answer first.",
     "Use readable micro-sections with bold labels when helpful, for example **Idea:**, **Aclaracion:**, **Respuesta:**, **Tradeoff:**. Avoid long uniform paragraphs.",
