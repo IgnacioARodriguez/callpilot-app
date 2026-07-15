@@ -29,6 +29,7 @@ import {
   extractOpenAIResponseText,
   extractOpenAITranscriptionText,
   extractLatestQuestionFocus,
+  formatAnswerForDisplay,
   formatStructuredAnswerPayload,
   formatConversationWindow,
   assessPartialTurnStability,
@@ -637,6 +638,57 @@ test("structured answer parser tolerates provider JSON with stray backticks and 
   assert.equal(withNumericField?.kind, "interview");
   assert.match(withBacktick ? formatStructuredAnswerPayload(withBacktick) : "", /Token bucket/);
   assert.match(withNumericField ? formatStructuredAnswerPayload(withNumericField) : "", /SQL example/);
+});
+
+test("interview display renderer rescues malformed structured text", () => {
+  const raw = `{
+    "kind": "interview",
+    "payload": {
+      "version": "1",
+      "spokenAnswer": **Respuesta:** "Implementaria idempotencia con una clave unica por operacion antes de procesar el pago. Si llega un retry, reviso el estado y devuelvo el resultado ya registrado sin volver a cobrar.",
+      "keyPoints": []
+    }
+  }`;
+
+  const rendered = formatAnswerForDisplay(raw, null, { mode: "interview" });
+
+  assert.match(rendered, /^\*\*Respuesta:\*\*/);
+  assert.match(rendered, /idempotencia/);
+  assert.doesNotMatch(rendered, /"kind"|payload|spokenAnswer|\{/);
+});
+
+test("interview display renderer removes meta prefaces and unexpected code", () => {
+  const raw = [
+    "Ahí tienes una respuesta estructurada según tus requisitos:",
+    "",
+    "**Para decir:**",
+    "Usaria una transaccion y una clave idempotente para que dos workers no procesen el mismo pago dos veces.",
+    "",
+    "```python",
+    "def procesar_pago(): pass",
+    "```",
+    "",
+    "Opcional: podria mencionar locks distribuidos.",
+  ].join("\n");
+
+  const rendered = formatAnswerForDisplay(raw, null, { mode: "interview" });
+
+  assert.match(rendered, /clave idempotente/);
+  assert.doesNotMatch(rendered, /Ah[ií]|seg[uú]n tus requisitos|```|def procesar|Opcional/i);
+});
+
+test("interview display renderer removes nested say-labels and corrupt artifact lines", () => {
+  const raw = [
+    "**Para decir:**",
+    "Para decir: Implementaria un lock transaccional y una clave idempotente para que dos workers no procesen el mismo pago.",
+    "Implementaria un mecanismo de bifrost de transaccion unica con tenant de version.",
+  ].join("\n");
+
+  const rendered = formatAnswerForDisplay(raw, null, { mode: "interview" });
+
+  assert.match(rendered, /^\*\*Respuesta:\*\*/);
+  assert.match(rendered, /clave idempotente/);
+  assert.doesNotMatch(rendered, /Para decir|bifrost/i);
 });
 
 test("structured answer json schema requires every payload property for strict providers", () => {

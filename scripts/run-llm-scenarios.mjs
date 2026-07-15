@@ -7,7 +7,7 @@ import { buildPrompt } from "../src/core/promptBuilder.ts";
 import { createGlobalContext } from "../src/core/context.ts";
 import { TranscriptBuffer, formatConversationWindow } from "../src/core/transcriptBuffer.ts";
 import { classifyScreenText } from "../src/core/screenContext.ts";
-import { formatStructuredAnswerPayload, parseStructuredAnswerPayload } from "../src/core/answerPayload.ts";
+import { formatAnswerForDisplay, parseStructuredAnswerPayload } from "../src/core/answerPayload.ts";
 import { assessAnswerGrounding } from "../src/core/answerGrounding.ts";
 import { detectQuestionIntent, extractLatestQuestionFocus } from "../src/core/liveConversation.ts";
 
@@ -644,10 +644,15 @@ const defaultModelName = (provider, savedModel) => {
 const scoreAnswer = (scenario, result, elapsedMs) => {
   const rawText = String(result?.text || "");
   const structured = parseStructuredAnswerPayload(rawText);
-  const text = structured ? formatStructuredAnswerPayload(structured) : rawText;
-  const lower = text.toLowerCase();
+  const text = formatAnswerForDisplay(rawText, structured, {
+    mode: scenario.mode === "live_coding" ? "coding" : "interview",
+    maxInterviewWords: scenario.category === "manual_interview_hard" ? 95 : 140,
+  });
+  const modelText = rawText;
+  const normalizeLatin = (value) => String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const lower = normalizeLatin(text);
   const includesTerm = (value, term) => {
-    const cleanTerm = String(term).toLowerCase();
+    const cleanTerm = normalizeLatin(term);
     if (/^[a-z0-9+#.-]{1,4}$/i.test(cleanTerm)) {
       const escaped = cleanTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(value);
@@ -671,7 +676,13 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
   const garbledArtifact = /(?:\.raise\b|[a-zÃ¡Ã©Ã­Ã³ÃºÃ±]{4,}[A-Z][A-Za-z]{3,})/u.test(artifactScanText);
   const normalizedForMeta = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const strictMetaPhrasing = /\b(ahi|segun tus requisitos|recuerdos previos|ignore la charla|opcional|pleasantries)\b/i.test(normalizedForMeta);
-  const strictGarbledArtifact = /(?:\.(?:get|set)\b|para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b)/i.test(artifactScanText);
+  const strictGarbledArtifact = /(?:\.(?:get|set)\b|para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b|bifrost\b|sadece\b|conipo\b|despeici\b)/i.test(artifactScanText);
+  const rawNormalizedForMeta = rawText.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const rawModelChecks = {
+    noRawCodeBlocks: scenario.mode === "live_coding" || scenario.allowCodeBlocks || !/```/.test(rawText),
+    noRawMetaPhrasing: !/\b(ahi|segun tus requisitos|recuerdos previos|ignore la charla|opcional|pleasantries)\b/i.test(rawNormalizedForMeta),
+    noRawJsonScaffold: structured !== null || !/^\s*\{[\s\S]*"(kind|payload|spokenAnswer)"\s*:/i.test(rawText),
+  };
   const grounding = structured ? assessAnswerGrounding(scenario.context, scenario.userInput, structured) : null;
   const questionDetection = detectQuestionIntent(scenario.userInput, scenario.context.preferredLanguage);
   const clearQuestionGotNoAnswer = questionDetection.shouldDispatch
@@ -713,7 +724,10 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     latencyOk: checks.latencyWithinTarget,
     latencyMs: elapsedMs,
     chars: text.length,
+    rawChars: rawText.length,
     renderedText: text,
+    modelText,
+    rawModelChecks,
     checks,
     qualityChecks,
     missingExpected,

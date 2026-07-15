@@ -24,6 +24,7 @@ import {
   assessPartialTurnStability,
   detectQuestionIntent,
   extractLatestQuestionFocus,
+  formatAnswerForDisplay,
   liveTranscriptionPlan,
   markLatencyStage,
   normalizeLiveTranscriptionSettings,
@@ -31,7 +32,6 @@ import {
   ocrConfidenceLabel,
   modeById,
   parseSessionJson,
-  formatStructuredAnswerPayload,
   pickEvidenceWithEmbeddings,
   parseStructuredAnswerPayload,
   pruneRecentSpeech,
@@ -623,7 +623,9 @@ function App() {
         ? withNoAnswerForUngroundedDrift(parsedStructured, grounding)
         : parsedStructured;
       const text = result.ok
-        ? structured ? formatStructuredAnswerPayload(structured) : result.text
+        ? formatAnswerForDisplay(result.text, structured, {
+          mode: context.activeMode === "live_coding" ? "coding" : "interview",
+        })
         : `Generation failed: ${result.error ?? "unknown error"}`;
       if (activeAnswerRequestIdRef.current === requestId) {
         setAnswer(text);

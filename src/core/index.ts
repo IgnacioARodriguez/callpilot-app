@@ -15,6 +15,8 @@ export {
 } from "./conversationContext.ts";
 export {
   formatStructuredAnswerPayload,
+  formatAnswerForDisplay,
+  normalizeInterviewAnswerText,
   parseCodingAnswerPayload,
   parseInterviewAnswerPayload,
   parseStructuredAnswerPayload,

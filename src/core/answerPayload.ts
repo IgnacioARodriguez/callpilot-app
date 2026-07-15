@@ -55,6 +55,11 @@ export type StructuredAnswerPayload =
   | { kind: "interview"; payload: InterviewAnswerPayload }
   | { kind: "coding"; payload: CodingAnswerPayload };
 
+export interface RenderAnswerOptions {
+  mode?: "interview" | "coding";
+  maxInterviewWords?: number;
+}
+
 export const STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA = {
   name: "callpilot_structured_answer",
   schema: {
@@ -178,7 +183,7 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
 
 const asString = (value: unknown): string => typeof value === "string" ? value.trim() : "";
 const stripLeadingLabel = (value: string): string =>
-  value.replace(/^\s*(?:\*\*)?(respuesta|answer|correccion|corrección|enfoque|approach)(?:\*\*)?\s*:\s*/i, "").trim();
+  value.replace(/^\s*(?:\*\*)?(respuesta|answer|para\s+d[\p{L}]+|correccion|corrección|enfoque|approach)(?:\*\*)?\s*:\s*/iu, "").trim();
 const asNullableString = (value: unknown): string | null => {
   if (value === null || value === undefined) return null;
   const text = asString(value);
@@ -187,6 +192,103 @@ const asNullableString = (value: unknown): string | null => {
 const asBoolean = (value: unknown, fallback = true): boolean => typeof value === "boolean" ? value : fallback;
 const asStringArray = (value: unknown, max = 6): string[] =>
   Array.isArray(value) ? value.map(asString).filter(Boolean).slice(0, max) : [];
+
+const splitSentences = (value: string): string[] =>
+  value
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+const stripMarkdownDecoration = (value: string): string =>
+  value
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/__([^_\n]+)__/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "");
+
+const stripInterviewMeta = (value: string): string =>
+  value
+    .replace(/^\s*(?:ahi|ah[ií]|sure|of course|claro|por supuesto)[^.\n:]*[:.-]?\s*/i, "")
+    .replace(/^\s*(?:respuesta estructurada|segun tus requisitos|según tus requisitos)[^.\n:]*[:.-]?\s*/i, "")
+    .replace(/^\s*---+\s*/gm, "")
+    .replace(/^\s*(?:para recuerdos previos|recuerdos previos)\s*:\s*.*(?:\n|$)/gim, "")
+    .replace(/\b(?:opcional|si el entrevistador profundiza|para profundizar si se le pregunta)\b.*$/gim, "")
+    .trim();
+
+const stripInterviewCode = (value: string): string =>
+  value
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/^\s*(?:import\s+\w+|def\s+\w+\(|class\s+\w+|const\s+\w+|let\s+\w+|var\s+\w+|SELECT\s+|WITH\s+).*(?:\n|$)/gim, "")
+    .trim();
+
+const stripJsonScaffold = (value: string): string =>
+  value
+    .replace(/^\s*\{\s*$/gm, "")
+    .replace(/^\s*"\w+"\s*:\s*[\[{]?.*$/gm, "")
+    .replace(/^\s*[}\]],?\s*$/gm, "")
+    .replace(/^\s*"?(?:kind|payload|version|answerNeeded|intent|responseType|keyPoints|correction|assumptions|evidenceRefs|followUpHint|problem|solution|tests|patch)"?\s*:.*$/gim, "")
+    .trim();
+
+const extractLooseSpokenAnswer = (text: string): string => {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const keyIndex = normalized.search(/"spokenAnswer"\s*:/i);
+  if (keyIndex < 0) return "";
+  const afterKey = normalized.slice(keyIndex).replace(/^"spokenAnswer"\s*:\s*/i, "").trim();
+  const quoted = afterKey.match(/^"([\s\S]*?)(?<!\\)"\s*(?:,|\n\s*"\w+"\s*:|\n\s*[}\]])/);
+  if (quoted?.[1]) return quoted[1].replace(/\\"/g, "\"").trim();
+  const untilNextKey = afterKey.split(/\n\s*"(?:keyPoints|correction|assumptions|evidenceRefs|followUpHint|problem|solution|tests|patch|narration)"\s*:/i)[0] ?? afterKey;
+  return untilNextKey
+    .replace(/^["']?/, "")
+    .replace(/[,}\]]+\s*$/, "")
+    .trim();
+};
+
+const removeBadArtifactLines = (value: string): string =>
+  value
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/(?:\.(?:get|set|raise)\b|para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b|bifrost\b|sadece\b|conipo\b|despeici\b|来源)/i.test(line))
+    .join("\n");
+
+const limitWords = (value: string, maxWords: number): string => {
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return value;
+  return `${words.slice(0, maxWords).join(" ").replace(/[,:;]$/, "")}.`;
+};
+
+export const normalizeInterviewAnswerText = (text: string, options: RenderAnswerOptions = {}): string => {
+  const maxWords = options.maxInterviewWords ?? 130;
+  const looseSpokenAnswer = extractLooseSpokenAnswer(text);
+  const source = looseSpokenAnswer || text;
+  const withoutCode = stripInterviewCode(source);
+  const cleaned = stripLeadingLabel(stripMarkdownDecoration(stripJsonScaffold(stripInterviewMeta(withoutCode))))
+    .replace(/\b(?:interviewer|entrevistador)\s*:\s*/gi, "")
+    .replace(/\s+\)/g, ")")
+    .replace(/\(\s+/g, "(")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const withoutArtifacts = removeBadArtifactLines(cleaned);
+  const withoutNestedLabel = stripLeadingLabel(withoutArtifacts);
+  const sentences = splitSentences(withoutNestedLabel);
+  const compact = sentences.length > 4 ? sentences.slice(0, 4).join(" ") : withoutNestedLabel;
+  return limitWords(compact, maxWords).trim();
+};
+
+export const formatAnswerForDisplay = (
+  rawText: string,
+  structured: StructuredAnswerPayload | null = parseStructuredAnswerPayload(rawText),
+  options: RenderAnswerOptions = {},
+): string => {
+  if (structured) return formatStructuredAnswerPayload(structured, options);
+  if (options.mode === "coding") return rawText.trim();
+  const normalized = normalizeInterviewAnswerText(rawText, options);
+  return normalized ? `**Respuesta:** ${normalized}` : rawText.trim();
+};
 
 const extractJsonObject = (text: string): unknown | null => {
   const trimmed = text.trim();
@@ -358,14 +460,15 @@ export const parseStructuredAnswerPayload = (text: string): StructuredAnswerPayl
   return interview ? { kind: "interview", payload: interview } : null;
 };
 
-export const formatStructuredAnswerPayload = (structured: StructuredAnswerPayload): string => {
+export const formatStructuredAnswerPayload = (structured: StructuredAnswerPayload, options: RenderAnswerOptions = {}): string => {
   if (structured.kind === "interview") {
     const payload = structured.payload;
+    const spokenAnswer = normalizeInterviewAnswerText(payload.spokenAnswer, options);
     const lines = [
-      payload.correction.needed && payload.correction.transition ? `**Correccion:** ${payload.correction.transition}` : "",
-      `**Respuesta:** ${stripLeadingLabel(payload.spokenAnswer)}`,
-      payload.keyPoints.length ? `**Puntos:** ${payload.keyPoints.join(" | ")}` : "",
-      payload.assumptions.length ? `**Supuestos:** ${payload.assumptions.join(" | ")}` : "",
+      payload.correction.needed && payload.correction.transition ? `**Correccion:** ${normalizeInterviewAnswerText(payload.correction.transition, { ...options, maxInterviewWords: 40 })}` : "",
+      `**Respuesta:** ${spokenAnswer}`,
+      payload.keyPoints.length ? `**Puntos:** ${payload.keyPoints.map((item) => normalizeInterviewAnswerText(item, { ...options, maxInterviewWords: 24 })).filter(Boolean).join(" | ")}` : "",
+      payload.assumptions.length ? `**Supuestos:** ${payload.assumptions.map((item) => normalizeInterviewAnswerText(item, { ...options, maxInterviewWords: 24 })).filter(Boolean).join(" | ")}` : "",
       payload.intent !== "no_answer" && payload.followUpHint ? `**Follow-up:** ${payload.followUpHint}` : "",
     ];
     return lines.filter(Boolean).join("\n\n");
