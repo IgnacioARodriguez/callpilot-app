@@ -224,6 +224,19 @@ const stripInterviewCode = (value: string): string =>
     .replace(/^\s*(?:import\s+\w+|def\s+\w+\(|class\s+\w+|const\s+\w+|let\s+\w+|var\s+\w+|SELECT\s+|WITH\s+).*(?:\n|$)/gim, "")
     .trim();
 
+const pruneInterviewSections = (value: string): string => {
+  const lines = value.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const kept: string[] = [];
+  for (const line of lines) {
+    const plain = stripMarkdownDecoration(line).trim();
+    if (/^(?:tradeoff|trade-off|evidencia|evidence|follow-?up|idea adicional|paso clave|proyecto especifico|proyecto específico|resultado concreto|resultado practico|resultado práctico|supuestos?|notas?)\b/i.test(plain)) {
+      break;
+    }
+    kept.push(line);
+  }
+  return (kept.length ? kept : lines).join("\n");
+};
+
 const stripJsonScaffold = (value: string): string =>
   value
     .replace(/^\s*\{\s*$/gm, "")
@@ -240,10 +253,21 @@ const extractLooseSpokenAnswer = (text: string): string => {
   const quoted = afterKey.match(/^"([\s\S]*?)(?<!\\)"\s*(?:,|\n\s*"\w+"\s*:|\n\s*[}\]])/);
   if (quoted?.[1]) return quoted[1].replace(/\\"/g, "\"").trim();
   const untilNextKey = afterKey.split(/\n\s*"(?:keyPoints|correction|assumptions|evidenceRefs|followUpHint|problem|solution|tests|patch|narration)"\s*:/i)[0] ?? afterKey;
-  return untilNextKey
+  const cleaned = untilNextKey
     .replace(/^["']?/, "")
     .replace(/[,}\]]+\s*$/, "")
     .trim();
+  return /^["',\s]*$/.test(cleaned) ? "" : cleaned;
+};
+
+const extractLooseKeyPoints = (text: string): string => {
+  const match = text.match(/"keyPoints"\s*:\s*\[([\s\S]*?)(?:\]|\n\s*"correction"\s*:|\n\s*"assumptions"\s*:)/i);
+  if (!match?.[1]) return "";
+  return [...match[1].matchAll(/"([^"]{8,220})"/g)]
+    .map((item) => item[1].trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(". ");
 };
 
 const removeBadArtifactLines = (value: string): string =>
@@ -251,7 +275,7 @@ const removeBadArtifactLines = (value: string): string =>
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .filter((line) => !/(?:\.(?:get|set|raise)\b|para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b|bifrost\b|sadece\b|conipo\b|despeici\b|来源)/i.test(line))
+    .filter((line) => !/(?:\.(?:get|set|raise)\b|para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b|bifrost\b|sadece\b|conipo\b|despeici\b|pausa para correcci[oó]n|einschaltstellen|kter[eé]\b|shakespeare\b|来源)/i.test(line))
     .join("\n");
 
 const limitWords = (value: string, maxWords: number): string => {
@@ -263,19 +287,24 @@ const limitWords = (value: string, maxWords: number): string => {
 export const normalizeInterviewAnswerText = (text: string, options: RenderAnswerOptions = {}): string => {
   const maxWords = options.maxInterviewWords ?? 130;
   const looseSpokenAnswer = extractLooseSpokenAnswer(text);
-  const source = looseSpokenAnswer || text;
+  const looseKeyPoints = extractLooseKeyPoints(text);
+  const source = looseSpokenAnswer || looseKeyPoints || text;
   const withoutCode = stripInterviewCode(source);
-  const cleaned = stripLeadingLabel(stripMarkdownDecoration(stripJsonScaffold(stripInterviewMeta(withoutCode))))
+  const pruned = pruneInterviewSections(withoutCode);
+  const cleaned = stripLeadingLabel(stripMarkdownDecoration(stripJsonScaffold(stripInterviewMeta(pruned))))
     .replace(/\b(?:interviewer|entrevistador)\s*:\s*/gi, "")
+    .replace(/\[[^\]]*(?:nombre de|empresa actual|empresa pasada)[^\]]*\]/gi, "")
+    .replace(/[\u3400-\u9fff]+/g, "")
     .replace(/\s+\)/g, ")")
     .replace(/\(\s+/g, "(")
+    .replace(/\s+,\s+/g, ", ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   const withoutArtifacts = removeBadArtifactLines(cleaned);
   const withoutNestedLabel = stripLeadingLabel(withoutArtifacts);
   const sentences = splitSentences(withoutNestedLabel);
-  const compact = sentences.length > 4 ? sentences.slice(0, 4).join(" ") : withoutNestedLabel;
+  const compact = sentences.length > 3 ? sentences.slice(0, 3).join(" ") : withoutNestedLabel;
   return limitWords(compact, maxWords).trim();
 };
 

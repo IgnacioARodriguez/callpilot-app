@@ -691,6 +691,73 @@ test("interview display renderer removes nested say-labels and corrupt artifact 
   assert.doesNotMatch(rendered, /Para decir|bifrost/i);
 });
 
+test("interview display renderer keeps the main answer and drops appendix sections", () => {
+  const raw = [
+    "**Para decir:**",
+    "En un proyecto de conciliacion de pagos, use jobs asincronos con Python y PostgreSQL para procesar confirmaciones sin bloquear el flujo principal.",
+    "",
+    "**Tradeoff mencionado (opcional pero relevante):**",
+    "Esto agrega complejidad operativa.",
+    "",
+    "**Evidencia soportante:**",
+    "Resume: texto interno que no debe decirse.",
+  ].join("\n");
+
+  const rendered = formatAnswerForDisplay(raw, null, { mode: "interview" });
+
+  assert.match(rendered, /jobs asincronos/);
+  assert.doesNotMatch(rendered, /Tradeoff|Evidencia|Resume|complejidad operativa/i);
+});
+
+test("interview display renderer falls back to key points when spoken answer is empty", () => {
+  const raw = `{
+    "kind": "interview",
+    "payload": {
+      "version": "1",
+      "answerNeeded": true,
+      "intent": "technical_qa",
+      "spokenAnswer": "",
+      "keyPoints": [
+        "Uso de bloqueos o transacciones para evitar concurrencia",
+        "Implementacion de idempotencia con una clave unica por pago"
+      ],
+      "correction": {
+        "needed": false`;
+
+  const rendered = formatAnswerForDisplay(raw, null, { mode: "interview" });
+
+  assert.match(rendered, /bloqueos|transacciones/);
+  assert.match(rendered, /idempotencia/);
+  assert.doesNotMatch(rendered, /spokenAnswer|keyPoints|^\*\*Respuesta:\*\*\s*"?$/);
+});
+
+test("interview display renderer removes control-instruction artifacts", () => {
+  const raw = [
+    "**Para decir:**",
+    "které meinen Einschaltstellen... **(PAUSA PARA CORRECCIÓN NATURAL Y TÁCTICA, LUEGO RESUMIR CON LA RESPUESTA)**",
+    "**Respuesta:**",
+    "Identificador único: asignaría un ID único por transacción para detectar duplicados antes de cobrar.",
+  ].join("\n");
+
+  const rendered = formatAnswerForDisplay(raw, null, { mode: "interview" });
+
+  assert.match(rendered, /Identificador único/);
+  assert.doesNotMatch(rendered, /PAUSA|Einschaltstellen|kter/i);
+});
+
+test("interview display renderer removes placeholders and stray foreign glyphs", () => {
+  const raw = [
+    "京 **Respuesta:**",
+    "En un proyecto de reconciliacion de pagos en [Nombre de la Empresa Actual/Pasada], use metricas de Shakespeare para analizar latencia.",
+    "Luego use logs y traces para ubicar el cuello de botella.",
+  ].join("\n");
+
+  const rendered = formatAnswerForDisplay(raw, null, { mode: "interview" });
+
+  assert.match(rendered, /logs y traces/);
+  assert.doesNotMatch(rendered, /京|Nombre de la Empresa|Shakespeare/i);
+});
+
 test("structured answer json schema requires every payload property for strict providers", () => {
   const payloadSchema = STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA.schema.properties.payload;
   const propertyNames = Object.keys(payloadSchema.properties);
