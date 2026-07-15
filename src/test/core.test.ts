@@ -358,7 +358,11 @@ test("prompt tells model not to answer stale topics or non-questions", () => {
   assert.match(prompt.system, /do not answer it with SQL/i);
   assert.match(prompt.system, /at most two compact/i);
   assert.match(prompt.system, /write like a candidate answer to say aloud/i);
+  assert.match(prompt.system, /no 'hola'/i);
+  assert.match(prompt.system, /silently ignore their topic/i);
+  assert.match(prompt.system, /no meta preface/i);
   assert.match(prompt.system, /no code block unless the interviewer explicitly asks for code/i);
+  assert.match(prompt.system, /do not include Python, SQLAlchemy, pseudocode/i);
 });
 
 test("prompt filters stale casual context before standalone technical questions", () => {
@@ -671,6 +675,28 @@ test("live conversation focuses complete usage questions after incomplete prefix
   const text = "Para que sirve interviewer: Kafka. Para que sirve Kafka?";
 
   assert.equal(extractLatestQuestionFocus(text), "Para que sirve Kafka?");
+});
+
+test("live conversation focuses the final STT question without punctuation", () => {
+  const text = [
+    "so earlier we talked about team process and maybe what caches are used for",
+    "but the concrete thing I want to ask is how would you design retries without charging twice",
+  ].join(" ");
+
+  assert.equal(
+    extractLatestQuestionFocus(text),
+    "how would you design retries without charging twice",
+  );
+});
+
+test("live conversation ignores earlier partial questions when a later concrete question appears", () => {
+  const text = [
+    "What is caching and also we could talk about Redis later.",
+    "Actually let's focus on the production incident.",
+    "How would you debug a latency spike in an API?",
+  ].join(" ");
+
+  assert.equal(extractLatestQuestionFocus(text), "How would you debug a latency spike in an API?");
 });
 
 test("live conversation resolves bare usage follow-ups from prior technical context", () => {

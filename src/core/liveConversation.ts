@@ -59,6 +59,7 @@ const bareUsageQuestion = /^(?:interviewer(?:_partial)?\s*:\s*)?(?:[\p{L}\p{N}]+
 const casualEntertainmentQuestion = /\b(gta|videojuego|videojuegos|juego|juegos|fisico|digital|reservas?)\b/iu;
 
 const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/i;
+const questionStarterGlobal = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/gi;
 
 const roleLinePattern = /^(interviewer|interviewer_partial|candidate|assistant)\s*:\s*(.+)$/i;
 
@@ -116,11 +117,25 @@ export const extractLatestQuestionFocus = (text: string): string => {
   const latest = candidates.at(-1);
   if (!latest) return normalized;
   const cleanedLatest = latest.replace(/^(interviewer|interviewer_partial):\s*/i, "").trim();
-  const index = normalized.toLowerCase().lastIndexOf(cleanedLatest.toLowerCase());
-  if (index <= 0) return resolveEllipticalQuestionFocus(normalized, cleanedLatest);
+  const starterMatches = [...cleanedLatest.matchAll(questionStarterGlobal)];
+  const starterFocusMatches = starterMatches.filter((match, index) => {
+    const previous = starterMatches[index - 1];
+    if (!previous) return true;
+    const previousStarter = String(previous[0]).toLowerCase();
+    const currentStarter = String(match[0]).toLowerCase();
+    const compactPair = (match.index ?? 0) - (previous.index ?? 0) <= 12;
+    return !compactPair
+      || !/^(what|why|how|when|where|which|who)$/.test(previousStarter)
+      || !/^(can|could|would|will|do|does|did|are|is|was|were|have|has|had)$/.test(currentStarter);
+  });
+  const focusedLatest = starterFocusMatches.length > 1 && !/[?Â¿]/.test(cleanedLatest)
+    ? cleanedLatest.slice(starterFocusMatches.at(-1)?.index ?? 0).trim()
+    : cleanedLatest;
+  const index = normalized.toLowerCase().lastIndexOf(focusedLatest.toLowerCase());
+  if (index <= 0) return resolveEllipticalQuestionFocus(normalized, focusedLatest);
   const prefix = normalized.slice(Math.max(0, index - 90), index).trim();
   const usefulPrefix = /\b(entrevistador|you asked|me pregunt|follow.?up)\b/i.test(prefix) ? prefix : "";
-  return resolveEllipticalQuestionFocus(normalized, [usefulPrefix, cleanedLatest].filter(Boolean).join(" ").trim());
+  return resolveEllipticalQuestionFocus(normalized, [usefulPrefix, focusedLatest].filter(Boolean).join(" ").trim());
 };
 
 export const detectQuestionIntent = (

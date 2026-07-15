@@ -307,8 +307,8 @@ const scenarioDefinitions = [
   ].join(" "), ["idempot", "retry", "duplic", "mismo"], {
     category: "manual_interview",
     forbidden: ["java", "dashboard", "alertas"],
-    maxChars: 950,
-    maxTokens: 220,
+    maxChars: 760,
+    maxTokens: 170,
     latencyTargetMs: 4500,
   }),
   makeTechnicalScenario("manual_long_monologue_contextual_followup", [
@@ -361,6 +361,89 @@ const scenarioDefinitions = [
     ],
     maxChars: 1050,
     maxTokens: 240,
+    latencyTargetMs: 4500,
+  }),
+  makeTechnicalScenario("manual_hard_dirty_stt_retries", [
+    "ok so eh we talked about the team and alerts and some dashboards",
+    "the provider sometimes sends the same payment event twice and maybe the worker crashes after writing state",
+    "the concrete thing I want to ask is how would you design retries without charging the user twice",
+  ].join(" "), ["reint", "estado", "carg", "unico"], {
+    category: "manual_interview_hard",
+    forbidden: ["dashboard", "alerts", "equipo"],
+    maxChars: 760,
+    maxTokens: 170,
+    latencyTargetMs: 4500,
+  }),
+  makeTechnicalScenario("manual_hard_multiple_partial_questions_final_focus", [
+    "What is caching and what is Redis, we can talk about that but not yet.",
+    "Actually ignore that for now because I want to focus on a production issue.",
+    "How would you debug a latency spike in an API?",
+  ].join(" "), ["latency", "metric", "trace", "log"], {
+    category: "manual_interview_hard",
+    forbidden: ["redis", "cache invalidation"],
+    maxChars: 760,
+    maxTokens: 170,
+    latencyTargetMs: 4500,
+  }),
+  makeTechnicalScenario("manual_hard_contextual_that_reference", [
+    "Imagine service A calls service B synchronously during checkout.",
+    "Service B also calls a third party and sometimes that dependency is slow.",
+    "If we keep chaining those calls, why is that dangerous?",
+  ].join(" "), ["depend", "timeout", "fallo", "cuello"], {
+    category: "manual_interview_hard",
+    maxChars: 760,
+    maxTokens: 170,
+    latencyTargetMs: 4500,
+  }),
+  makeTechnicalScenario("manual_hard_context_switch_to_isolated_acid", [
+    "We were discussing microservices, Kafka, and asynchronous events.",
+    "That context is not important for the next question.",
+    "What is ACID in databases?",
+  ].join(" "), ["atomic", "consisten", "isol", "durab"], {
+    category: "manual_interview_hard",
+    forbidden: ["kafka", "microservice", "event"],
+    maxChars: 720,
+    maxTokens: 160,
+    latencyTargetMs: 4500,
+  }),
+  makeTechnicalScenario("manual_hard_background_implicit_experience", [
+    "I saw in your background that you worked with payments and async jobs.",
+    "I do not want a textbook definition.",
+    "Where did you apply that kind of approach in a real project?",
+  ].join(" "), ["pagos", "concili", "asincron", "sql"], {
+    category: "manual_interview_hard",
+    maxChars: 780,
+    maxTokens: 180,
+    latencyTargetMs: 4500,
+  }),
+  makeTechnicalScenario("manual_hard_bilingual_stt_race_condition", [
+    "so vamos con algo de backend real",
+    "imagine two workers agarran el mismo payment casi al mismo tiempo",
+    "como manejarias that race condition so the operation is processed once",
+  ].join(" "), ["idempot", "lock", "concurr", "proces"], {
+    category: "manual_interview_hard",
+    maxChars: 760,
+    maxTokens: 170,
+    latencyTargetMs: 4500,
+  }),
+  makeTechnicalScenario("manual_hard_chitchat_then_n_plus_one", [
+    "By the way we were joking about games and weekend plans while everyone joined.",
+    "That was just small talk.",
+    "Explain the N+1 query problem in an API and how you would fix it.",
+  ].join(" "), ["n+1", "consulta", "join", "batch"], {
+    category: "manual_interview_hard",
+    forbidden: ["games", "weekend", "small talk", "juegos", "fin de semana", "charla anterior"],
+    maxChars: 760,
+    maxTokens: 170,
+    latencyTargetMs: 4500,
+  }),
+  makeTechnicalScenario("manual_hard_implicit_no_question_mark", [
+    "there are many ways to approach observability and we have logs metrics traces",
+    "walk me through how you would debug an API latency spike in production",
+  ].join(" "), ["latencia", "metrics", "traces", "logs"], {
+    category: "manual_interview_hard",
+    maxChars: 760,
+    maxTokens: 170,
     latencyTargetMs: 4500,
   }),
   makeTechnicalScenario("technical_sql_index", "Que es un indice en SQL y cuando puede empeorar una consulta?", ["indice", "lectura", "write", "escrit"]),
@@ -580,8 +663,15 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
   const forcedCompanyContext = scenario.mode === "live_coding" && /\b(mercado\s+pago|pagos?|financier[oa]s?|conciliaci[oó]n|pipelines?)\b/i.test(text);
   const hugeParagraph = text.split(/\n{2,}/).some((block) => block.length > 650);
   const codeBlockCount = (text.match(/```/g) || []).length / 2;
+  const answerWithoutLeadLabel = text.replace(/^\s*(?:\*\*[^*\n]{1,40}:?\*\*|[A-Z][^:\n]{1,30}:)\s*/i, "").trim();
+  const chattyOpener = /^(?:"|')?\s*(hola|claro|por supuesto|sure|of course|absolutely)\b/i.test(answerWithoutLeadLabel);
+  const decorativeMarkdown = /\*\*_[^*]+|\b[A-Z]{4,}(?:\s+[A-Z]{3,}){1,}\b/.test(text.replace(/\b(SQL|ACID|API|TTL|LRU|JSON|STT|CV)\b/g, ""));
+  const metaPhrasing = /\b(ahi tienes|ahí tienes|segun tus requisitos|según tus requisitos|recuerdos previos|ignore la charla|opcional|pleasantries)\b/i.test(text);
   const artifactScanText = text.replace(/\b(OrderedDict|JavaScript|TypeScript|PostgreSQL|OpenAI|NoSQL)\b/g, "");
   const garbledArtifact = /(?:\.raise\b|[a-zÃ¡Ã©Ã­Ã³ÃºÃ±]{4,}[A-Z][A-Za-z]{3,})/u.test(artifactScanText);
+  const normalizedForMeta = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const strictMetaPhrasing = /\b(ahi|segun tus requisitos|recuerdos previos|ignore la charla|opcional|pleasantries)\b/i.test(normalizedForMeta);
+  const strictGarbledArtifact = /(?:\.(?:get|set)\b|para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b)/i.test(artifactScanText);
   const grounding = structured ? assessAnswerGrounding(scenario.context, scenario.userInput, structured) : null;
   const questionDetection = detectQuestionIntent(scenario.userInput, scenario.context.preferredLanguage);
   const clearQuestionGotNoAnswer = questionDetection.shouldDispatch
@@ -601,9 +691,12 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     noConfusingRoleLabels: !forbiddenRoleLabels,
     noForcedCompanyContext: !forcedCompanyContext,
     noHugeParagraphs: !hugeParagraph,
-    noGarbledArtifacts: !garbledArtifact,
+    noGarbledArtifacts: !garbledArtifact && !strictGarbledArtifact,
     limitedCodeBlocks: scenario.mode !== "live_coding" || codeBlockCount <= 1,
     noUnexpectedCodeBlocks: scenario.mode === "live_coding" || scenario.allowCodeBlocks || codeBlockCount === 0,
+    noChattyOpeners: scenario.mode === "live_coding" || expectsNoAnswer || !chattyOpener,
+    noDecorativeMarkdown: !decorativeMarkdown,
+    noMetaPhrasing: !metaPhrasing && !strictMetaPhrasing,
     forbiddenTermsAbsent: forbiddenPresent.length === 0,
     noAnswerDoesNotOverExplain: !expectsNoAnswer || structuredNoAnswer || text.length <= scenario.maxChars,
     noAnswerIntentAppropriate: !expectsNoAnswer || structuredNoAnswerOrClarification,
