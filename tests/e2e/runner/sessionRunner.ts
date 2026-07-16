@@ -19,6 +19,7 @@ type Track =
   | "real-coding"
   | "real-coding-multiturn"
   | "real-suite"
+  | "real-vision"
   | "real-text-interview"
   | "real-text-interview-batch"
   | "real-natively-interview"
@@ -480,6 +481,54 @@ const generateWindowsSpeechAudio = (text: string, outputPath: string): boolean =
     timeout: 30000,
   });
   return result.status === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000;
+};
+
+const generateCodingProblemImage = (): { path: string; generated: boolean } => {
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const imagePath = path.join(tmpDir, `two-sum-screen-${Date.now()}.png`);
+  const lines = [
+    "Two Sum",
+    "Python",
+    "def two_sum(nums, target):",
+    "Given an integer array nums and an integer target,",
+    "return indices of the two numbers such that they add up to target.",
+    "Return None when there is no solution.",
+    "Example: nums = [2, 7, 11, 15], target = 9 -> [0, 1]",
+  ];
+  if (process.platform === "win32") {
+    const escapedPath = imagePath.replace(/'/g, "''");
+    const escapedLines = lines.map((line) => `'${line.replace(/'/g, "''")}'`).join(",");
+    const command = [
+      "Add-Type -AssemblyName System.Drawing",
+      "$bmp = New-Object System.Drawing.Bitmap 1100, 620",
+      "$g = [System.Drawing.Graphics]::FromImage($bmp)",
+      "$g.Clear([System.Drawing.Color]::FromArgb(250,250,250))",
+      "$title = New-Object System.Drawing.Font 'Arial', 42, ([System.Drawing.FontStyle]::Bold)",
+      "$font = New-Object System.Drawing.Font 'Consolas', 25",
+      "$brush = [System.Drawing.Brushes]::Black",
+      `$lines = @(${escapedLines})`,
+      "$g.DrawString($lines[0], $title, $brush, 40, 35)",
+      "for ($i = 1; $i -lt $lines.Length; $i++) { $g.DrawString($lines[$i], $font, $brush, 45, (110 + (($i - 1) * 62))) }",
+      `$bmp.Save('${escapedPath}', [System.Drawing.Imaging.ImageFormat]::Png)`,
+      "$g.Dispose(); $bmp.Dispose(); $title.Dispose(); $font.Dispose()",
+    ].join("; ");
+    const result = spawnSync("powershell", ["-NoProfile", "-Command", command], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    if (result.status === 0 && fs.existsSync(imagePath) && fs.statSync(imagePath).size > 1000) {
+      return { path: imagePath, generated: true };
+    }
+  }
+
+  const svgPath = imagePath.replace(/\.png$/i, ".svg");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="620">
+<rect width="100%" height="100%" fill="#fafafa"/>
+${lines.map((line, index) => `<text x="45" y="${index === 0 ? 78 : 120 + index * 58}" font-family="${index === 0 ? "Arial" : "Consolas"}" font-size="${index === 0 ? 42 : 25}" font-weight="${index === 0 ? "700" : "400"}" fill="#111">${line.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</text>`).join("\n")}
+</svg>`;
+  fs.writeFileSync(svgPath, svg, "utf8");
+  return { path: svgPath, generated: true };
 };
 
 const resolveBehavioralAudio = () => {
@@ -1750,6 +1799,121 @@ const runRealCodingMultiturn = async (): Promise<RunResult[]> => {
   return results;
 };
 
+const runRealVision = async (): Promise<RunResult[]> => {
+  if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
+    return [{
+      scenarioId: "vision_two_sum_screen",
+      track: "real_vision_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        nvidiaKeyAvailable: false,
+        visionCompleted: false,
+      },
+      judge: null,
+      latency_ms: finishLatency("real-vision-blocked"),
+      diagnostics: {
+        blocked: true,
+        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for --track=real-vision",
+      },
+    }];
+  }
+  checkBudget(1);
+  if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
+    throw new Error("dist/index.html is missing. Run npm run build before --track=real-vision.");
+  }
+
+  const image = generateCodingProblemImage();
+  const modelName = process.env.CALLPILOT_NVIDIA_VISION_MODEL || "meta/llama-3.2-11b-vision-instruct";
+  const userDataDir = path.join(tmpDir, `user-data-vision-${Date.now()}`);
+  fs.mkdirSync(userDataDir, { recursive: true });
+
+  const childEnv = { ...process.env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  const electron = spawn(electronBin, ["."], {
+    cwd: root,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...childEnv,
+      CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
+      CALLPILOT_USER_DATA_DIR: userDataDir,
+    },
+  });
+
+  let stdout = "";
+  let stderr = "";
+  electron.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  electron.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  let client: CdpClient | null = null;
+  try {
+    const mainTarget = await getPageTarget((target) => !target.url.includes("#/overlay") && !target.url.includes("#/coding"), 30000);
+    if (!mainTarget?.webSocketDebuggerUrl) {
+      throw new Error(`Could not find Electron main target.\nstdout:\n${stdout.slice(-1200)}\nstderr:\n${stderr.slice(-1200)}`);
+    }
+    client = await cdp(mainTarget.webSocketDebuggerUrl);
+    await client.send("Runtime.enable");
+    const hasBridge = await evaluate<boolean>(client, waitForBridgeExpression);
+    if (!hasBridge) throw new Error("Desktop bridge did not become available in renderer");
+
+    await evaluate(client, `window.callpilotDesktop.startSession({ mode: "live_coding" })`);
+    recordRealCall();
+    const started = markLatencyStage(createLatencyMetricRun("real-vision"), "audio_or_screen_capture");
+    const analysis = await evaluate<any>(client, `window.callpilotDesktop.analyzeScreenshot({
+      path: ${JSON.stringify(image.path)},
+      provider: "nvidia",
+      modelName: ${JSON.stringify(modelName)},
+      nvidiaApiKey: ${JSON.stringify(process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || "")}
+    })`);
+    const completed = markLatencyStage(started, "transcription_or_vision_done");
+    const totalLatency = completed.events.find((event) => event.stage === "transcription_or_vision_done")?.elapsedMs ?? 0;
+    const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
+    const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
+    const normalizedText = normalizeForChecks(String(analysis?.text || ""));
+    const deterministicChecks = {
+      visionCompleted: Boolean(analysis?.ok),
+      answerNonEmpty: String(analysis?.text || "").trim().length > 40,
+      mentionsTwoSum: /two\s*sum|twosum/.test(normalizedText),
+      extractsFunctionSignature: /two_sum|functionsignature|function signature/.test(normalizedText),
+      mentionsTargetOrIndices: /target|indices|indexes|\[0,\s*1\]/.test(normalizedText),
+      traceRecorded: Boolean(traceStatus?.eventCount >= 1),
+    };
+
+    return [{
+      scenarioId: "vision_two_sum_screen",
+      track: "real_vision_ipc",
+      run: runNumber,
+      deterministicChecks,
+      judge: null,
+      latency_ms: {
+        first_token: null,
+        total: totalLatency,
+      },
+      diagnostics: {
+        provider: "nvidia",
+        modelName,
+        image: {
+          fileName: path.basename(image.path),
+          bytes: fs.existsSync(image.path) ? fs.statSync(image.path).size : 0,
+        },
+        analysis,
+        trace: {
+          eventCount: traceStatus?.eventCount,
+          path: endSession?.tracePath || traceStatus?.path,
+        },
+      },
+    }];
+  } finally {
+    client?.close();
+    electron.kill();
+    if (image.generated) fs.rmSync(image.path, { force: true });
+  }
+};
+
 const run = async () => {
   checkBudget();
   const includeRealSuite = selectedTrack === "real-suite";
@@ -1760,6 +1924,7 @@ const run = async () => {
     ...(selectedTrack === "real-behavioral" ? await runRealBehavioral() : []),
     ...(selectedTrack === "real-coding" ? await runRealCoding() : []),
     ...(selectedTrack === "real-coding-multiturn" || includeRealSuite ? await runRealCodingMultiturn() : []),
+    ...(selectedTrack === "real-vision" || includeRealSuite ? await runRealVision() : []),
     ...(selectedTrack === "real-text-interview" ? await runRealTextInterview() : []),
     ...(selectedTrack === "real-text-interview-batch" || includeRealSuite ? await runRealTextInterviewBatch() : []),
     ...(selectedTrack === "real-natively-interview" || includeRealSuite ? await runRealNativelyInterview() : []),

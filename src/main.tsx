@@ -2113,12 +2113,14 @@ function App() {
     updateScreenContext(nextText);
     setDesktopStatus("Screenshot captured");
 
-    if (modelProvider === "openai" && window.callpilotDesktop?.analyzeScreenshot) {
+    if ((modelProvider === "openai" || modelProvider === "nvidia") && window.callpilotDesktop?.analyzeScreenshot) {
       setDesktopStatus("Analyzing screenshot...");
       const analysis = await window.callpilotDesktop.analyzeScreenshot({
         path: result.path,
+        provider: modelProvider,
         modelName,
         apiKey: sessionApiKey,
+        nvidiaApiKey,
       });
       if (analysis.ok && analysis.text) {
         setLatencyRuns((current) => current.map((run) =>
@@ -2130,7 +2132,7 @@ function App() {
         setDesktopStatus(`Screenshot captured, analysis failed: ${analysis.error ?? "unknown"}`);
       }
     }
-  }, [modelName, modelProvider, sessionApiKey]);
+  }, [modelName, modelProvider, nvidiaApiKey, sessionApiKey]);
 
   const captureLocalOcr = React.useCallback(async () => {
     if (!window.callpilotDesktop?.captureScreenshot || !window.callpilotDesktop?.recognizeScreenText) {
@@ -2172,15 +2174,17 @@ function App() {
     setDesktopStatus("Local OCR complete");
 
     if (
-      modelProvider === "openai"
+      (modelProvider === "openai" || modelProvider === "nvidia")
       && window.callpilotDesktop?.analyzeScreenshot
       && (localScreenContext.kind === "coding_problem" || localScreenContext.kind === "code_editor")
     ) {
       setDesktopStatus("Coding screen detected; analyzing screenshot with vision...");
       const analysis = await window.callpilotDesktop.analyzeScreenshot({
         path: result.path,
+        provider: modelProvider,
         modelName,
         apiKey: sessionApiKey,
+        nvidiaApiKey,
       });
       if (analysis.ok && analysis.text) {
         updateScreenContext(`${analysis.text}\n\nScreenshot: ${result.path}`);
@@ -2189,7 +2193,7 @@ function App() {
         setDesktopStatus(`Coding screen detected, vision analysis failed: ${analysis.error ?? "unknown"}`);
       }
     }
-  }, [modelName, modelProvider, preferredLanguage, sessionApiKey]);
+  }, [modelName, modelProvider, nvidiaApiKey, preferredLanguage, sessionApiKey]);
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onShortcut((action) => {

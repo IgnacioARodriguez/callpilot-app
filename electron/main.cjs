@@ -78,6 +78,7 @@ const stealthState = {
 const settingsDefaults = {
   modelProvider: "nvidia",
   modelName: "meta/llama-3.2-1b-instruct",
+  visionModelName: "meta/llama-3.2-11b-vision-instruct",
   ollamaBaseUrl: "http://localhost:11434",
   transcriptionModelName: "gpt-4o-transcribe",
   preferredLanguage: "auto",
@@ -108,6 +109,8 @@ const openAICompatibleModelsUrl = (chatUrl) => {
 };
 const nativelyTranscriptionUrl = () => (process.env.CALLPILOT_NATIVELY_STT_URL || "wss://api.natively.software/v1/transcribe").trim();
 const nativelyLLMUrl = () => (process.env.CALLPILOT_NATIVELY_LLM_URL || "https://api.natively.software/v1/chat/completions").trim();
+const defaultNvidiaVisionModel = () => (process.env.CALLPILOT_NVIDIA_VISION_MODEL || settingsDefaults.visionModelName).trim();
+const isLikelyVisionModel = (modelName) => /vision|vlm|omni|ocr|image|cosmos|fuyu|deplot/i.test(String(modelName || ""));
 const supportedAudioMimeTypes = new Set([
   "audio/mp3",
   "audio/mpeg",
@@ -1883,15 +1886,24 @@ ipcMain.handle("screen:ocr", async (_event, input) => {
 ipcMain.handle("screen:analyze", async (_event, input) => {
   const startedAt = Date.now();
   const imagePath = typeof input?.path === "string" ? input.path : "";
-  const modelName = typeof input?.modelName === "string" && input.modelName.trim() ? input.modelName.trim() : settingsDefaults.modelName;
-  const apiKey = typeof input?.apiKey === "string" && input.apiKey.trim()
-    ? input.apiKey.trim()
-    : process.env.OPENAI_API_KEY || getStoredOpenAIKey();
+  const provider = input?.provider === "nvidia" ? "nvidia" : "openai";
+  const requestedModelName = typeof input?.modelName === "string" && input.modelName.trim() ? input.modelName.trim() : settingsDefaults.modelName;
+  const modelName = provider === "nvidia" && !isLikelyVisionModel(requestedModelName)
+    ? defaultNvidiaVisionModel()
+    : requestedModelName;
+  const apiKey = provider === "nvidia"
+    ? (typeof input?.nvidiaApiKey === "string" && input.nvidiaApiKey.trim()
+      ? input.nvidiaApiKey.trim()
+      : process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || getStoredNvidiaKey())
+    : (typeof input?.apiKey === "string" && input.apiKey.trim()
+      ? input.apiKey.trim()
+      : process.env.OPENAI_API_KEY || getStoredOpenAIKey());
 
   const finishScreenAnalysisTrace = (result) => {
     appendTraceEvent("screen_analysis_completed", {
       ok: Boolean(result?.ok),
       durationMs: Date.now() - startedAt,
+      provider,
       modelName,
       error: result?.error,
       imageFileName: imagePath ? path.basename(imagePath) : "",
@@ -1901,8 +1913,24 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
     return result;
   };
 
-  if (!apiKey) return finishScreenAnalysisTrace({ ok: false, text: "", error: "missing_openai_api_key" });
-  if (!modelName) return finishScreenAnalysisTrace({ ok: false, text: "", error: "missing_openai_model" });
+  if (String(modelName).startsWith("mock-vision")) {
+    return finishScreenAnalysisTrace({
+      ok: true,
+      text: JSON.stringify({
+        problemTitle: "Two Sum",
+        functionSignature: "def two_sum(nums, target):",
+        language: "Python",
+        examples: ["nums=[2,7,11,15], target=9 -> [0,1]"],
+        constraints: [],
+        solution: "Use a hashmap to track seen values and return matching indices.",
+      }),
+      provider: "mock",
+      modelName,
+    });
+  }
+
+  if (!apiKey) return finishScreenAnalysisTrace({ ok: false, text: "", error: provider === "nvidia" ? "missing_nvidia_api_key" : "missing_openai_api_key" });
+  if (!modelName) return finishScreenAnalysisTrace({ ok: false, text: "", error: provider === "nvidia" ? "missing_nvidia_vision_model" : "missing_openai_model" });
   if (!imagePath || !fs.existsSync(imagePath)) return finishScreenAnalysisTrace({ ok: false, text: "", error: "missing_screenshot_file" });
 
   try {
@@ -1914,6 +1942,38 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
       "The solution must follow these sections: Problem detected, Approach, Solution, Complexity, Edge cases, What to say out loud.",
       "If the screenshot is not a coding problem or code editor, return empty coding fields and a concise summary.",
     ].join(" ");
+    if (provider === "nvidia") {
+      const response = await fetchWithRetry(providerPresets.nvidia.chatUrl(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          stream: false,
+          max_tokens: 700,
+          temperature: 0.2,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: imageDataUrl, detail: "low" } },
+              ],
+            },
+          ],
+        }),
+      }, { provider: "nvidia-vision" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return finishScreenAnalysisTrace({ ok: false, text: "", error: payload?.error?.message ?? payload?.error ?? `nvidia_vision_http_${response.status}` });
+      }
+      const text = extractOpenAICompatibleChatText(payload);
+      return finishScreenAnalysisTrace({ ok: Boolean(text), text, provider, modelName, error: text ? undefined : "empty_nvidia_vision_response" });
+    }
+
     const response = await fetch(`${openAIBaseUrl()}/v1/responses`, {
       method: "POST",
       headers: {
@@ -1942,7 +2002,7 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
       return finishScreenAnalysisTrace({ ok: false, text: "", error: payload?.error?.message ?? `openai_http_${response.status}` });
     }
     const text = extractOpenAIResponseText(payload);
-    return finishScreenAnalysisTrace({ ok: Boolean(text), text, error: text ? undefined : "empty_openai_response" });
+    return finishScreenAnalysisTrace({ ok: Boolean(text), text, provider, modelName, error: text ? undefined : "empty_openai_response" });
   } catch (error) {
     return finishScreenAnalysisTrace({ ok: false, text: "", error: error instanceof Error ? error.message : "screen_analysis_failed" });
   }

@@ -68,13 +68,15 @@ Real-provider E2E checks are budget-gated so they never call NVIDIA/Natively unl
 $env:E2E_MAX_REAL_CALLS='2'; $env:E2E_USE_DEFAULT_USER_DATA='1'; npm run test:e2e:real-natively-interview
 $env:E2E_MAX_REAL_CALLS='3'; npm run test:e2e:real-text-interview-batch
 $env:E2E_MAX_REAL_CALLS='3'; npm run test:e2e:real-coding-multiturn
-$env:E2E_MAX_REAL_CALLS='8'; $env:E2E_USE_DEFAULT_USER_DATA='1'; npm run test:e2e:real-suite
+$env:E2E_MAX_REAL_CALLS='1'; npm run test:e2e:real-vision
+$env:E2E_MAX_REAL_CALLS='9'; $env:E2E_USE_DEFAULT_USER_DATA='1'; npm run test:e2e:real-suite
 npm run test:e2e:reports
 npm run check:nvidia
 ```
 
 `E2E_REAL_BATCH_LIMIT` controls how many text interview scenarios run in the batch, defaulting to `3`. `--scenarios=id1,id2` and `--turns=1,2,4` can narrow real runs while debugging.
 `npm run check:nvidia` verifies the configured NVIDIA API key without printing it and lists rate/quota headers if the API returns any.
+NVIDIA vision defaults to `meta/llama-3.2-11b-vision-instruct` for a quality/latency balance; override with `CALLPILOT_NVIDIA_VISION_MODEL` to compare models such as `meta/llama-3.2-90b-vision-instruct`.
 
 `npm run test:protected-assets` fails if `tests/fixtures`, `tests/rubrics`, or `tests/baselines` changed without an explicit human approval. For an approved fixture/rubric/baseline update, run it with `ALLOW_PROTECTED_TEST_ASSET_CHANGES=1`.
 

@@ -77,10 +77,12 @@ export {
 } from "./liveTranscription.ts";
 export {
   DEFAULT_TRANSCRIPTION_MODEL,
+  DEFAULT_NVIDIA_VISION_MODEL,
   DEFAULT_OLLAMA_BASE_URL,
   OPENAI_TRANSCRIPTION_MAX_BYTES,
   buildOllamaChatRequest,
   buildOpenAIImageAnalysisRequest,
+  buildOpenAICompatibleImageAnalysisRequest,
   buildOpenAIResponsesRequest,
   createMockAnswer,
   extractOllamaModels,

@@ -7,6 +7,7 @@ export type AudioTranscriptionModel = "gpt-4o-transcribe" | "gpt-4o-mini-transcr
 export const DEFAULT_TRANSCRIPTION_MODEL: AudioTranscriptionModel = "gpt-4o-transcribe";
 export const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
 export const OPENAI_TRANSCRIPTION_MAX_BYTES = 25 * 1024 * 1024;
+export const DEFAULT_NVIDIA_VISION_MODEL = "meta/llama-3.2-11b-vision-instruct";
 
 const supportedAudioMimeTypes = new Set([
   "audio/mp3",
@@ -283,6 +284,32 @@ export const buildOpenAIImageAnalysisRequest = (
     },
   ],
   store: false,
+});
+
+export const buildOpenAICompatibleImageAnalysisRequest = (
+  imageDataUrl: string,
+  modelName: string,
+  prompt = [
+    "Analyze this screenshot for a live coding interview assistant.",
+    "Use the screenshot image, not OCR text, as the source of truth.",
+    "Return compact JSON with problemTitle, functionSignature, language, examples, constraints, solution, complexity, edgeCases, and spokenAnswer.",
+    "If it is not a coding screen, return empty coding fields and a concise summary.",
+  ].join(" "),
+) => ({
+  model: modelName,
+  stream: false,
+  max_tokens: 700,
+  temperature: 0.2,
+  response_format: { type: "json_object" },
+  messages: [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: prompt },
+        { type: "image_url", image_url: { url: imageDataUrl, detail: "low" } },
+      ],
+    },
+  ],
 });
 
 export const extractOpenAIResponseText = (response: unknown): string => {

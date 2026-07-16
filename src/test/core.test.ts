@@ -6,6 +6,7 @@ import {
   MODES,
   DEFAULT_APP_SETTINGS,
   DEFAULT_TRANSCRIPTION_MODEL,
+  DEFAULT_NVIDIA_VISION_MODEL,
   TranscriptBuffer,
   assessAnswerGrounding,
   assessPlainInterviewAnswerGrounding,
@@ -14,6 +15,7 @@ import {
   buildRealtimeTranscriptionSessionUpdate,
   buildOpenAIImageAnalysisRequest,
   buildOpenAICompatibleChatRequest,
+  buildOpenAICompatibleImageAnalysisRequest,
   buildOpenAIResponsesRequest,
   buildPrompt,
   classifyScreenText,
@@ -1782,6 +1784,18 @@ test("OpenAI image analysis request uses Responses image content", () => {
     type: "input_image",
     image_url: "data:image/png;base64,abc",
     detail: "low",
+  });
+});
+
+test("OpenAI-compatible image analysis request uses chat multimodal content", () => {
+  const request = buildOpenAICompatibleImageAnalysisRequest("data:image/png;base64,abc", DEFAULT_NVIDIA_VISION_MODEL);
+  assert.equal(request.model, DEFAULT_NVIDIA_VISION_MODEL);
+  assert.equal(request.stream, false);
+  assert.equal(request.response_format.type, "json_object");
+  assert.match(request.messages[0]?.content[0].text ?? "", /functionSignature/);
+  assert.deepEqual(request.messages[0]?.content[1], {
+    type: "image_url",
+    image_url: { url: "data:image/png;base64,abc", detail: "low" },
   });
 });
 
