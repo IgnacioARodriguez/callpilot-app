@@ -219,6 +219,17 @@ test("prompt builder forbids invented behavioral specifics without evidence", ()
   assert.match(prompt.system, /placeholders/i);
 });
 
+test("prompt builder clarifies Spanish no-crash live coding requests", () => {
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "spanish" }),
+    "interviewer: Ahora maneja el caso en que no hay solucion, sin que explote.",
+  );
+
+  assert.match(prompt.system, /sin que explote/i);
+  assert.match(prompt.system, /without crashing/i);
+  assert.match(prompt.system, /do not intentionally throw/i);
+});
+
 test("technical definitions do not force candidate background into the prompt", () => {
   const context = createGlobalContext({
     activeMode: "technical_qa",
@@ -549,6 +560,31 @@ test("structured coding answers accept provider payloads with root spokenAnswer"
   assert.equal(structured?.kind, "coding");
   assert.match(rendered, /Uso un stack/);
   assert.match(rendered, /```python/);
+});
+
+test("structured coding parser rescues loose yaml code payloads", () => {
+  const structured = parseStructuredAnswerPayload(`chooser.sequence:
+  - kind: answer
+    payload:
+      spokenAnswer: "Aqui tienes la solucion optimizada."
+      code: |
+        def two_sum(nums, target):
+          seen = {}
+          for i, num in enumerate(nums):
+              complement = target - num
+              if complement in seen:
+                  return [seen[complement], i]
+              seen[num] = i
+          return None
+      complexity:
+        time: "O(n)"
+        space: "O(n)"`);
+  const rendered = structured ? formatStructuredAnswerPayload(structured) : "";
+
+  assert.equal(structured?.kind, "coding");
+  assert.match(rendered, /def two_sum/);
+  assert.doesNotMatch(rendered, /complexity:/);
+  assert.match(rendered, /O\(n\)/);
 });
 
 test("structured interview answers accept provider payloads with narration spokenAnswer", () => {

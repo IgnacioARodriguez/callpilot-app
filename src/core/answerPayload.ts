@@ -484,9 +484,64 @@ export const parseCodingAnswerPayload = (value: unknown): CodingAnswerPayload | 
   };
 };
 
+const extractLooseYamlBlock = (text: string, key: string): string => {
+  const match = text.match(new RegExp(`\\b${key}\\s*:\\s*\\|\\s*\\n([\\s\\S]*?)(?=\\n\\s{0,8}[a-zA-Z][\\w-]*\\s*:|$)`, "i"));
+  const block = match?.[1] ?? "";
+  const lines = block.replace(/\s+$/g, "").split(/\n/).filter((line) => line.trim());
+  const indents = lines.map((line) => line.match(/^\s*/)?.[0].length ?? 0);
+  const minIndent = indents.length ? Math.min(...indents) : 0;
+  return lines.map((line) => line.slice(minIndent)).join("\n").trim();
+};
+
+const extractLooseYamlString = (text: string, key: string): string => {
+  const match = text.match(new RegExp(`\\b${key}\\s*:\\s*["']?([^"'\n\r]+)["']?`, "i"));
+  return match?.[1]?.trim() ?? "";
+};
+
+const parseLooseCodingAnswerPayload = (text: string): StructuredAnswerPayload | null => {
+  if (!/\bcode\s*:\s*\|/i.test(text) || !/\bdef\s+\w+\s*\(/.test(text)) return null;
+  const code = extractLooseYamlBlock(text, "code");
+  if (!code) return null;
+  return {
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "explanation",
+      problem: {
+        title: "",
+        summary: "",
+        language: "Python",
+        functionSignature: null,
+        constraints: [],
+      },
+      solution: {
+        approachSteps: [],
+        code,
+        complexity: {
+          time: extractLooseYamlString(text, "time"),
+          space: extractLooseYamlString(text, "space"),
+          rationale: extractLooseYamlString(text, "rationale"),
+        },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: {
+        spokenAnswer: extractLooseYamlString(text, "spokenAnswer"),
+        currentStep: extractLooseYamlString(text, "currentStep"),
+      },
+      tests: [],
+      patch: {
+        kind: "none",
+        code: null,
+      },
+    },
+  };
+};
+
 export const parseStructuredAnswerPayload = (text: string): StructuredAnswerPayload | null => {
   const value = extractJsonObject(text);
-  if (!value) return null;
+  if (!value) return parseLooseCodingAnswerPayload(text);
   const record = asRecord(value);
   const explicitKind = asString(record?.kind);
   if (explicitKind === "coding") {
@@ -500,7 +555,7 @@ export const parseStructuredAnswerPayload = (text: string): StructuredAnswerPayl
   const coding = parseCodingAnswerPayload(value);
   if (coding) return { kind: "coding", payload: coding };
   const interview = parseInterviewAnswerPayload(value);
-  return interview ? { kind: "interview", payload: interview } : null;
+  return interview ? { kind: "interview", payload: interview } : parseLooseCodingAnswerPayload(text);
 };
 
 export const formatStructuredAnswerPayload = (structured: StructuredAnswerPayload, options: RenderAnswerOptions = {}): string => {

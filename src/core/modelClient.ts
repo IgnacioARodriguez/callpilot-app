@@ -173,6 +173,7 @@ export const buildOllamaChatRequest = (prompt: BuiltPrompt, modelName: string) =
 export const buildOpenAICompatibleChatRequest = (prompt: BuiltPrompt, modelName: string) => ({
   model: modelName.trim() || "default",
   stream: false,
+  response_format: { type: "json_object" },
   messages: [
     { role: "system", content: prompt.system },
     { role: "user", content: prompt.user },
