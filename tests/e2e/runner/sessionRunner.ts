@@ -16,6 +16,7 @@ type Track =
   | "coding-fixtures"
   | "coding-objective-smoke"
   | "real-behavioral"
+  | "real-coding"
   | "real-text-interview"
   | "real-natively-interview"
   | "all";
@@ -208,6 +209,25 @@ const runPythonAssertions = (code: string, assertions: string[]) => {
   } finally {
     fs.rmSync(scriptPath, { force: true });
   }
+};
+
+const extractPythonCode = (text: string): string => {
+  const jsonCandidates = [
+    text.trim(),
+    text.match(/```json\s*([\s\S]*?)```/i)?.[1]?.trim() ?? "",
+  ].filter(Boolean);
+  for (const candidate of jsonCandidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const code = parsed?.kind === "coding" ? parsed?.payload?.solution?.code : null;
+      if (typeof code === "string" && code.trim()) return code.trim();
+    } catch {}
+  }
+  const fenced = text.match(/```(?:python|py)\s*([\s\S]*?)```/i)?.[1]?.trim();
+  if (fenced) return fenced;
+  const defIndex = text.search(/\bdef\s+two_sum\s*\(/);
+  if (defIndex >= 0) return text.slice(defIndex).replace(/\*\*[\s\S]*$/m, "").trim();
+  return "";
 };
 
 const runCodingObjectiveSmoke = (): RunResult[] => {
@@ -526,6 +546,53 @@ const makeTextInterviewSession = (
   };
 };
 
+const makeCodingSession = (
+  scenario: CodingScenario,
+  provider: "openai" | "nvidia",
+  modelName: string,
+) => {
+  const now = Date.now();
+  const firstTurn = scenario.turns[0]?.prompt_transcript ?? "Solve Two Sum in Python.";
+  const screenText = [
+    "Two Sum",
+    "Python function signature:",
+    "def two_sum(nums, target):",
+    "Given an integer array nums and an integer target, return indices of the two numbers such that they add up to target.",
+    "Return None when there is no solution.",
+    "Example: nums = [2, 7, 11, 15], target = 9 -> [0, 1].",
+  ].join("\n");
+  return {
+    id: `e2e-coding-${now}`,
+    title: "E2E live coding checkpoint",
+    createdAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    activeMode: "live_coding",
+    transcript: {
+      messages: [
+        { id: `turn-${now}-1`, speaker: "interviewer", text: firstTurn, timestamp: now },
+      ],
+      paused: false,
+      updatedAt: now,
+    },
+    screenText,
+    companyName: "",
+    roleTitle: "Backend Engineer",
+    resumeText: "",
+    starStories: "",
+    jobDescription: "Live coding interview. Keep code correct and concise.",
+    notes: "Preserve the exact function name two_sum.",
+    profile: "",
+    targetUseCase: "live coding interview",
+    preferredLanguage: scenario.language === "python" ? "spanish" : "english",
+    codingLanguage: "Python",
+    answerVerbosity: "medium",
+    modelProvider: provider,
+    modelName,
+    question: firstTurn,
+    answer: "",
+  };
+};
+
 const makeEmptyInterviewSession = (provider: "openai" | "nvidia", modelName: string, activeMode: "technical_qa" | "behavioral") => {
   const now = Date.now();
   return {
@@ -558,9 +625,14 @@ const makeEmptyInterviewSession = (provider: "openai" | "nvidia", modelName: str
   };
 };
 
-const waitForAnswerEvents = async (mainClient: CdpClient, provider: string, modelName: string, options: { startSession?: boolean } = {}) => {
+const waitForAnswerEvents = async (
+  mainClient: CdpClient,
+  provider: string,
+  modelName: string,
+  options: { startSession?: boolean; mode?: "technical_qa" | "behavioral" | "live_coding"; timeoutMs?: number } = {},
+) => {
   if (options.startSession !== false) {
-    await evaluate(mainClient, `window.callpilotDesktop.startSession({ mode: "technical_qa" })`);
+    await evaluate(mainClient, `window.callpilotDesktop.startSession({ mode: ${JSON.stringify(options.mode ?? "technical_qa")} })`);
   }
   const overlayTarget = await getPageTarget((target) => target.url.includes("#/overlay"), 10000);
   if (!overlayTarget?.webSocketDebuggerUrl) throw new Error("Overlay target did not open for text interview run");
@@ -581,10 +653,11 @@ const waitForAnswerEvents = async (mainClient: CdpClient, provider: string, mode
   if (!requestResult.ok) throw new Error(`answer:request failed: ${requestResult.error || "unknown"}`);
   const events = await evaluate<Array<{ type: string; at: number; payload: any }>>(overlayClient, `new Promise((resolve) => {
     const started = Date.now();
+    const timeoutMs = ${JSON.stringify(options.timeoutMs ?? 45000)};
     const tick = () => {
       const events = window.__callpilotE2EEvents || [];
       const terminal = events.find((event) => event.type === "status" && ["completed", "failed", "cancelled"].includes(event.payload?.status));
-      if (terminal || Date.now() - started > 45000) {
+      if (terminal || Date.now() - started > timeoutMs) {
         resolve(events);
         return;
       }
@@ -1217,6 +1290,156 @@ const runRealTextInterview = async (): Promise<RunResult[]> => {
   }
 };
 
+const runRealCoding = async (): Promise<RunResult[]> => {
+  if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
+    return [{
+      scenarioId: "coding_evol_two_sum",
+      track: "real_coding_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        nvidiaKeyAvailable: false,
+        answerCompleted: false,
+        pythonExecutionPassed: false,
+      },
+      judge: null,
+      latency_ms: finishLatency("real-coding-blocked"),
+      diagnostics: {
+        blocked: true,
+        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for --track=real-coding",
+      },
+    }];
+  }
+  checkBudget(1);
+  if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
+    throw new Error("dist/index.html is missing. Run npm run build before --track=real-coding.");
+  }
+
+  const fixture = readJson<{ live_coding_evolutivo: CodingScenario[] }>("text-fixtures.batch1.json");
+  const scenario = fixture.live_coding_evolutivo.find((item) => item.scenarioId === "coding_evol_two_sum");
+  if (!scenario) throw new Error("coding_evol_two_sum scenario not found in text-fixtures.batch1.json");
+  const assertions = scenario.turns
+    .map((turn) => turn.test_cases?.trim())
+    .filter((value): value is string => Boolean(value));
+
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct";
+  const userDataDir = path.join(tmpDir, `user-data-coding-${Date.now()}`);
+  fs.mkdirSync(userDataDir, { recursive: true });
+
+  const childEnv = { ...process.env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  const electron = spawn(electronBin, ["."], {
+    cwd: root,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...childEnv,
+      CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
+      CALLPILOT_USER_DATA_DIR: userDataDir,
+    },
+  });
+
+  let stdout = "";
+  let stderr = "";
+  electron.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  electron.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  let client: CdpClient | null = null;
+  try {
+    const mainTarget = await getPageTarget((target) => !target.url.includes("#/overlay") && !target.url.includes("#/coding"), 30000);
+    if (!mainTarget?.webSocketDebuggerUrl) {
+      throw new Error(`Could not find Electron main target.\nstdout:\n${stdout.slice(-1200)}\nstderr:\n${stderr.slice(-1200)}`);
+    }
+    client = await cdp(mainTarget.webSocketDebuggerUrl);
+    await client.send("Runtime.enable");
+    const hasBridge = await evaluate<boolean>(client, waitForBridgeExpression);
+    if (!hasBridge) throw new Error("Desktop bridge did not become available in renderer");
+
+    await evaluate(client, `window.callpilotDesktop.saveSettings(${JSON.stringify({
+      activeMode: "live_coding",
+      preferredLanguage: "spanish",
+      defaultCodingLanguage: "Python",
+      answerVerbosity: "medium",
+      modelProvider: "nvidia",
+      modelName,
+      ollamaBaseUrl: "http://localhost:11434",
+      transcriptionModelName: "gpt-4o-transcribe",
+      liveTranscriptionProvider: "natively",
+      liveLatencyPreset: "balanced",
+      liveAudioSource: "both",
+      autoAnswerCooldownMs: 12000,
+      autoAnswerMinConfidence: 0.45,
+    })})`);
+
+    const session = makeCodingSession(scenario, "nvidia", modelName);
+    await evaluate(client, seedSessionExpression(session));
+    const bridgeAfterReload = await evaluate<boolean>(client, waitForBridgeExpression);
+    if (!bridgeAfterReload) throw new Error("Desktop bridge did not recover after coding session seed reload");
+
+    const answerStarted = markLatencyStage(createLatencyMetricRun("real-coding-answer"), "model_call_start");
+    const answer = await waitForAnswerEvents(client, "nvidia", modelName, { mode: "live_coding", timeoutMs: 120000 });
+    const answerDone = markLatencyStage(answerStarted, "response_complete");
+    const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
+    const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
+    const tracePath = endSession?.tracePath || traceStatus?.path || "";
+    const failed = answer.events.find((event) => event.type === "status" && event.payload?.status === "failed");
+    const code = extractPythonCode(answer.answerText);
+    const execution = code
+      ? runPythonAssertions(code, assertions)
+      : { ok: false, status: null, stdout: "", stderr: "No Python code block with two_sum was found.", timedOut: false };
+    const totalLatency = answerDone.events.find((event) => event.stage === "response_complete")?.elapsedMs ?? 0;
+    const deterministicChecks = {
+      answerRequestAccepted: answer.requestResult.ok,
+      answerCompleted: Boolean(answer.completed) && !failed,
+      answerNonEmpty: answer.answerText.trim().length > 40,
+      codeBlockFound: Boolean(code),
+      definesTwoSum: /\bdef\s+two_sum\s*\(/.test(code),
+      hasAccumulatedAssertions: assertions.length >= 2,
+      pythonExecutionPassed: execution.ok,
+      didNotTimeout: !execution.timedOut,
+      traceRecorded: Boolean(tracePath && traceStatus?.eventCount >= 3),
+    };
+
+    return [{
+      scenarioId: scenario.scenarioId,
+      track: "real_coding_ipc",
+      run: runNumber,
+      deterministicChecks,
+      judge: null,
+      latency_ms: {
+        first_token: null,
+        total: totalLatency,
+      },
+      diagnostics: {
+        provider: "nvidia",
+        modelName,
+        transcript: session.transcript.messages,
+        screenText: session.screenText,
+        answer_received: answer.answerText,
+        extracted_code: code,
+        assertions,
+        execution,
+        answer_events: answer.events.map((event) => ({
+          type: event.type,
+          status: event.payload?.status,
+          answerKind: event.payload?.answer?.kind,
+          textPreview: String(event.payload?.text || event.payload?.renderedText || "").slice(0, 240),
+        })),
+        trace: {
+          path: tracePath,
+          eventCount: traceStatus?.eventCount,
+        },
+      },
+    }];
+  } finally {
+    client?.close();
+    electron.kill();
+  }
+};
+
 const run = async () => {
   checkBudget();
   const results = [
@@ -1224,6 +1447,7 @@ const run = async () => {
     ...(selectedTrack === "all" || selectedTrack === "coding-fixtures" ? runCodingFixtureValidation() : []),
     ...(selectedTrack === "all" || selectedTrack === "coding-objective-smoke" ? runCodingObjectiveSmoke() : []),
     ...(selectedTrack === "real-behavioral" ? await runRealBehavioral() : []),
+    ...(selectedTrack === "real-coding" ? await runRealCoding() : []),
     ...(selectedTrack === "real-text-interview" ? await runRealTextInterview() : []),
     ...(selectedTrack === "real-natively-interview" ? await runRealNativelyInterview() : []),
   ];

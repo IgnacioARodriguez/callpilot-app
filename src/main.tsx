@@ -673,7 +673,7 @@ function App() {
         nativelyApiKey,
         nvidiaApiKey,
         ollamaBaseUrl,
-        maxTokens: context.activeMode === "live_coding" ? 360 : 220,
+        maxTokens: context.activeMode === "live_coding" ? 900 : 220,
       });
       void window.callpilotDesktop?.publishAnswerStatus?.({
         requestId,

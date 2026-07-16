@@ -93,11 +93,11 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
   const omittedSections: Array<{ section: string; reason: string }> = [];
   const structuredContract = context.activeMode === "live_coding"
     ? [
-      "Prefer JSON when possible:",
+      "Return raw JSON only when possible; do not wrap it in markdown fences:",
       '{"kind":"coding","payload":{"version":"1","answerNeeded":true,"intent":null,"responseType":"initial_solution|explanation|follow_up_change|debug_fix|clarification","spokenAnswer":"","keyPoints":[],"correction":{"needed":false,"transition":null,"correctedClaim":null},"assumptions":[],"evidenceRefs":[],"followUpHint":null,"problem":{"title":"","summary":"","language":"Python","functionSignature":null,"constraints":[]},"solution":{"approachSteps":[],"code":"","complexity":{"time":"","space":"","rationale":""},"edgeCases":[],"invariants":[]},"narration":{"spokenAnswer":"","currentStep":""},"tests":[],"patch":{"kind":"none","code":null}}}',
     ].join("\n")
     : [
-      "Prefer JSON when possible:",
+      "Return raw JSON only when possible; do not wrap it in markdown fences:",
       '{"kind":"interview","payload":{"version":"1","answerNeeded":true,"intent":"technical_qa|behavioral|system_design|clarification|no_answer","responseType":null,"spokenAnswer":"","keyPoints":[],"correction":{"needed":false,"transition":null,"correctedClaim":null},"assumptions":[],"evidenceRefs":[],"followUpHint":null,"problem":{"title":"","summary":"","language":"","functionSignature":null,"constraints":[]},"solution":{"approachSteps":[],"code":"","complexity":{"time":"","space":"","rationale":""},"edgeCases":[],"invariants":[]},"narration":{"spokenAnswer":"","currentStep":""},"tests":[],"patch":{"kind":"none","code":null}}}',
     ].join("\n");
   const sections = [

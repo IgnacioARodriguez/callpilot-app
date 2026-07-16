@@ -20,6 +20,7 @@
     "test:e2e:full": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=all",
     "test:e2e:coding-objective": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=coding-objective-smoke",
     "test:e2e:real-behavioral": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-behavioral",
+    "test:e2e:real-coding": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-coding",
     "test:e2e:real-natively-interview": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-natively-interview",
     "test:e2e:real-text-interview": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-text-interview",
     "benchmark:core": "node --experimental-strip-types scripts/benchmark-core.ts",
