@@ -185,6 +185,8 @@ test("acceptance: app startup warms the selected remote answer model", () => {
   assert.ok(warmIndex > 0, "startup warmup must be wired");
   assert.ok(warmIndex < startIndex, "startup warmup should not wait for session start");
   assert.match(app, /settingsLoaded \|\| !credentialStatusLoaded/);
+  assert.match(app, /answerWarmupHealth\.label/);
+  assert.match(app, /answerWarmupChipClass/);
   assert.match(app, /timeoutMs: 90000/);
   assert.match(app, /nvidiaApiKey/);
 });

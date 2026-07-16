@@ -609,6 +609,12 @@ pre {
   color: #875b09;
 }
 
+.health-chip.danger {
+  border-color: #e2a7a7;
+  background: #fff1f1;
+  color: #9c2424;
+}
+
 .tabs {
   width: fit-content;
   max-width: 100%;

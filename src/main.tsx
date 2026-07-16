@@ -143,6 +143,12 @@ const formatMockAnswer = (context: GlobalContext, userInput: string): string => 
 function App() {
   const savedSession = React.useMemo(loadSavedSession, []);
   type AutoCheck = { label: string; status: "ok" | "warn" | "fail"; detail: string };
+  type AnswerWarmupHealth = {
+    status: "checking" | "warming" | "ready" | "failed" | "unavailable";
+    label: string;
+    detail: string;
+    updatedAt: number;
+  };
   const [sessionIdentity, setSessionIdentity] = React.useState(() => ({
     id: savedSession.id,
     title: savedSession.title,
@@ -198,6 +204,12 @@ function App() {
   const [settingsLoaded, setSettingsLoaded] = React.useState(false);
   const [credentialStatusLoaded, setCredentialStatusLoaded] = React.useState(false);
   const [credentialMessage, setCredentialMessage] = React.useState("");
+  const [answerWarmupHealth, setAnswerWarmupHealth] = React.useState<AnswerWarmupHealth>({
+    status: "checking",
+    label: "Provider checking",
+    detail: "Loading settings and credentials",
+    updatedAt: Date.now(),
+  });
   const [isRecordingMic, setIsRecordingMic] = React.useState(false);
   const [recordingStatus, setRecordingStatus] = React.useState("");
   const [isGenerating, setIsGenerating] = React.useState(false);
@@ -312,6 +324,12 @@ function App() {
   const hasOpenAITranscriptionKey = hasStoredOpenAIKey || hasEnvOpenAIKey || Boolean(sessionApiKey.trim());
   const hasNativelyTranscriptionKey = hasStoredNativelyKey || hasEnvNativelyKey || Boolean(nativelyApiKey.trim());
   const hasNvidiaAnswerKey = hasStoredNvidiaKey || hasEnvNvidiaKey || Boolean(nvidiaApiKey.trim());
+  const selectedAnswerModelKey = `${modelProvider}:${modelName || "default"}`;
+  const answerWarmupChipClass = answerWarmupHealth.status === "ready"
+    ? "health-chip good"
+    : answerWarmupHealth.status === "failed" || answerWarmupHealth.status === "unavailable"
+      ? "health-chip danger"
+      : "health-chip warn";
   const speakerLabel = (speaker?: TranscriptSpeaker) => {
     if (speaker === "candidate") return "Me";
     if (speaker === "assistant") return "CallPilot";
@@ -800,8 +818,15 @@ function App() {
     if (modelProvider === "mock" || !window.callpilotDesktop?.generateAnswer) return;
     const warmPrompt = buildPrompt(context, "warmup: responde solo OK");
     const requestId = `warmup-${options.reason ?? "manual"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const startedAt = Date.now();
     try {
       if (!options.silent) setLiveAssistStatus(`Warming ${providerLabel}`);
+      setAnswerWarmupHealth({
+        status: "warming",
+        label: `${providerLabel} warming`,
+        detail: modelName ? modelName : "Default model",
+        updatedAt: startedAt,
+      });
       const result = await window.callpilotDesktop.generateAnswer({
         provider: modelProvider,
         modelName,
@@ -815,29 +840,77 @@ function App() {
         maxTokens: 24,
         timeoutMs: 90000,
       });
+      const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      setAnswerWarmupHealth({
+        status: result.ok ? "ready" : "failed",
+        label: result.ok ? `${providerLabel} ready` : `${providerLabel} warmup failed`,
+        detail: result.ok ? `Warm in ${elapsedSeconds}s` : result.error ?? "Unknown warmup error",
+        updatedAt: Date.now(),
+      });
       if (!options.silent) setLiveAssistStatus(result.ok ? "Listening" : `Warmup skipped: ${result.error ?? "unknown"}`);
+      return result.ok;
     } catch {
+      setAnswerWarmupHealth({
+        status: "failed",
+        label: `${providerLabel} warmup failed`,
+        detail: "Warmup request failed before completion",
+        updatedAt: Date.now(),
+      });
       if (!options.silent) setLiveAssistStatus("Listening");
+      return false;
     }
   }, [context, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, providerLabel, sessionApiKey]);
 
   React.useEffect(() => {
-    if (!settingsLoaded || !credentialStatusLoaded) return;
-    if (modelProvider === "mock" || modelProvider === "ollama") return;
+    if (!settingsLoaded || !credentialStatusLoaded) {
+      setAnswerWarmupHealth({
+        status: "checking",
+        label: "Provider checking",
+        detail: "Loading settings and credentials",
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+    if (modelProvider === "mock" || modelProvider === "ollama") {
+      warmedAnswerModelKeyRef.current = selectedAnswerModelKey;
+      setAnswerWarmupHealth({
+        status: "ready",
+        label: `${providerLabel} ready`,
+        detail: modelProvider === "mock" ? "Demo provider does not need warmup" : "Local provider does not need remote warmup",
+        updatedAt: Date.now(),
+      });
+      return;
+    }
     const hasProviderKey = modelProvider === "nvidia"
       ? hasNvidiaAnswerKey
       : modelProvider === "natively"
         ? hasStoredNativelyKey || hasEnvNativelyKey || Boolean(nativelyApiKey.trim())
         : hasOpenAITranscriptionKey;
-    if (!hasProviderKey) return;
+    if (!hasProviderKey) {
+      setAnswerWarmupHealth({
+        status: "unavailable",
+        label: `${providerLabel} key missing`,
+        detail: "Save or load the provider key before starting",
+        updatedAt: Date.now(),
+      });
+      return;
+    }
 
-    const warmupKey = `${modelProvider}:${modelName || "default"}`;
+    const warmupKey = selectedAnswerModelKey;
     if (warmedAnswerModelKeyRef.current === warmupKey || warmingAnswerModelKeyRef.current === warmupKey) return;
     warmingAnswerModelKeyRef.current = warmupKey;
+    setAnswerWarmupHealth({
+      status: "warming",
+      label: `${providerLabel} warming`,
+      detail: modelName ? modelName : "Default model",
+      updatedAt: Date.now(),
+    });
     const timer = window.setTimeout(() => {
       void warmAnswerModel({ silent: true, reason: "startup" })
+        .then((ok) => {
+          if (ok) warmedAnswerModelKeyRef.current = warmupKey;
+        })
         .finally(() => {
-          warmedAnswerModelKeyRef.current = warmupKey;
           if (warmingAnswerModelKeyRef.current === warmupKey) warmingAnswerModelKeyRef.current = "";
         });
     }, 250);
@@ -856,6 +929,8 @@ function App() {
     modelName,
     modelProvider,
     nativelyApiKey,
+    providerLabel,
+    selectedAnswerModelKey,
     settingsLoaded,
     warmAnswerModel,
   ]);
@@ -2490,6 +2565,7 @@ function App() {
         <div className="health-row" aria-label="Current app status">
           <span className={isDictating ? "health-chip good" : "health-chip"}>{listeningLabel}</span>
           <span className="health-chip">{providerLabel}</span>
+          <span className={answerWarmupChipClass} title={answerWarmupHealth.detail}>{answerWarmupHealth.label}</span>
           <span className="health-chip">{languageLabel}</span>
           <span className={stealth.callPrivacyAllowed ? "health-chip good" : "health-chip warn"}>{privacyLabel}</span>
         </div>
@@ -2571,6 +2647,7 @@ function App() {
             </div>
             <div className="quick-status">
               <span>{liveAssistStatus}</span>
+              <span>{answerWarmupHealth.label}: {answerWarmupHealth.detail}</span>
               <span>{livePlan.engineLabel}: {livePlan.implemented ? `${livePlan.expectedLatency}, ${livePlan.quality}` : "configured, not connected"}</span>
               <span>{desktopStatus}</span>
             </div>
