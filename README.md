@@ -54,11 +54,15 @@ Use the `OCR` button in `Screen Context` to capture the screen and extract visib
 
 ```powershell
 npm test
+npm run test:e2e:subset
+npm run test:e2e:full
 npm run build
 npm run verify:desktop
 npm run pack
 npm run verify:package
 ```
+
+`npm run test:protected-assets` fails if `tests/fixtures`, `tests/rubrics`, or `tests/baselines` changed without an explicit human approval. For an approved fixture/rubric/baseline update, run it with `ALLOW_PROTECTED_TEST_ASSET_CHANGES=1`.
 
 `npm run verify:isolation` checks that the original repo has not received generated app artifacts such as `src/core`, `node_modules`, or `dist`.
 

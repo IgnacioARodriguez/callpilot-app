@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "track": "no_answer",
+  "description": "Track C deterministic fixtures. These should not dispatch an answer.",
+  "cases": [
+    {
+      "scenarioId": "no_answer_pause_opening_repo",
+      "language": "spanish",
+      "text": "Bueno, dame un segundo que estoy abriendo el repo.",
+      "expected": { "answerNeeded": false, "intent": "no_answer" }
+    },
+    {
+      "scenarioId": "no_answer_still_searching_file",
+      "language": "spanish",
+      "text": "Dale, sigo buscando el archivo correcto.",
+      "expected": { "answerNeeded": false, "intent": "no_answer" }
+    },
+    {
+      "scenarioId": "no_answer_continue_later",
+      "language": "spanish",
+      "text": "Seguimos despues, ahora no hace falta responder.",
+      "expected": { "answerNeeded": false, "intent": "no_answer" }
+    },
+    {
+      "scenarioId": "no_answer_incomplete_audio_fragment",
+      "language": "spanish",
+      "text": "eh entonces por ahi no se si",
+      "expected": { "answerNeeded": false, "intent": "no_answer" }
+    },
+    {
+      "scenarioId": "no_answer_casual_games",
+      "language": "spanish",
+      "text": "A mi tambien me gustan los juegos, despues seguimos.",
+      "expected": { "answerNeeded": false, "intent": "no_answer" }
+    },
+    {
+      "scenarioId": "no_answer_english_one_second",
+      "language": "english",
+      "text": "Give me one second, I am opening the repository.",
+      "expected": { "answerNeeded": false, "intent": "no_answer" }
+    }
+  ]
+}
