@@ -7,6 +7,10 @@ const { loadDotEnv } = require("./env.cjs");
 
 loadDotEnv();
 
+if (process.env.CALLPILOT_USER_DATA_DIR) {
+  app.setPath("userData", path.resolve(process.env.CALLPILOT_USER_DATA_DIR));
+}
+
 if (process.env.CALLPILOT_REMOTE_DEBUG_PORT) {
   app.commandLine.appendSwitch("remote-debugging-port", process.env.CALLPILOT_REMOTE_DEBUG_PORT);
 }
