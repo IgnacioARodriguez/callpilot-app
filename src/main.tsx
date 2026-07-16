@@ -195,6 +195,8 @@ function App() {
   const [hasEnvOpenAIKey, setHasEnvOpenAIKey] = React.useState(false);
   const [hasEnvNativelyKey, setHasEnvNativelyKey] = React.useState(false);
   const [hasEnvNvidiaKey, setHasEnvNvidiaKey] = React.useState(false);
+  const [settingsLoaded, setSettingsLoaded] = React.useState(false);
+  const [credentialStatusLoaded, setCredentialStatusLoaded] = React.useState(false);
   const [credentialMessage, setCredentialMessage] = React.useState("");
   const [isRecordingMic, setIsRecordingMic] = React.useState(false);
   const [recordingStatus, setRecordingStatus] = React.useState("");
@@ -250,6 +252,8 @@ function App() {
   const activeLatencyRunIdRef = React.useRef<string | null>(null);
   const activeAnswerRequestIdRef = React.useRef<string | null>(null);
   const firstDetailChunkSeenRef = React.useRef(false);
+  const warmedAnswerModelKeyRef = React.useRef("");
+  const warmingAnswerModelKeyRef = React.useRef("");
   const recentPublishedTranscriptRef = React.useRef<{ speaker: TranscriptSpeaker; text: string; timestamp: number }>({ speaker: "unknown", text: "", timestamp: 0 });
 
   React.useEffect(() => {
@@ -432,7 +436,8 @@ function App() {
         setAutoAnswerCooldownMs(settings.autoAnswerCooldownMs ?? 12000);
         setAutoAnswerMinConfidence(settings.autoAnswerMinConfidence ?? 0.45);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setSettingsLoaded(true));
 
     window.callpilotDesktop?.getCredentialStatus()
       .then((status) => {
@@ -444,7 +449,8 @@ function App() {
         setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
         setCredentialMessage(status.encryptionAvailable ? "Encrypted key storage ready" : "Encrypted key storage unavailable");
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setCredentialStatusLoaded(true));
 
     window.callpilotDesktop?.getShortcutHealth()
       .then((health) => {
@@ -790,27 +796,69 @@ function App() {
     await window.callpilotDesktop?.cancelAnswer?.(requestId).catch(() => undefined);
   }, []);
 
-  const warmAnswerModel = React.useCallback(async () => {
+  const warmAnswerModel = React.useCallback(async (options: { silent?: boolean; reason?: "startup" | "manual" } = {}) => {
     if (modelProvider === "mock" || !window.callpilotDesktop?.generateAnswer) return;
     const warmPrompt = buildPrompt(context, "warmup: responde solo OK");
+    const requestId = `warmup-${options.reason ?? "manual"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     try {
-      setLiveAssistStatus(`Warming ${providerLabel}`);
+      if (!options.silent) setLiveAssistStatus(`Warming ${providerLabel}`);
       const result = await window.callpilotDesktop.generateAnswer({
         provider: modelProvider,
         modelName,
-        requestId: `warmup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        requestId,
         structuredOutput: false,
         prompt: warmPrompt,
         apiKey: sessionApiKey,
         nativelyApiKey,
+        nvidiaApiKey,
         ollamaBaseUrl,
-        maxTokens: 64,
+        maxTokens: 24,
+        timeoutMs: 90000,
       });
-      setLiveAssistStatus(result.ok ? "Listening" : `Warmup skipped: ${result.error ?? "unknown"}`);
+      if (!options.silent) setLiveAssistStatus(result.ok ? "Listening" : `Warmup skipped: ${result.error ?? "unknown"}`);
     } catch {
-      setLiveAssistStatus("Listening");
+      if (!options.silent) setLiveAssistStatus("Listening");
     }
-  }, [context, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, providerLabel, sessionApiKey]);
+  }, [context, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, providerLabel, sessionApiKey]);
+
+  React.useEffect(() => {
+    if (!settingsLoaded || !credentialStatusLoaded) return;
+    if (modelProvider === "mock" || modelProvider === "ollama") return;
+    const hasProviderKey = modelProvider === "nvidia"
+      ? hasNvidiaAnswerKey
+      : modelProvider === "natively"
+        ? hasStoredNativelyKey || hasEnvNativelyKey || Boolean(nativelyApiKey.trim())
+        : hasOpenAITranscriptionKey;
+    if (!hasProviderKey) return;
+
+    const warmupKey = `${modelProvider}:${modelName || "default"}`;
+    if (warmedAnswerModelKeyRef.current === warmupKey || warmingAnswerModelKeyRef.current === warmupKey) return;
+    warmingAnswerModelKeyRef.current = warmupKey;
+    const timer = window.setTimeout(() => {
+      void warmAnswerModel({ silent: true, reason: "startup" })
+        .finally(() => {
+          warmedAnswerModelKeyRef.current = warmupKey;
+          if (warmingAnswerModelKeyRef.current === warmupKey) warmingAnswerModelKeyRef.current = "";
+        });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      if (warmingAnswerModelKeyRef.current === warmupKey) warmingAnswerModelKeyRef.current = "";
+    };
+  }, [
+    credentialStatusLoaded,
+    hasEnvNativelyKey,
+    hasEnvNvidiaKey,
+    hasOpenAITranscriptionKey,
+    hasNvidiaAnswerKey,
+    hasStoredNativelyKey,
+    hasStoredNvidiaKey,
+    modelName,
+    modelProvider,
+    nativelyApiKey,
+    settingsLoaded,
+    warmAnswerModel,
+  ]);
 
   const getLatestInterviewPrompt = React.useCallback(() => {
     const liveInterviewerText = turnAssemblerRef.current.draftsBySpeaker.interviewer?.text.trim();

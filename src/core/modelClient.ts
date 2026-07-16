@@ -31,6 +31,7 @@ export interface GenerateAnswerInput {
   nvidiaApiKey?: string;
   ollamaBaseUrl?: string;
   maxTokens?: number;
+  timeoutMs?: number;
 }
 
 export interface GenerateAnswerResult {

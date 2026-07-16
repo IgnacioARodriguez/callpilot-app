@@ -177,6 +177,18 @@ test("acceptance: starting an overlay session resets stale runtime context", () 
   assert.doesNotMatch(app.slice(startIndex, app.indexOf("const stopMicRecording", startIndex)), /warmAnswerModel\(\)/);
 });
 
+test("acceptance: app startup warms the selected remote answer model", () => {
+  const app = read("src/main.tsx");
+  const warmIndex = app.indexOf("warmAnswerModel({ silent: true, reason: \"startup\" })");
+  const startIndex = app.indexOf("const startSession");
+
+  assert.ok(warmIndex > 0, "startup warmup must be wired");
+  assert.ok(warmIndex < startIndex, "startup warmup should not wait for session start");
+  assert.match(app, /settingsLoaded \|\| !credentialStatusLoaded/);
+  assert.match(app, /timeoutMs: 90000/);
+  assert.match(app, /nvidiaApiKey/);
+});
+
 test("acceptance: Natively final fragments do not pollute live transcript drafts", () => {
   const state = createTurnAssemblerState();
   const partial = assembleTurn(state, {
