@@ -278,6 +278,20 @@ const removeBadArtifactLines = (value: string): string =>
     .filter((line) => !/(?:\.(?:get|set|raise)\b|para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b|bifrost\b|sadece\b|conipo\b|despeici\b|pausa para correcci[oó]n|einschaltstellen|kter[eé]\b|shakespeare\b|来源)/i.test(line))
     .join("\n");
 
+const repairQuestionMarkMojibake = (value: string): string =>
+  value
+    .replace(/\bah\?\?/gi, "Ahi")
+    .replace(/\bcomet\?\?/gi, "cometi")
+    .replace(/\bcorreg\?\?/gi, "corregi")
+    .replace(/\bpeque\?\?o\b/gi, "pequeno")
+    .replace(/\br\?\?pida\b/gi, "rapida")
+    .replace(/\ble\?\?dos\b/gi, "leidos")
+    .replace(/\b(?:utilizar|usar|tendr|podr|deber|har|ir)\?\?a\b/gi, (match) => match.replace("??a", "ia"))
+    .replace(/\?\?n\b/g, "on")
+    .replace(/\?\?a\b/g, "ia")
+    .replace(/\?\?o\b/g, "io")
+    .replace(/\?\?/g, "");
+
 const limitWords = (value: string, maxWords: number): string => {
   const words = value.split(/\s+/).filter(Boolean);
   if (words.length <= maxWords) return value;
@@ -301,7 +315,7 @@ export const normalizeInterviewAnswerText = (text: string, options: RenderAnswer
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  const withoutArtifacts = removeBadArtifactLines(cleaned);
+  const withoutArtifacts = repairQuestionMarkMojibake(removeBadArtifactLines(cleaned));
   const withoutNestedLabel = stripLeadingLabel(withoutArtifacts);
   const sentences = splitSentences(withoutNestedLabel);
   const compact = sentences.length > 3 ? sentences.slice(0, 3).join(" ") : withoutNestedLabel;

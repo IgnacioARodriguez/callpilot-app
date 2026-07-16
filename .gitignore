@@ -18,6 +18,7 @@ Thumbs.db
 
 coverage/
 .nyc_output/
+.cache/e2e/
 reports/llm-scenarios-*.json
 tests/e2e/reports/*.json
 

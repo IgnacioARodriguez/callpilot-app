@@ -11,7 +11,7 @@ import {
   type PreferredLanguage,
 } from "../../../src/core/index.ts";
 
-type Track = "no-answer" | "coding-fixtures" | "real-behavioral" | "all";
+type Track = "no-answer" | "coding-fixtures" | "real-behavioral" | "real-text-interview" | "all";
 
 interface NoAnswerCase {
   scenarioId: string;
@@ -34,6 +34,18 @@ interface CodingScenario {
   scenarioId: string;
   language: string;
   turns: CodingTurn[];
+}
+
+interface TextInterviewTurn {
+  speaker: "interviewer" | "candidate" | "assistant" | "unknown";
+  text: string;
+}
+
+interface TextInterviewScenario {
+  scenarioId: string;
+  turns: TextInterviewTurn[];
+  trigger_turn: number;
+  expected_behavior: Record<string, unknown>;
 }
 
 interface RunResult {
@@ -338,6 +350,94 @@ const makeSession = (transcriptText: string, modelName: string) => {
   };
 };
 
+const makeTextInterviewSession = (
+  scenario: TextInterviewScenario,
+  provider: "openai" | "nvidia",
+  modelName: string,
+) => {
+  const now = Date.now();
+  return {
+    id: `e2e-text-${scenario.scenarioId}-${now}`,
+    title: `E2E ${scenario.scenarioId}`,
+    createdAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    activeMode: "technical_qa",
+    transcript: {
+      messages: scenario.turns.map((turn, index) => ({
+        id: `tr-${now}-${index + 1}`,
+        text: turn.text,
+        timestamp: now + index,
+        source: "stt",
+        speaker: turn.speaker,
+      })),
+      paused: false,
+      updatedAt: now + scenario.turns.length,
+    },
+    screenText: "",
+    companyName: "",
+    roleTitle: "Backend Engineer",
+    resumeText: "",
+    starStories: "",
+    jobDescription: "Backend interview with concise technical follow-ups.",
+    notes: "",
+    profile: "",
+    targetUseCase: "technical interview preparation",
+    preferredLanguage: scenario.expected_behavior?.language === "en" ? "english" : "spanish",
+    codingLanguage: "Python",
+    answerVerbosity: "medium",
+    modelProvider: provider,
+    modelName,
+    question: "",
+    answer: "",
+  };
+};
+
+const waitForAnswerEvents = async (mainClient: CdpClient, provider: string, modelName: string) => {
+  await evaluate(mainClient, `window.callpilotDesktop.startSession({ mode: "technical_qa" })`);
+  const overlayTarget = await getPageTarget((target) => target.url.includes("#/overlay"), 10000);
+  if (!overlayTarget?.webSocketDebuggerUrl) throw new Error("Overlay target did not open for text interview run");
+  const overlayClient = await cdp(overlayTarget.webSocketDebuggerUrl);
+  await overlayClient.send("Runtime.enable");
+  await evaluate(overlayClient, waitForBridgeExpression);
+  await evaluate(overlayClient, `(() => {
+    window.__callpilotE2EEvents = [];
+    window.__callpilotE2EDispose = [
+      window.callpilotDesktop.onAnswerStatus((payload) => window.__callpilotE2EEvents.push({ type: "status", at: Date.now(), payload })),
+      window.callpilotDesktop.onStructuredAnswer((payload) => window.__callpilotE2EEvents.push({ type: "structured", at: Date.now(), payload }))
+    ];
+    return true;
+  })()`);
+
+  recordRealCall();
+  const requestResult = await evaluate<{ ok: boolean; error?: string }>(mainClient, `window.callpilotDesktop.requestAnswer()`);
+  if (!requestResult.ok) throw new Error(`answer:request failed: ${requestResult.error || "unknown"}`);
+  const events = await evaluate<Array<{ type: string; at: number; payload: any }>>(overlayClient, `new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      const events = window.__callpilotE2EEvents || [];
+      const terminal = events.find((event) => event.type === "status" && ["completed", "failed", "cancelled"].includes(event.payload?.status));
+      if (terminal || Date.now() - started > 45000) {
+        resolve(events);
+        return;
+      }
+      setTimeout(tick, 250);
+    };
+    tick();
+  })`);
+  overlayClient.close();
+  const completed = events.find((event) => event.type === "status" && event.payload?.status === "completed");
+  const structured = events.find((event) => event.type === "structured");
+  return {
+    provider,
+    modelName,
+    requestResult,
+    events,
+    completed,
+    structured,
+    answerText: String(completed?.payload?.text || structured?.payload?.renderedText || ""),
+  };
+};
+
 const runRealBehavioral = async (): Promise<RunResult[]> => {
   if (!process.env.OPENAI_API_KEY) {
     return [{
@@ -546,12 +646,151 @@ const runRealBehavioral = async (): Promise<RunResult[]> => {
   }
 };
 
+const runRealTextInterview = async (): Promise<RunResult[]> => {
+  if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
+    return [{
+      scenarioId: "interview_redis_persistence",
+      track: "real_text_interview_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        nvidiaKeyAvailable: false,
+        answerCompleted: false,
+      },
+      judge: null,
+      latency_ms: finishLatency("real-text-interview-blocked"),
+      diagnostics: {
+        blocked: true,
+        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for --track=real-text-interview",
+      },
+    }];
+  }
+  checkBudget(1);
+  if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
+    throw new Error("dist/index.html is missing. Run npm run build before --track=real-text-interview.");
+  }
+
+  const fixture = readJson<{ technical_interview: TextInterviewScenario[] }>("text-fixtures.batch1.json");
+  const scenario = fixture.technical_interview.find((item) => item.scenarioId === "interview_redis_persistence")
+    ?? fixture.technical_interview[0];
+  if (!scenario) throw new Error("No technical_interview scenario found in text-fixtures.batch1.json");
+
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct";
+  const userDataDir = path.join(tmpDir, `user-data-text-${Date.now()}`);
+  fs.mkdirSync(userDataDir, { recursive: true });
+
+  const childEnv = { ...process.env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  const electron = spawn(electronBin, ["."], {
+    cwd: root,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...childEnv,
+      CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
+      CALLPILOT_USER_DATA_DIR: userDataDir,
+    },
+  });
+
+  let stdout = "";
+  let stderr = "";
+  electron.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  electron.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  let client: CdpClient | null = null;
+  try {
+    const mainTarget = await getPageTarget((target) => !target.url.includes("#/overlay") && !target.url.includes("#/coding"), 30000);
+    if (!mainTarget?.webSocketDebuggerUrl) {
+      throw new Error(`Could not find Electron main target.\nstdout:\n${stdout.slice(-1200)}\nstderr:\n${stderr.slice(-1200)}`);
+    }
+    client = await cdp(mainTarget.webSocketDebuggerUrl);
+    await client.send("Runtime.enable");
+    const hasBridge = await evaluate<boolean>(client, waitForBridgeExpression);
+    if (!hasBridge) throw new Error("Desktop bridge did not become available in renderer");
+
+    await evaluate(client, `window.callpilotDesktop.saveSettings(${JSON.stringify({
+      activeMode: "technical_qa",
+      preferredLanguage: scenario.expected_behavior?.language === "en" ? "english" : "spanish",
+      defaultCodingLanguage: "Python",
+      answerVerbosity: "medium",
+      modelProvider: "nvidia",
+      modelName,
+      ollamaBaseUrl: "http://localhost:11434",
+      transcriptionModelName: "gpt-4o-transcribe",
+      liveTranscriptionProvider: "local",
+      liveLatencyPreset: "balanced",
+      liveAudioSource: "both",
+      autoAnswerCooldownMs: 12000,
+      autoAnswerMinConfidence: 0.45,
+    })})`);
+
+    const session = makeTextInterviewSession(scenario, "nvidia", modelName);
+    await evaluate(client, seedSessionExpression(session));
+    const bridgeAfterReload = await evaluate<boolean>(client, waitForBridgeExpression);
+    if (!bridgeAfterReload) throw new Error("Desktop bridge did not recover after text session seed reload");
+
+    const answerStarted = markLatencyStage(createLatencyMetricRun("real-text-interview-answer"), "model_call_start");
+    const answer = await waitForAnswerEvents(client, "nvidia", modelName);
+    const answerDone = markLatencyStage(answerStarted, "response_complete");
+    const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
+    const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
+    const tracePath = endSession?.tracePath || traceStatus?.path || "";
+    const failed = answer.events.find((event) => event.type === "status" && event.payload?.status === "failed");
+    const normalizedAnswer = answer.answerText.toLowerCase();
+    const deterministicChecks = {
+      answerRequestAccepted: answer.requestResult.ok,
+      answerCompleted: Boolean(answer.completed) && !failed,
+      answerNonEmpty: answer.answerText.trim().length > 40,
+      mentionsRedis: /\bredis\b/i.test(answer.answerText),
+      doesNotCallRedisRelational: !/redis\s+(es|is)\s+(una\s+)?(base de datos\s+)?relacional/i.test(normalizedAnswer),
+      noQuestionMarkMojibake: !/\?\?/.test(answer.answerText),
+      traceRecorded: Boolean(tracePath && traceStatus?.eventCount >= 3),
+    };
+    const totalLatency = answerDone.events.find((event) => event.stage === "response_complete")?.elapsedMs ?? 0;
+
+    return [{
+      scenarioId: scenario.scenarioId,
+      track: "real_text_interview_ipc",
+      run: runNumber,
+      deterministicChecks,
+      judge: null,
+      latency_ms: {
+        first_token: null,
+        total: totalLatency,
+      },
+      diagnostics: {
+        provider: "nvidia",
+        modelName,
+        transcript: scenario.turns,
+        answer_received: answer.answerText,
+        answer_events: answer.events.map((event) => ({
+          type: event.type,
+          status: event.payload?.status,
+          answerKind: event.payload?.answer?.kind,
+          textPreview: String(event.payload?.text || event.payload?.renderedText || "").slice(0, 240),
+        })),
+        trace: {
+          path: tracePath,
+          eventCount: traceStatus?.eventCount,
+        },
+      },
+    }];
+  } finally {
+    client?.close();
+    electron.kill();
+  }
+};
+
 const run = async () => {
   checkBudget();
   const results = [
     ...(selectedTrack === "all" || selectedTrack === "no-answer" ? runNoAnswer() : []),
     ...(selectedTrack === "all" || selectedTrack === "coding-fixtures" ? runCodingFixtureValidation() : []),
     ...(selectedTrack === "real-behavioral" ? await runRealBehavioral() : []),
+    ...(selectedTrack === "real-text-interview" ? await runRealTextInterview() : []),
   ];
 
   if (results.length === 0) {

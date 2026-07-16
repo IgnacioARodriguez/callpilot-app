@@ -451,6 +451,21 @@ test("partial turn stability requires unchanged non-truncated text", () => {
   assert.equal(assessPartialTurnStability("Que es SQL exactamente", "Que es SQL exactamente", 1000, 1200).reason, "changed_recently");
 });
 
+test("interview display renderer repairs question-mark mojibake from provider text", () => {
+  const raw = "Ah?? hay un peque??o error: comet?? un error. Redis es r??pida; la usar??a para sesi??n y datos le??dos.";
+
+  const rendered = formatAnswerForDisplay(raw, null, { mode: "interview" });
+
+  assert.match(rendered, /Ahi/);
+  assert.match(rendered, /pequeno/);
+  assert.match(rendered, /cometi un error/);
+  assert.match(rendered, /rapida/);
+  assert.match(rendered, /usaria/);
+  assert.match(rendered, /sesion/);
+  assert.match(rendered, /leidos/);
+  assert.doesNotMatch(rendered, /\?\?/);
+});
+
 test("structured interview answers parse and render compactly", () => {
   const structured = parseStructuredAnswerPayload(JSON.stringify({
     kind: "interview",
