@@ -862,6 +862,15 @@ test("live conversation focuses complete usage questions after incomplete prefix
   assert.equal(extractLatestQuestionFocus(text), "Para que sirve Kafka?");
 });
 
+test("live conversation keeps a completed question over its dangling repeated partial", () => {
+  const text = "interviewer: ¿Qué es SQL? ¿Qué es SQ";
+  const detection = detectQuestionIntent(text, "spanish");
+
+  assert.equal(extractLatestQuestionFocus(text), "¿Qué es SQL?");
+  assert.equal(detection.normalizedText, "¿Qué es SQL?");
+  assert.equal(detection.reason, "definition_question");
+});
+
 test("live conversation focuses the final STT question without punctuation", () => {
   const text = [
     "so earlier we talked about team process and maybe what caches are used for",
@@ -1010,6 +1019,26 @@ test("turn assembler publishes only new text after a committed cumulative provid
   assert.equal(firstCommit.action, "commit");
   assert.equal(nextPartial.action, "publish_live");
   assert.equal(nextPartial.action === "publish_live" ? nextPartial.text : "", "Yep. Or, like, vice versa.");
+});
+
+test("turn assembler ignores dangling repeated partial after a committed question", () => {
+  const state = createTurnAssemblerState();
+  const firstCommit = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "¿Qué es SQL?",
+    isFinal: true,
+    timestamp: 1_000,
+  });
+  const repeatedPartial = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "¿Qué es SQL? ¿Qué es SQ",
+    isFinal: false,
+    timestamp: 1_200,
+  });
+
+  assert.equal(firstCommit.action, "commit");
+  assert.equal(repeatedPartial.action, "ignore");
+  assert.equal(repeatedPartial.reason, "empty");
 });
 
 test("turn assembler commits only the delta when cumulative provider text continues after prior finals", () => {

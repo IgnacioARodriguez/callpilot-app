@@ -63,6 +63,26 @@ const questionStarterGlobal = /\b(what|why|how|when|where|which|who|can|could|wo
 
 const roleLinePattern = /^(interviewer|interviewer_partial|candidate|assistant)\s*:\s*(.+)$/i;
 
+const stripSpeakerPrefix = (text: string): string =>
+  text.replace(/^(interviewer|interviewer_partial|candidate|assistant)\s*:\s*/i, "").trim();
+
+const normalizeQuestionPrefix = (text: string): string =>
+  normalizeForPatterns(stripSpeakerPrefix(text))
+    .replace(/[^a-z0-9+#.]+/g, " ")
+    .trim();
+
+const isCompleteQuestionCandidate = (text: string): boolean =>
+  /[?]\s*$/.test(stripSpeakerPrefix(text));
+
+const isDanglingRepeatOfCompleteQuestion = (partial: string, complete: string): boolean => {
+  const cleanPartial = stripSpeakerPrefix(partial);
+  if (!cleanPartial || /[?!.]\s*$/.test(cleanPartial)) return false;
+  if (!isCompleteQuestionCandidate(complete)) return false;
+  const partialKey = normalizeQuestionPrefix(cleanPartial);
+  const completeKey = normalizeQuestionPrefix(complete);
+  return partialKey.length >= 6 && completeKey.startsWith(partialKey);
+};
+
 const tokenizeContext = (text: string): string[] =>
   normalizeForPatterns(text)
     .match(/[a-z0-9+#.-]{3,}/g)
@@ -114,9 +134,16 @@ export const extractLatestQuestionFocus = (text: string): string => {
     .filter(Boolean);
   const candidates = (segments.length ? segments : [normalized])
     .filter((segment) => questionStarter.test(normalizeForPatterns(segment)) || /[?¿]/.test(segment));
-  const latest = candidates.at(-1);
+  const lastCandidate = candidates.at(-1);
+  const previousComplete = candidates
+    .slice(0, -1)
+    .reverse()
+    .find((candidate) => isCompleteQuestionCandidate(candidate));
+  const latest = lastCandidate && previousComplete && isDanglingRepeatOfCompleteQuestion(lastCandidate, previousComplete)
+    ? previousComplete
+    : lastCandidate;
   if (!latest) return normalized;
-  const cleanedLatest = latest.replace(/^(interviewer|interviewer_partial):\s*/i, "").trim();
+  const cleanedLatest = stripSpeakerPrefix(latest);
   const starterMatches = [...cleanedLatest.matchAll(questionStarterGlobal)];
   const starterFocusMatches = starterMatches.filter((match, index) => {
     const previous = starterMatches[index - 1];

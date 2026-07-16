@@ -20,6 +20,22 @@ export type TurnAssemblyDecision =
 
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
+const normalizeRepeatedPrefix = (text: string): string =>
+  normalize(text)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9+#.]+/g, " ")
+    .trim();
+
+const isDanglingRepeatedPrefix = (committedText: string, nextText: string): boolean => {
+  const cleanNext = normalize(nextText);
+  if (!cleanNext || /[?!.]$/.test(cleanNext)) return false;
+  const committedKey = normalizeRepeatedPrefix(committedText);
+  const nextKey = normalizeRepeatedPrefix(cleanNext);
+  return nextKey.length >= 6 && committedKey.startsWith(nextKey);
+};
+
 export const createTurnAssemblerState = (): TurnAssemblerState => ({
   draftsBySpeaker: {},
   committedBySpeaker: {},
@@ -97,6 +113,7 @@ const stripCommittedPrefix = (committedText: string | undefined, text: string): 
   const committedLower = committed.toLowerCase();
   const cleanLower = clean.toLowerCase();
   if (cleanLower.startsWith(committedLower)) {
+    if (isDanglingRepeatedPrefix(committed, clean.slice(committed.length))) return "";
     return clean.slice(committed.length).replace(/^[\s.,;:!?Â¿Â¡"'`-]+/, "").trim();
   }
   if (committedLower.includes(cleanLower)) return "";
@@ -109,6 +126,7 @@ const stripCommittedPrefix = (committedText: string | undefined, text: string): 
     commonPrefixLength += 1;
   }
   if (commonPrefixLength >= Math.min(40, Math.floor(committed.length * 0.35))) {
+    if (isDanglingRepeatedPrefix(committed, clean.slice(commonPrefixLength))) return "";
     return clean.slice(commonPrefixLength).replace(/^[\s.,;:!?Â¿Â¡"'`-]+/, "").trim();
   }
   return clean;
