@@ -11,7 +11,7 @@ import {
   type PreferredLanguage,
 } from "../../../src/core/index.ts";
 
-type Track = "no-answer" | "coding-fixtures" | "real-behavioral" | "real-text-interview" | "all";
+type Track = "no-answer" | "coding-fixtures" | "coding-objective-smoke" | "real-behavioral" | "real-text-interview" | "all";
 
 interface NoAnswerCase {
   scenarioId: string;
@@ -173,6 +173,73 @@ const runCodingFixtureValidation = (): RunResult[] => {
       },
     };
   });
+};
+
+const runPythonAssertions = (code: string, assertions: string[]) => {
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const scriptPath = path.join(tmpDir, `python-objective-${Date.now()}-${Math.random().toString(36).slice(2)}.py`);
+  const script = [
+    code.trim(),
+    "",
+    ...assertions,
+    "",
+  ].join("\n");
+  fs.writeFileSync(scriptPath, script, "utf8");
+  try {
+    const result = spawnSync(process.env.PYTHON || "python", [scriptPath], {
+      cwd: tmpDir,
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    return {
+      ok: result.status === 0,
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      timedOut: Boolean(result.error && /timed?out/i.test(result.error.message)),
+    };
+  } finally {
+    fs.rmSync(scriptPath, { force: true });
+  }
+};
+
+const runCodingObjectiveSmoke = (): RunResult[] => {
+  const fixture = readJson<{ live_coding_evolutivo: CodingScenario[] }>("text-fixtures.batch1.json");
+  const scenario = fixture.live_coding_evolutivo.find((item) => item.scenarioId === "coding_evol_two_sum");
+  const assertions = scenario?.turns
+    .map((turn) => turn.test_cases?.trim())
+    .filter((value): value is string => Boolean(value)) ?? [];
+  const code = `
+def two_sum(nums, target):
+    seen = {}
+    for index, value in enumerate(nums):
+        complement = target - value
+        if complement in seen:
+            return [seen[complement], index]
+        seen[value] = index
+    return None
+`;
+  const execution = assertions.length > 0
+    ? runPythonAssertions(code, assertions)
+    : { ok: false, status: null, stdout: "", stderr: "missing assertions", timedOut: false };
+  const deterministicChecks = {
+    scenarioFound: Boolean(scenario),
+    hasAccumulatedAssertions: assertions.length >= 2,
+    pythonExecutionPassed: execution.ok,
+    didNotTimeout: !execution.timedOut,
+  };
+  return [{
+    scenarioId: "coding_evol_two_sum",
+    track: "live_coding_objective_smoke",
+    run: runNumber,
+    deterministicChecks,
+    judge: null,
+    latency_ms: finishLatency("track-f-objective-smoke"),
+    diagnostics: {
+      assertions,
+      execution,
+    },
+  }];
 };
 
 const waitForHttp = async (url: string, timeoutMs = 25000): Promise<Response> => {
@@ -789,6 +856,7 @@ const run = async () => {
   const results = [
     ...(selectedTrack === "all" || selectedTrack === "no-answer" ? runNoAnswer() : []),
     ...(selectedTrack === "all" || selectedTrack === "coding-fixtures" ? runCodingFixtureValidation() : []),
+    ...(selectedTrack === "all" || selectedTrack === "coding-objective-smoke" ? runCodingObjectiveSmoke() : []),
     ...(selectedTrack === "real-behavioral" ? await runRealBehavioral() : []),
     ...(selectedTrack === "real-text-interview" ? await runRealTextInterview() : []),
   ];
