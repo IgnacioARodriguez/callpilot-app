@@ -636,7 +636,7 @@ const defaultModelName = (provider, savedModel) => {
     return "default";
   }
   if (provider === "nvidia" && (!savedModel || savedModel === "mock-local" || savedModel === "llama3.1" || savedModel.startsWith("llama3.1:"))) {
-    return "meta/llama-3.2-1b-instruct";
+    return "nvidia/llama-3.3-nemotron-super-49b-v1";
   }
   return savedModel || "";
 };

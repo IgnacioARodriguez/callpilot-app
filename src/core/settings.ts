@@ -28,7 +28,7 @@ export interface AppSettings {
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   modelProvider: "nvidia",
-  modelName: "meta/llama-3.2-1b-instruct",
+  modelName: "nvidia/llama-3.3-nemotron-super-49b-v1",
   ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
   transcriptionModelName: "gpt-4o-transcribe",
   preferredLanguage: "auto",

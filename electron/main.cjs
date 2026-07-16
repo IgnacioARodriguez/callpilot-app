@@ -75,9 +75,11 @@ const stealthState = {
   shortcutLayerActive: true,
 };
 
+const defaultNvidiaAnswerModel = () => (process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1").trim();
+
 const settingsDefaults = {
   modelProvider: "nvidia",
-  modelName: "meta/llama-3.2-1b-instruct",
+  modelName: defaultNvidiaAnswerModel(),
   visionModelName: "meta/llama-3.2-11b-vision-instruct",
   ollamaBaseUrl: "http://localhost:11434",
   transcriptionModelName: "gpt-4o-transcribe",
@@ -262,7 +264,11 @@ const finishSessionTrace = () => {
 
 const readSettings = () => {
   try {
-    return { ...settingsDefaults, ...JSON.parse(fs.readFileSync(settingsPath(), "utf8")) };
+    const settings = { ...settingsDefaults, ...JSON.parse(fs.readFileSync(settingsPath(), "utf8")) };
+    if (settings.modelProvider === "nvidia" && settings.modelName === "meta/llama-3.2-1b-instruct") {
+      settings.modelName = defaultNvidiaAnswerModel();
+    }
+    return settings;
   } catch {
     return { ...settingsDefaults };
   }
@@ -270,6 +276,9 @@ const readSettings = () => {
 
 const writeSettings = (settings) => {
   const next = { ...settingsDefaults, ...(settings && typeof settings === "object" ? settings : {}) };
+  if (next.modelProvider === "nvidia" && next.modelName === "meta/llama-3.2-1b-instruct") {
+    next.modelName = defaultNvidiaAnswerModel();
+  }
   fs.mkdirSync(userDataPath(), { recursive: true });
   fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2));
   return next;
@@ -673,7 +682,7 @@ const providerPresets = {
   nvidia: {
     id: "nvidia",
     protocol: "openai_chat",
-    defaultModel: process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct",
+    defaultModel: defaultNvidiaAnswerModel(),
     auth: "bearer",
     chatUrl: () => normalizeOpenAICompatibleChatUrl(process.env.CALLPILOT_NVIDIA_LLM_URL || "https://integrate.api.nvidia.com/v1/chat/completions"),
     apiKey: (input) => (typeof input?.nvidiaApiKey === "string" && input.nvidiaApiKey.trim() ? input.nvidiaApiKey.trim() : process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || getStoredNvidiaKey()),
@@ -1687,6 +1696,15 @@ ipcMain.handle("model:generate", async (_event, input) => {
   const requestId = createAnswerRequestId(input);
   const normalizedInput = { ...(input || {}), requestId };
   const controller = new AbortController();
+  let timedOut = false;
+  const requestedTimeout = Number(input?.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
+    ? Math.max(1000, Math.min(180000, Math.round(requestedTimeout)))
+    : Number(input?.maxTokens) > 500 ? 120000 : 25000;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   activeAnswerControllers.set(requestId, controller);
   const prompt = input?.prompt;
   appendTraceEvent("model_generate_started", {
@@ -1696,6 +1714,7 @@ ipcMain.handle("model:generate", async (_event, input) => {
     modelName,
     structuredOutput: Boolean(input?.structuredOutput),
     maxTokens: input?.maxTokens,
+    timeoutMs,
     prompt: promptSummary(prompt),
   });
   writeActiveSessionTrace("active");
@@ -1720,10 +1739,11 @@ ipcMain.handle("model:generate", async (_event, input) => {
       provider: provider.id,
       modelName,
       requestId,
-      error: isAbortError(error) ? "cancelled" : error instanceof Error ? error.message : "model_generation_failed",
-      cancelled: isAbortError(error),
+      error: timedOut ? "timeout" : isAbortError(error) ? "cancelled" : error instanceof Error ? error.message : "model_generation_failed",
+      cancelled: !timedOut && isAbortError(error),
     };
   } finally {
+    clearTimeout(timeout);
     activeAnswerControllers.delete(requestId);
   }
   appendTraceEvent("model_generate_completed", {

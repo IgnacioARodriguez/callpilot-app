@@ -830,7 +830,7 @@ const runRealNativelyInterview = async (): Promise<RunResult[]> => {
     throw new Error("dist/index.html is missing. Run npm run build before --track=real-natively-interview.");
   }
 
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
   const useDefaultUserData = process.env.E2E_USE_DEFAULT_USER_DATA === "1" && !process.env.NATIVELY_API_KEY;
   const userDataDir = path.join(tmpDir, `user-data-natively-${Date.now()}`);
   if (!useDefaultUserData) fs.mkdirSync(userDataDir, { recursive: true });
@@ -1316,7 +1316,7 @@ const runRealTextInterviewScenario = async (
   latencyLabel: string,
 ): Promise<RunResult> => {
   checkBudget(1);
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
   const userDataDir = path.join(tmpDir, `user-data-text-${Date.now()}`);
   fs.mkdirSync(userDataDir, { recursive: true });
 
@@ -1502,7 +1502,7 @@ const runRealCoding = async (): Promise<RunResult[]> => {
     .map((turn) => turn.test_cases?.trim())
     .filter((value): value is string => Boolean(value));
 
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
   const userDataDir = path.join(tmpDir, `user-data-coding-${Date.now()}`);
   fs.mkdirSync(userDataDir, { recursive: true });
 
@@ -1628,7 +1628,7 @@ const runRealCodingTurn = async (
   assistantAnswers: string[],
   trackName: string,
 ): Promise<{ result: RunResult; answerText: string; code: string }> => {
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
   const userDataDir = path.join(tmpDir, `user-data-coding-${Date.now()}-${turnCount}`);
   fs.mkdirSync(userDataDir, { recursive: true });
 

@@ -94,7 +94,7 @@ const INTERVIEW_SETUPS: Array<{
 ];
 
 const NVIDIA_MODEL_PRESETS = [
-  "meta/llama-3.2-1b-instruct",
+  "nvidia/llama-3.3-nemotron-super-49b-v1",
   "nvidia/nemotron-mini-4b-instruct",
   "meta/llama-3.1-8b-instruct",
   "nvidia/llama-3.1-nemotron-nano-8b-v1",
