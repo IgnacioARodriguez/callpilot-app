@@ -28,6 +28,14 @@ interface AnswerDetailPayload {
   error?: string;
 }
 
+interface AnswerStatusPayload {
+  requestId?: string;
+  status: "busy" | "completed" | "failed" | "cancelled";
+  text?: string;
+  error?: string;
+  timestamp: number;
+}
+
 interface LiveTranscriptState {
   id: string;
   committed: string;
@@ -131,11 +139,16 @@ export default function OverlayApp() {
   const lastSequenceByRequest = React.useRef<Record<string, number>>({});
   const liveTranscriptByRole = React.useRef<Partial<Record<OverlayMessageRole, LiveTranscriptState>>>({});
   const messagesStateRef = React.useRef<OverlayMessage[]>([]);
+  const activeAnswerRequestIdRef = React.useRef<string | null>(null);
   const messagesRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
     messagesStateRef.current = messages;
   }, [messages]);
+
+  React.useEffect(() => {
+    activeAnswerRequestIdRef.current = activeAnswerRequestId;
+  }, [activeAnswerRequestId]);
 
   React.useEffect(() => {
     const upsertLiveTranscript = (role: OverlayMessageRole, text: string, mode: "partial" | "final") => {
@@ -344,6 +357,51 @@ export default function OverlayApp() {
         setActiveAnswerRequestId(null);
       }
     });
+    const disposeAnswerStatus = window.callpilotDesktop?.onAnswerStatus?.((payload: AnswerStatusPayload) => {
+      const text = (payload.text ?? (payload.error ? `Generation failed: ${payload.error}` : "")).trim();
+      if (!text) return;
+      const terminal = payload.status === "completed" || payload.status === "failed" || payload.status === "cancelled";
+      if (!payload.requestId && payload.status === "busy") {
+        setActivity({ state: "transcribing", label: "Already answering", updatedAt: Date.now() });
+        return;
+      }
+      const id = payload.requestId ? ensureAssistantMessage(payload.requestId) : `assistant-status-${payload.timestamp || Date.now()}`;
+      const assistantMessage: OverlayMessage = {
+        id,
+        requestId: payload.requestId,
+        role: "assistant",
+        text,
+        isStreaming: !terminal,
+      };
+      setMessages((current) => {
+        const exists = current.some((message) => message.id === id);
+        if (exists) {
+          return current.map((message) => message.id === id ? { ...message, ...assistantMessage } : message)
+            .filter(hasMessageContent)
+            .slice(-80);
+        }
+        return [...current, assistantMessage].filter(hasMessageContent).slice(-80);
+      });
+      setActivity({
+        state: terminal ? "idle" : "transcribing",
+        label: payload.status === "failed"
+          ? "Answer failed"
+          : payload.status === "cancelled"
+            ? "Stopped"
+            : payload.status === "busy"
+              ? "Already answering"
+              : "Ready",
+        updatedAt: Date.now(),
+      });
+      if (terminal && payload.requestId) {
+        delete assistantIdByRequest.current[payload.requestId];
+        delete lastSequenceByRequest.current[payload.requestId];
+        if (activeAssistantId.current === id) activeAssistantId.current = null;
+        setActiveAnswerRequestId(null);
+      } else if (payload.requestId) {
+        setActiveAnswerRequestId(payload.requestId);
+      }
+    });
     return () => {
       disposeTranscript?.();
       disposeLive?.();
@@ -351,6 +409,7 @@ export default function OverlayApp() {
       disposeManualAnswerStatus?.();
       disposeHeadline?.();
       disposeChunk?.();
+      disposeAnswerStatus?.();
     };
   }, []);
 
@@ -358,6 +417,7 @@ export default function OverlayApp() {
     const timer = window.setInterval(() => {
       setActivity((current) => {
         if (current.state !== "transcribing") return current;
+        if (activeAnswerRequestIdRef.current) return current;
         return Date.now() - current.updatedAt > 2500
           ? { state: "listening", label: "Listening", updatedAt: current.updatedAt }
           : current;
@@ -449,6 +509,13 @@ export default function OverlayApp() {
                   </div>
                 )}
                 {message.detail && <div className="cp-bubble__detail">{renderFormattedText(message.detail)}</div>}
+                {message.isStreaming && (
+                  <span className="cp-bubble__typing" aria-label="CallPilot is typing">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                )}
               </>
             ) : (
               message.text?.trim() ? <p>{message.isStreaming ? liveTranscriptText(message.text) : message.text}</p> : null

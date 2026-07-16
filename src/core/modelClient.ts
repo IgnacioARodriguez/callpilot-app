@@ -27,6 +27,7 @@ export interface GenerateAnswerInput {
   structuredOutput?: boolean;
   apiKey?: string;
   nativelyApiKey?: string;
+  nvidiaApiKey?: string;
   ollamaBaseUrl?: string;
   maxTokens?: number;
 }
@@ -38,6 +39,7 @@ export interface GenerateAnswerResult {
   modelName: string;
   requestId?: string;
   error?: string;
+  cancelled?: boolean;
 }
 
 export interface OllamaModelInfo {
@@ -49,6 +51,18 @@ export interface OllamaModelInfo {
 export interface OllamaModelListResult {
   ok: boolean;
   models: OllamaModelInfo[];
+  baseUrl: string;
+  error?: string;
+}
+
+export interface ProviderModelInfo {
+  name: string;
+  ownedBy?: string;
+}
+
+export interface ProviderModelListResult {
+  ok: boolean;
+  models: ProviderModelInfo[];
   baseUrl: string;
   error?: string;
 }
@@ -213,6 +227,27 @@ export const extractOllamaModels = (response: unknown): OllamaModelInfo[] => {
       return result;
     })
     .filter((model): model is OllamaModelInfo => Boolean(model));
+};
+
+export const extractOpenAICompatibleModels = (response: unknown): ProviderModelInfo[] => {
+  if (!response || typeof response !== "object") return [];
+  const data = (response as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+  return data
+    .map((model): ProviderModelInfo | undefined => {
+      if (!model || typeof model !== "object") return undefined;
+      const value = model as { id?: unknown; name?: unknown; owned_by?: unknown };
+      const name = typeof value.id === "string" && value.id.trim()
+        ? value.id.trim()
+        : typeof value.name === "string" && value.name.trim()
+          ? value.name.trim()
+          : "";
+      if (!name) return undefined;
+      const result: ProviderModelInfo = { name };
+      if (typeof value.owned_by === "string" && value.owned_by.trim()) result.ownedBy = value.owned_by.trim();
+      return result;
+    })
+    .filter((model): model is ProviderModelInfo => Boolean(model));
 };
 
 export const extractOllamaResponseText = (response: unknown): string => {

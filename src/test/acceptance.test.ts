@@ -66,11 +66,12 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   const overlay = read("src/overlay/OverlayApp.tsx");
   const codingOverlay = read("src/overlay/CodingOverlayApp.tsx");
 
-  for (const needle of ["session:start", "session:end", "session:trace-status", "answer:request", "answer:manual-request", "answer:headline", "answer:detail-chunk", "answer:structured", "transcript:message"]) {
+  for (const needle of ["session:start", "session:end", "session:trace-status", "answer:request", "answer:manual-request", "answer:headline", "answer:detail-chunk", "answer:structured", "answer:status", "transcript:message"]) {
     assert.match(`${main}\n${preload}`, new RegExp(needle.replace(":", ":")));
   }
   assert.match(overlay, /cp-overlay/);
   assert.match(overlay, /requestAnswer/);
+  assert.match(overlay, /onAnswerStatus/);
   assert.match(overlay, /renderFormattedText/);
   assert.match(overlay, /cp-rich-text/);
   assert.match(overlay, /assistantIdByRequest/);
@@ -80,6 +81,7 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   assert.doesNotMatch(main, /pendingDetailChunks/);
   assert.match(main, /sendDetailChunk\(streamEvent\.delta\)/);
   assert.match(main, /sendToSessionWindows\("answer:structured"/);
+  assert.match(main, /sendToSessionWindows\("answer:status"/);
   assert.match(app, /publishStructuredAnswer/);
   assert.match(codingOverlay, /cp-code-panel/);
   assert.match(codingOverlay, /cp-reasoning-panel/);
@@ -110,6 +112,7 @@ test("acceptance: normal sessions persist metrics traces", () => {
 
 test("acceptance: answer providers are routed through a registry", () => {
   const main = read("electron/main.cjs");
+  const preload = read("electron/preload.cjs");
   const app = read("src/main.tsx");
   const modelClient = read("src/core/modelClient.ts");
 
@@ -123,6 +126,12 @@ test("acceptance: answer providers are routed through a registry", () => {
   assert.doesNotMatch(modelClient, /answerSchema/);
   assert.doesNotMatch(`${main}\n${modelClient}`, /structured_interview_answer/);
   assert.match(main, /nvidia/);
+  assert.match(`${main}\n${preload}`, /nvidia:list-models/);
+  assert.match(app, /listNvidiaModels/);
+  assert.match(app, /nvidiaStatus/);
+  assert.match(`${main}\n${preload}\n${app}`, /saveNvidiaKey/);
+  assert.match(`${main}\n${preload}\n${app}`, /clearNvidiaKey/);
+  assert.match(app, /NVIDIA_MODEL_PRESETS/);
 });
 
 test("acceptance: live STT chunks are queued instead of dropped while busy", () => {
@@ -150,6 +159,22 @@ test("acceptance: Natively partial auto-answer waits for turn stability", () => 
   assert.deepEqual(tooSoon, { stable: false, reason: "changed_recently" });
   assert.deepEqual(stable, { stable: true, reason: "stable_partial" });
   assert.equal(shouldAutoAnswer(detection, 20_000, 0), true);
+});
+
+test("acceptance: starting an overlay session resets stale runtime context", () => {
+  const app = read("src/main.tsx");
+  const resetIndex = app.indexOf("const resetSessionRuntimeContext");
+  const startIndex = app.indexOf("const startSession");
+  const callIndex = app.indexOf("resetSessionRuntimeContext();", startIndex);
+  const beginIndex = app.indexOf("window.callpilotDesktop.startSession", startIndex);
+
+  assert.ok(resetIndex > 0, "runtime reset helper must exist");
+  assert.ok(callIndex > startIndex && callIndex < beginIndex, "startSession must reset before opening the overlay session");
+  assert.match(app, /setTranscript\(emptyTranscript\)/);
+  assert.match(app, /setScreenText\(""\)/);
+  assert.match(app, /setQuestion\(""\)/);
+  assert.match(app, /turnAssemblerRef\.current = createTurnAssemblerState\(\)/);
+  assert.doesNotMatch(app.slice(startIndex, app.indexOf("const stopMicRecording", startIndex)), /warmAnswerModel\(\)/);
 });
 
 test("acceptance: Natively final fragments do not pollute live transcript drafts", () => {

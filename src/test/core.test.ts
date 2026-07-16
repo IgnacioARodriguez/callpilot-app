@@ -25,6 +25,7 @@ import {
   cleanOcrText,
   extractOllamaModels,
   extractOllamaResponseText,
+  extractOpenAICompatibleModels,
   extractOpenAICompatibleChatText,
   extractOpenAIResponseText,
   extractOpenAITranscriptionText,
@@ -1462,7 +1463,7 @@ test("settings and sessions accept Natively as an answer provider", () => {
 });
 
 test("settings and sessions accept NVIDIA as an OpenAI-compatible answer provider", () => {
-  const settings = mergeAppSettings({ modelProvider: "nvidia", modelName: "nvidia-default" });
+  const settings = mergeAppSettings({ modelProvider: "nvidia", modelName: "meta/llama-3.2-1b-instruct" });
   const session = createSessionSnapshot({
     activeMode: "technical_qa",
     transcript: new TranscriptBuffer().snapshot(),
@@ -1474,7 +1475,7 @@ test("settings and sessions accept NVIDIA as an OpenAI-compatible answer provide
     codingLanguage: "Python",
     answerVerbosity: "short",
     modelProvider: "nvidia",
-    modelName: "nvidia-default",
+    modelName: "meta/llama-3.2-1b-instruct",
     question: "",
     answer: "",
   });
@@ -1509,6 +1510,24 @@ test("Ollama model list helper extracts installed model names", () => {
   assert.deepEqual(models.map((model) => model.name), ["llama3.1:8b", "qwen2.5-coder:7b"]);
   assert.equal(models[0]?.modifiedAt, "2026-07-03T10:00:00Z");
   assert.equal(models[0]?.size, 123);
+});
+
+test("OpenAI-compatible model list helper extracts provider model ids", () => {
+  const models = extractOpenAICompatibleModels({
+    data: [
+      { id: "meta/llama-3.3-70b-instruct", owned_by: "meta" },
+      { id: "baai/bge-m3" },
+      { name: "custom/chat-model" },
+      { id: "  " },
+    ],
+  });
+
+  assert.deepEqual(models.map((model) => model.name), [
+    "meta/llama-3.3-70b-instruct",
+    "baai/bge-m3",
+    "custom/chat-model",
+  ]);
+  assert.equal(models[0]?.ownedBy, "meta");
 });
 
 test("OpenAI-compatible chat helpers support provider-agnostic LLMs", () => {

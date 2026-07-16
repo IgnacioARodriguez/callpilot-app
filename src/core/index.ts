@@ -84,6 +84,7 @@ export {
   createMockAnswer,
   extractOllamaModels,
   extractOllamaResponseText,
+  extractOpenAICompatibleModels,
   extractOpenAICompatibleChatText,
   extractOpenAIResponseText,
   extractOpenAITranscriptionText,
@@ -100,6 +101,8 @@ export {
   type ModelProvider,
   type OllamaModelInfo,
   type OllamaModelListResult,
+  type ProviderModelInfo,
+  type ProviderModelListResult,
 } from "./modelClient.ts";
 export {
   CURRENT_SESSION_KEY,

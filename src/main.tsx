@@ -92,6 +92,15 @@ const INTERVIEW_SETUPS: Array<{
   },
 ];
 
+const NVIDIA_MODEL_PRESETS = [
+  "meta/llama-3.2-1b-instruct",
+  "nvidia/nemotron-mini-4b-instruct",
+  "meta/llama-3.1-8b-instruct",
+  "nvidia/llama-3.1-nemotron-nano-8b-v1",
+  "meta/llama-3.3-70b-instruct",
+  "meta/llama-3.1-70b-instruct",
+];
+
 const loadSavedSession = (): Partial<SavedSession> => {
   try {
     const raw = window.localStorage.getItem(CURRENT_SESSION_KEY);
@@ -132,6 +141,11 @@ const formatMockAnswer = (context: GlobalContext, userInput: string): string => 
 function App() {
   const savedSession = React.useMemo(loadSavedSession, []);
   type AutoCheck = { label: string; status: "ok" | "warn" | "fail"; detail: string };
+  const [sessionIdentity, setSessionIdentity] = React.useState(() => ({
+    id: savedSession.id,
+    title: savedSession.title,
+    createdAt: savedSession.createdAt,
+  }));
   const [activeTab, setActiveTab] = React.useState<"meeting" | "context" | "config">("meeting");
   const [selectedSetup, setSelectedSetup] = React.useState<InterviewSetupId>("interview");
   const [activeMode, setActiveMode] = React.useState<AssistantModeId>(savedSession.activeMode ?? "live_coding");
@@ -162,6 +176,8 @@ function App() {
   const [ollamaBaseUrl, setOllamaBaseUrl] = React.useState(DEFAULT_OLLAMA_BASE_URL);
   const [ollamaModels, setOllamaModels] = React.useState<string[]>([]);
   const [ollamaStatus, setOllamaStatus] = React.useState("Ollama models not checked yet");
+  const [nvidiaModels, setNvidiaModels] = React.useState<string[]>([]);
+  const [nvidiaStatus, setNvidiaStatus] = React.useState("NVIDIA models not checked yet");
   const [transcriptionModelName, setTranscriptionModelName] = React.useState<string>(DEFAULT_TRANSCRIPTION_MODEL);
   const [liveTranscriptionProvider, setLiveTranscriptionProvider] = React.useState<LiveTranscriptionProvider>("local");
   const [liveLatencyPreset, setLiveLatencyPreset] = React.useState<LiveLatencyPreset>("balanced");
@@ -170,8 +186,13 @@ function App() {
   const [autoAnswerMinConfidence, setAutoAnswerMinConfidence] = React.useState(0.45);
   const [sessionApiKey, setSessionApiKey] = React.useState("");
   const [nativelyApiKey, setNativelyApiKey] = React.useState("");
+  const [nvidiaApiKey, setNvidiaApiKey] = React.useState("");
   const [hasStoredOpenAIKey, setHasStoredOpenAIKey] = React.useState(false);
   const [hasStoredNativelyKey, setHasStoredNativelyKey] = React.useState(false);
+  const [hasStoredNvidiaKey, setHasStoredNvidiaKey] = React.useState(false);
+  const [hasEnvOpenAIKey, setHasEnvOpenAIKey] = React.useState(false);
+  const [hasEnvNativelyKey, setHasEnvNativelyKey] = React.useState(false);
+  const [hasEnvNvidiaKey, setHasEnvNvidiaKey] = React.useState(false);
   const [credentialMessage, setCredentialMessage] = React.useState("");
   const [isRecordingMic, setIsRecordingMic] = React.useState(false);
   const [recordingStatus, setRecordingStatus] = React.useState("");
@@ -282,8 +303,9 @@ function App() {
   const languageLabel = preferredLanguage === "spanish" ? "Spanish" : preferredLanguage === "english" ? "English" : "Auto";
   const listeningLabel = isDictating ? "Listening" : "Stopped";
   const privacyLabel = stealth.callPrivacyAllowed ? "Approved" : "Not approved";
-  const hasOpenAITranscriptionKey = hasStoredOpenAIKey || Boolean(sessionApiKey.trim());
-  const hasNativelyTranscriptionKey = hasStoredNativelyKey || Boolean(nativelyApiKey.trim());
+  const hasOpenAITranscriptionKey = hasStoredOpenAIKey || hasEnvOpenAIKey || Boolean(sessionApiKey.trim());
+  const hasNativelyTranscriptionKey = hasStoredNativelyKey || hasEnvNativelyKey || Boolean(nativelyApiKey.trim());
+  const hasNvidiaAnswerKey = hasStoredNvidiaKey || hasEnvNvidiaKey || Boolean(nvidiaApiKey.trim());
   const speakerLabel = (speaker?: TranscriptSpeaker) => {
     if (speaker === "candidate") return "Me";
     if (speaker === "assistant") return "CallPilot";
@@ -351,12 +373,13 @@ function App() {
     });
   }, []);
 
-  const appendAssistantTranscriptLine = React.useCallback((text: string) => {
+  const appendAssistantTranscriptLine = React.useCallback((text: string, options: { publish?: boolean } = {}) => {
     if (!text.trim()) return;
+    const shouldPublish = options.publish !== false;
     setTranscript((current) => {
       const next = new TranscriptBuffer(current);
       const message = next.append(text, "manual", Date.now(), "assistant");
-      if (message) {
+      if (message && shouldPublish) {
         const recent = recentPublishedTranscriptRef.current;
         const duplicatePublish = recent.speaker === "assistant"
           && Date.now() - recent.timestamp < 1500
@@ -377,7 +400,8 @@ function App() {
     setAnswerVerbosity(setup.answerVerbosity);
     setLiveLatencyPreset(setup.latencyPreset);
     setLiveAudioSource("both");
-    setAutoAnswerEnabled(true);
+    setAutoAnswerEnabled(false);
+    autoAnswerEnabledRef.current = false;
     setDesktopStatus(`${setup.title} setup ready`);
     void window.callpilotDesktop?.saveSettings?.({
       activeMode: setup.mode,
@@ -418,8 +442,12 @@ function App() {
 
     window.callpilotDesktop?.getCredentialStatus()
       .then((status) => {
-        setHasStoredOpenAIKey(status.hasOpenAIKey);
-        setHasStoredNativelyKey(status.hasNativelyKey);
+        setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
+        setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
+        setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+        setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
+        setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
+        setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
         setCredentialMessage(status.encryptionAvailable ? "Encrypted key storage ready" : "Encrypted key storage unavailable");
       })
       .catch(() => {});
@@ -505,9 +533,9 @@ function App() {
 
   React.useEffect(() => {
     const session = createSessionSnapshot({
-      id: savedSession.id,
-      title: savedSession.title,
-      createdAt: savedSession.createdAt,
+      id: sessionIdentity.id,
+      title: sessionIdentity.title,
+      createdAt: sessionIdentity.createdAt,
       activeMode,
       companyName,
       roleTitle,
@@ -544,17 +572,23 @@ function App() {
     resumeText,
     roleTitle,
     screenText,
+    sessionIdentity,
     starStories,
     targetUseCase,
     transcript,
   ]);
 
   const ask = React.useCallback(async (questionOverride?: string) => {
-    if (isGeneratingRef.current) {
+    if (isGeneratingRef.current || activeAnswerRequestIdRef.current) {
       setLiveAssistStatus("Already answering; repeated Answer press ignored");
       void window.callpilotDesktop?.recordSessionEvent?.("manual_answer_ignored", {
         reason: "answer_in_progress",
         activeRequestId: activeAnswerRequestIdRef.current,
+      });
+      void window.callpilotDesktop?.publishAnswerStatus?.({
+        status: "busy",
+        text: "Already answering. Wait for the current result or press Stop to cancel.",
+        timestamp: Date.now(),
       });
       return;
     }
@@ -562,8 +596,22 @@ function App() {
     const requestId = `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     activeAnswerRequestIdRef.current = requestId;
     if (questionOverride !== undefined) setQuestion(questionOverride);
+    setIsGenerating(true);
+    isGeneratingRef.current = true;
+    void window.callpilotDesktop?.publishAnswerStatus?.({
+      requestId,
+      status: "busy",
+      text: "Preparing interview context",
+      timestamp: Date.now(),
+    });
     let builtPrompt = buildPrompt(context, effectiveQuestion);
     try {
+      void window.callpilotDesktop?.publishAnswerStatus?.({
+        requestId,
+        status: "busy",
+        text: "Retrieving relevant background",
+        timestamp: Date.now(),
+      });
       const embedder = await getEvidenceEmbedder();
       const evidence = await pickEvidenceWithEmbeddings(context, effectiveQuestion, embedder, 4);
       builtPrompt = buildPromptWithEvidence(context, effectiveQuestion, evidence);
@@ -574,8 +622,6 @@ function App() {
     if (builtPrompt.debug.answerContextTrace) {
       void window.callpilotDesktop?.recordSessionEvent?.("answer_context_built", { ...builtPrompt.debug.answerContextTrace });
     }
-    setIsGenerating(true);
-    isGeneratingRef.current = true;
     const latencyRun = markLatencyStage(createLatencyMetricRun("answer"), "model_call_start");
     activeLatencyRunIdRef.current = latencyRun.id;
     firstDetailChunkSeenRef.current = false;
@@ -583,17 +629,36 @@ function App() {
 
     try {
       setLiveAssistStatus(`Answering with ${providerLabel}`);
+      void window.callpilotDesktop?.publishAnswerStatus?.({
+        requestId,
+        status: "busy",
+        text: `Calling ${providerLabel}`,
+        timestamp: Date.now(),
+      });
       if (modelProvider === "mock") {
         const text = formatMockAnswer(context, effectiveQuestion);
         setAnswer(text);
-        appendAssistantTranscriptLine(text);
+        void window.callpilotDesktop?.publishAnswerStatus?.({
+          requestId,
+          status: "completed",
+          text,
+          timestamp: Date.now(),
+        });
+        appendAssistantTranscriptLine(text, { publish: false });
         return;
       }
 
       if (!window.callpilotDesktop?.generateAnswer) {
         const text = "Desktop generation requires the desktop app so provider calls stay outside the browser sandbox.";
         setAnswer(text);
-        appendAssistantTranscriptLine(text);
+        void window.callpilotDesktop?.publishAnswerStatus?.({
+          requestId,
+          status: "failed",
+          text,
+          error: "desktop_generation_unavailable",
+          timestamp: Date.now(),
+        });
+        appendAssistantTranscriptLine(text, { publish: false });
         return;
       }
 
@@ -605,8 +670,15 @@ function App() {
         prompt: builtPrompt,
         apiKey: sessionApiKey,
         nativelyApiKey,
+        nvidiaApiKey,
         ollamaBaseUrl,
         maxTokens: context.activeMode === "live_coding" ? 360 : 220,
+      });
+      void window.callpilotDesktop?.publishAnswerStatus?.({
+        requestId,
+        status: "busy",
+        text: "Formatting answer",
+        timestamp: Date.now(),
       });
       const parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
       const grounding = parsedStructured ? assessAnswerGrounding(context, effectiveQuestion, parsedStructured) : null;
@@ -636,8 +708,39 @@ function App() {
             renderedText: text,
             timestamp: Date.now(),
           });
+          void window.callpilotDesktop.publishAnswerStatus?.({
+            requestId,
+            status: "completed",
+            text,
+            timestamp: Date.now(),
+          });
+        } else {
+          void window.callpilotDesktop.publishAnswerStatus?.({
+            requestId,
+            status: result.cancelled ? "cancelled" : result.ok ? "completed" : "failed",
+            text,
+            error: result.error,
+            timestamp: Date.now(),
+          });
         }
-        if (result.ok) appendAssistantTranscriptLine(text);
+        if (result.ok) appendAssistantTranscriptLine(text, { publish: false });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "answer_generation_failed";
+      const text = `Generation failed: ${message}`;
+      if (activeAnswerRequestIdRef.current === requestId) {
+        setAnswer(text);
+        void window.callpilotDesktop?.recordSessionEvent?.("answer_render_failed", {
+          requestId,
+          error: message,
+        });
+        void window.callpilotDesktop?.publishAnswerStatus?.({
+          requestId,
+          status: "failed",
+          text,
+          error: message,
+          timestamp: Date.now(),
+        });
       }
     } finally {
       const activeRunId = activeLatencyRunIdRef.current;
@@ -652,7 +755,7 @@ function App() {
         isGeneratingRef.current = false;
       }
     }
-  }, [appendAssistantTranscriptLine, context, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, providerLabel, question, sessionApiKey]);
+  }, [appendAssistantTranscriptLine, context, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, providerLabel, question, sessionApiKey]);
 
   const cancelAnswer = React.useCallback(async () => {
     const requestId = activeAnswerRequestIdRef.current;
@@ -733,6 +836,32 @@ function App() {
     setTranscriptDraft("");
     window.localStorage.removeItem(CURRENT_SESSION_KEY);
   }, [transcript]);
+
+  const resetSessionRuntimeContext = React.useCallback(() => {
+    const now = Date.now();
+    const emptyTranscript = new TranscriptBuffer().snapshot();
+    setSessionIdentity({ id: `session-${now}`, title: undefined, createdAt: new Date(now).toISOString() });
+    setTranscript(emptyTranscript);
+    transcriptRef.current = emptyTranscript;
+    setScreenText("");
+    setScreenContext(classifyScreenText(""));
+    setProfile("");
+    setQuestion("");
+    setAnswer("");
+    setTranscriptDraft("");
+    setLatencyRuns([]);
+    activeLatencyRunIdRef.current = null;
+    activeAnswerRequestIdRef.current = null;
+    firstDetailChunkSeenRef.current = false;
+    recentSpeechRef.current = [];
+    recentPublishedTranscriptRef.current = { speaker: "unknown", text: "", timestamp: 0 };
+    lastNativelyPartialAnswerRef.current = { text: "", timestamp: 0 };
+    nativelyPartialStabilityRef.current = {};
+    turnAssemblerRef.current = createTurnAssemblerState();
+    setIsGenerating(false);
+    isGeneratingRef.current = false;
+    window.localStorage.removeItem(CURRENT_SESSION_KEY);
+  }, []);
 
   const handleFinalTranscript = React.useCallback((text: string, source: "manual" | "stt" = "stt", speaker: TranscriptSpeaker = "interviewer") => {
     const normalized = normalizeTechnicalTranscript(text).trim();
@@ -1523,9 +1652,10 @@ function App() {
       setDesktopStatus("Overlay requires desktop mode");
       return;
     }
+    resetSessionRuntimeContext();
     applyInterviewSetup(selectedSetup);
-    autoAnswerEnabledRef.current = true;
-    setAutoAnswerEnabled(true);
+    autoAnswerEnabledRef.current = false;
+    setAutoAnswerEnabled(false);
     if (isDictating) stopLiveRecording();
     await toggleDictation(true);
     const result = await window.callpilotDesktop.startSession({ mode: selectedSetup === "live_coding" ? "live_coding" : "technical_qa" });
@@ -1533,12 +1663,11 @@ function App() {
       const traceStatus = await window.callpilotDesktop.getSessionTraceStatus?.();
       setDesktopStatus(traceStatus?.path
         ? `Overlay session started. Metrics trace: ${traceStatus.path}`
-        : "Overlay session started with listening and auto-answer on");
+        : "Overlay session started with listening and auto-answer off");
     } else {
       setDesktopStatus(`Overlay failed: ${result.error ?? "unknown"}`);
     }
-    if (result.ok) void warmAnswerModel();
-  }, [applyInterviewSetup, isDictating, selectedSetup, toggleDictation, warmAnswerModel]);
+  }, [applyInterviewSetup, isDictating, resetSessionRuntimeContext, selectedSetup, toggleDictation]);
 
   const stopMicRecording = () => {
     mediaRecorderRef.current?.stop();
@@ -1615,9 +1744,9 @@ function App() {
   };
 
   const currentSessionSnapshot = React.useCallback(() => createSessionSnapshot({
-    id: savedSession.id,
-    title: savedSession.title,
-    createdAt: savedSession.createdAt,
+    id: sessionIdentity.id,
+    title: sessionIdentity.title,
+    createdAt: sessionIdentity.createdAt,
     activeMode,
     companyName,
     roleTitle,
@@ -1651,10 +1780,8 @@ function App() {
     question,
     resumeText,
     roleTitle,
-    savedSession.createdAt,
-    savedSession.id,
-    savedSession.title,
     screenText,
+    sessionIdentity,
     starStories,
     targetUseCase,
     transcript,
@@ -1690,6 +1817,33 @@ function App() {
       setModelName(names[0] ?? modelName);
     }
   }, [modelName, ollamaBaseUrl]);
+
+  const refreshNvidiaModels = React.useCallback(async (options: { selectFirst?: boolean } = {}) => {
+    if (!window.callpilotDesktop?.listNvidiaModels) {
+      setNvidiaStatus("NVIDIA model detection requires the desktop app");
+      return;
+    }
+    setNvidiaStatus("Checking NVIDIA models...");
+    const result = await window.callpilotDesktop.listNvidiaModels();
+    if (!result.ok) {
+      setNvidiaModels([]);
+      setNvidiaStatus(`Could not list NVIDIA models: ${result.error ?? "unknown error"}`);
+      return;
+    }
+
+    const names = Array.from(new Set(result.models.map((model) => model.name).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    setNvidiaModels(names);
+    if (names.length === 0) {
+      setNvidiaStatus("NVIDIA responded, but no models were returned");
+      return;
+    }
+
+    setNvidiaStatus(`${names.length} NVIDIA model${names.length === 1 ? "" : "s"} available`);
+    if (options.selectFirst && !names.includes(modelName)) {
+      const preferred = NVIDIA_MODEL_PRESETS.find((preset) => names.includes(preset)) ?? names[0];
+      setModelName(preferred ?? modelName);
+    }
+  }, [modelName]);
 
   const runAutoChecks = React.useCallback(async () => {
     setAutoCheckStatus("Running checks...");
@@ -1730,9 +1884,14 @@ function App() {
     const credential = await window.callpilotDesktop?.getCredentialStatus?.().catch(() => undefined);
     const hasKey = Boolean(credential?.hasOpenAIKey || sessionApiKey.trim());
     const hasNativelyKey = Boolean(credential?.hasNativelyKey || nativelyApiKey.trim());
+    const hasNvidiaKey = Boolean(credential?.hasNvidiaKey || nvidiaApiKey.trim());
     if (credential) {
-      setHasStoredOpenAIKey(credential.hasOpenAIKey);
-      setHasStoredNativelyKey(credential.hasNativelyKey);
+      setHasStoredOpenAIKey(Boolean(credential.hasOpenAIStoredKey ?? credential.hasOpenAIKey));
+      setHasStoredNativelyKey(Boolean(credential.hasNativelyStoredKey ?? credential.hasNativelyKey));
+      setHasStoredNvidiaKey(Boolean(credential.hasNvidiaStoredKey ?? credential.hasNvidiaKey));
+      setHasEnvOpenAIKey(Boolean(credential.hasOpenAIEnvKey));
+      setHasEnvNativelyKey(Boolean(credential.hasNativelyEnvKey));
+      setHasEnvNvidiaKey(Boolean(credential.hasNvidiaEnvKey));
       setCredentialMessage(credential.encryptionAvailable ? "Encrypted key storage ready" : "Encrypted key storage unavailable");
     }
     checks.push({
@@ -1746,6 +1905,13 @@ function App() {
       detail: hasNativelyKey
         ? "Natively key is saved. PCM/WebSocket streaming is available for controlled STT testing."
         : "No Natively key found. Add it here only for STT testing.",
+    });
+    checks.push({
+      label: "NVIDIA answers",
+      status: hasNvidiaKey ? "ok" : "warn",
+      detail: hasNvidiaKey
+        ? "NVIDIA key is available for answer generation."
+        : "No NVIDIA key found. Save one or set NVIDIA_API_KEY/CALLPILOT_NVIDIA_API_KEY before launch.",
     });
 
     if (window.callpilotDesktop?.listOllamaModels) {
@@ -1783,7 +1949,9 @@ function App() {
       setLiveTranscriptionProvider("browser");
     }
 
-    const recommendation = hasNativelyKey
+    const recommendation = hasNvidiaKey
+      ? "Recommended: NVIDIA for answer tests, Local Whisper or Natively for transcription."
+      : hasNativelyKey
       ? "Recommended: use Natively next as a controlled STT test; keep Local Whisper/OpenAI available as fallback while we compare quality."
       : hasKey
       ? "Recommended: OpenAI live chunks for transcription, Ollama or OpenAI for answers."
@@ -1796,13 +1964,19 @@ function App() {
 
     setAutoChecks(checks);
     setAutoCheckStatus("Checks complete");
-  }, [browserSpeechRuntimeError, liveAudioSource, liveTranscriptionProvider, modelName, modelProvider, nativelyApiKey, ollamaBaseUrl, sessionApiKey]);
+  }, [browserSpeechRuntimeError, liveAudioSource, liveTranscriptionProvider, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, sessionApiKey]);
 
   React.useEffect(() => {
     if (modelProvider === "ollama") {
       void refreshOllamaModels();
     }
   }, [modelProvider, refreshOllamaModels]);
+
+  React.useEffect(() => {
+    if (modelProvider === "nvidia" && nvidiaModels.length === 0) {
+      void refreshNvidiaModels({ selectFirst: !modelName || modelName === "nvidia-default" });
+    }
+  }, [modelName, modelProvider, nvidiaModels.length, refreshNvidiaModels]);
 
   React.useEffect(() => {
     if (autoCheckRanRef.current) return;
@@ -1825,8 +1999,8 @@ function App() {
     if (provider === "natively" && (modelName === "llama3.1" || modelName.startsWith("llama3.1:"))) {
       setModelName("default");
     }
-    if (provider === "nvidia" && (modelName === "llama3.1" || modelName.startsWith("llama3.1:") || modelName === "default")) {
-      setModelName("nvidia-default");
+    if (provider === "nvidia" && (modelName === "llama3.1" || modelName.startsWith("llama3.1:") || modelName === "default" || modelName === "nvidia-default" || modelName === "mock-local" || !modelName.trim())) {
+      setModelName(NVIDIA_MODEL_PRESETS[0]);
     }
   };
 
@@ -2137,8 +2311,12 @@ function App() {
       return;
     }
     const status = await window.callpilotDesktop.saveOpenAIKey(sessionApiKey);
-    setHasStoredOpenAIKey(status.hasOpenAIKey);
-    setHasStoredNativelyKey(status.hasNativelyKey);
+    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
+    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
+    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
+    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
+    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
     setCredentialMessage(status.ok ? "OpenAI key saved encrypted on this device" : `Could not save key: ${status.error ?? "unknown"}`);
     if (status.ok) setSessionApiKey("");
   };
@@ -2146,8 +2324,12 @@ function App() {
   const clearStoredKey = async () => {
     if (!window.callpilotDesktop?.clearOpenAIKey) return;
     const status = await window.callpilotDesktop.clearOpenAIKey();
-    setHasStoredOpenAIKey(status.hasOpenAIKey);
-    setHasStoredNativelyKey(status.hasNativelyKey);
+    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
+    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
+    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
+    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
+    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
     setCredentialMessage(status.ok ? "Stored OpenAI key cleared" : `Could not clear key: ${status.error ?? "unknown"}`);
   };
 
@@ -2157,8 +2339,12 @@ function App() {
       return;
     }
     const status = await window.callpilotDesktop.saveNativelyKey(nativelyApiKey);
-    setHasStoredOpenAIKey(status.hasOpenAIKey);
-    setHasStoredNativelyKey(status.hasNativelyKey);
+    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
+    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
+    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
+    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
+    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
     setCredentialMessage(status.ok ? "Natively key saved encrypted on this device" : `Could not save Natively key: ${status.error ?? "unknown"}`);
     if (status.ok) {
       setNativelyApiKey("");
@@ -2175,9 +2361,48 @@ function App() {
   const clearStoredNativelyKey = async () => {
     if (!window.callpilotDesktop?.clearNativelyKey) return;
     const status = await window.callpilotDesktop.clearNativelyKey();
-    setHasStoredOpenAIKey(status.hasOpenAIKey);
-    setHasStoredNativelyKey(status.hasNativelyKey);
+    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
+    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
+    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
+    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
+    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
     setCredentialMessage(status.ok ? "Stored Natively key cleared" : `Could not clear Natively key: ${status.error ?? "unknown"}`);
+  };
+
+  const saveNvidiaSessionKey = async () => {
+    if (!window.callpilotDesktop?.saveNvidiaKey) {
+      setCredentialMessage("NVIDIA key storage requires desktop mode");
+      return;
+    }
+    const status = await window.callpilotDesktop.saveNvidiaKey(nvidiaApiKey);
+    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
+    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
+    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
+    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
+    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    setCredentialMessage(status.ok ? "NVIDIA key saved encrypted on this device" : `Could not save NVIDIA key: ${status.error ?? "unknown"}`);
+    if (status.ok) {
+      setNvidiaApiKey("");
+      setModelProvider("nvidia");
+      if (!modelName || modelName === "mock-local" || modelName === "default" || modelName === "nvidia-default" || modelName === "llama3.1" || modelName.startsWith("llama3.1:")) {
+        setModelName(NVIDIA_MODEL_PRESETS[0]);
+      }
+      setLiveAssistStatus("Answer engine switched to NVIDIA");
+    }
+  };
+
+  const clearStoredNvidiaKey = async () => {
+    if (!window.callpilotDesktop?.clearNvidiaKey) return;
+    const status = await window.callpilotDesktop.clearNvidiaKey();
+    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
+    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
+    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
+    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
+    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    setCredentialMessage(status.ok ? "Stored NVIDIA key cleared" : `Could not clear NVIDIA key: ${status.error ?? "unknown"}`);
   };
 
   return (
@@ -2267,7 +2492,7 @@ function App() {
             </div>
             <div className="launch-includes">
               <span><Mic size={14} /> Starts listening</span>
-              <span><Sparkles size={14} /> Enables auto-answer</span>
+              <span><Sparkles size={14} /> Auto-answer off by default</span>
               {selectedSetup === "live_coding" && <span><ScanText size={14} /> Uses screen context for coding</span>}
             </div>
             <div className="quick-status">
@@ -2411,13 +2636,26 @@ function App() {
               </label>
               <label>
                 Model
-                <small>{modelProvider === "ollama" ? "Choose one of your installed local Ollama models." : modelProvider === "natively" ? "Natively answer model or default if your account chooses it." : modelProvider === "nvidia" ? "NVIDIA NIM model name or default from your env setup." : "The model that writes the answer."}</small>
+                <small>{modelProvider === "ollama" ? "Choose one of your installed local Ollama models." : modelProvider === "natively" ? "Natively answer model or default if your account chooses it." : modelProvider === "nvidia" ? "NVIDIA NIM model name. Pick a preset or paste a model id from build.nvidia.com." : "The model that writes the answer."}</small>
                 {modelProvider === "ollama" && ollamaModels.length > 0 ? (
                   <select value={modelName} onChange={(event) => setModelName(event.target.value)}>
                     {ollamaModels.map((name) => <option key={name} value={name}>{name}</option>)}
                   </select>
+                ) : modelProvider === "nvidia" ? (
+                  <>
+                    <select
+                      value={(nvidiaModels.length > 0 ? nvidiaModels : NVIDIA_MODEL_PRESETS).includes(modelName) ? modelName : "custom"}
+                      onChange={(event) => {
+                        if (event.target.value !== "custom") setModelName(event.target.value);
+                      }}
+                    >
+                      {(nvidiaModels.length > 0 ? nvidiaModels : NVIDIA_MODEL_PRESETS).map((name) => <option key={name} value={name}>{name}</option>)}
+                      <option value="custom">Custom model id</option>
+                    </select>
+                    <input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={NVIDIA_MODEL_PRESETS[0]} />
+                  </>
                 ) : (
-                  <input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={modelProvider === "ollama" ? "Example: llama3.1:8b" : modelProvider === "natively" ? "default" : modelProvider === "nvidia" ? "nvidia-default" : undefined} />
+                  <input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={modelProvider === "ollama" ? "Example: llama3.1:8b" : modelProvider === "natively" ? "default" : undefined} />
                 )}
               </label>
               {modelProvider === "ollama" && (
@@ -2431,6 +2669,15 @@ function App() {
                 <div className="setting-note">
                   <span>{ollamaStatus}</span>
                   <button type="button" onClick={() => refreshOllamaModels({ selectFirst: true })}>
+                    <RefreshCw size={16} />
+                    Detect models
+                  </button>
+                </div>
+              )}
+              {modelProvider === "nvidia" && (
+                <div className="setting-note">
+                  <span>{nvidiaStatus}</span>
+                  <button type="button" onClick={() => refreshNvidiaModels({ selectFirst: true })}>
                     <RefreshCw size={16} />
                     Detect models
                   </button>
@@ -2494,7 +2741,9 @@ function App() {
               <div className="button-row">
                 <button onClick={saveNativelySessionKey} disabled={!nativelyApiKey.trim()}>Save Natively key</button>
                 <button onClick={clearStoredNativelyKey} disabled={!hasStoredNativelyKey}>Clear Natively key</button>
-                <span className={hasStoredNativelyKey ? "helper good" : "helper"}>{hasStoredNativelyKey ? "Stored Natively key available" : "No stored Natively key"}</span>
+                <span className={hasNativelyTranscriptionKey ? "helper good" : "helper"}>
+                  {hasStoredNativelyKey ? "Stored Natively key available" : hasEnvNativelyKey ? "Natively key loaded from .env" : "No Natively key found"}
+                </span>
               </div>
               {liveTranscriptionProvider === "natively" && (
                 <div className="setting-note">
@@ -2641,7 +2890,32 @@ function App() {
                 <button onClick={saveSessionKey} disabled={!sessionApiKey.trim()}>Save encrypted</button>
                 <button onClick={clearStoredKey} disabled={!hasStoredOpenAIKey}>Clear saved</button>
               </div>
-              <span className={hasStoredOpenAIKey ? "helper good" : "helper"}>{hasStoredOpenAIKey ? "Stored OpenAI key available" : credentialMessage || "No stored key"}</span>
+              <span className={hasOpenAITranscriptionKey ? "helper good" : "helper"}>
+                {hasStoredOpenAIKey ? "Stored OpenAI key available" : hasEnvOpenAIKey ? "OpenAI key loaded from .env" : credentialMessage || "No OpenAI key found"}
+              </span>
+            </section>
+          )}
+
+          {modelProvider === "nvidia" && (
+            <section className="panel">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">NVIDIA key</span>
+                  <h2>NIM answer engine</h2>
+                </div>
+              </div>
+              <label>
+                NVIDIA API key
+                <small>Used only for NVIDIA answer generation. You can also launch with NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY.</small>
+                <input type="password" value={nvidiaApiKey} onChange={(event) => setNvidiaApiKey(event.target.value)} placeholder="nvapi-..." />
+              </label>
+              <div className="button-row">
+                <button onClick={saveNvidiaSessionKey} disabled={!nvidiaApiKey.trim()}>Save NVIDIA key</button>
+                <button onClick={clearStoredNvidiaKey} disabled={!hasStoredNvidiaKey}>Clear NVIDIA key</button>
+              </div>
+              <span className={hasNvidiaAnswerKey ? "helper good" : "helper"}>
+                {hasStoredNvidiaKey ? "Stored NVIDIA key available" : hasEnvNvidiaKey ? "NVIDIA key loaded from .env" : hasNvidiaAnswerKey ? "NVIDIA key available for answers" : credentialMessage || "No NVIDIA key found"}
+              </span>
             </section>
           )}
 

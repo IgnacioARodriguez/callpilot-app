@@ -72,9 +72,8 @@ const stealthState = {
 };
 
 const settingsDefaults = {
-  modelProvider: "mock",
-  // ASSUMPTION: no OpenAI API key was available during implementation to verify /v1/models, so OpenAI model selection is user-configured instead of hardcoded.
-  modelName: "",
+  modelProvider: "nvidia",
+  modelName: "meta/llama-3.2-1b-instruct",
   ollamaBaseUrl: "http://localhost:11434",
   transcriptionModelName: "gpt-4o-transcribe",
   preferredLanguage: "auto",
@@ -95,6 +94,13 @@ const normalizeOpenAICompatibleChatUrl = (url) => {
   const clean = String(url || "").trim().replace(/\/+$/, "");
   if (!clean) return "";
   return /\/chat\/completions$/i.test(clean) ? clean : `${clean}/chat/completions`;
+};
+const openAICompatibleModelsUrl = (chatUrl) => {
+  const clean = String(chatUrl || "").trim().replace(/\/+$/, "");
+  if (!clean) return "";
+  if (/\/chat\/completions$/i.test(clean)) return clean.replace(/\/chat\/completions$/i, "/models");
+  if (/\/completions$/i.test(clean)) return clean.replace(/\/completions$/i, "/models");
+  return `${clean}/models`;
 };
 const nativelyTranscriptionUrl = () => (process.env.CALLPILOT_NATIVELY_STT_URL || "wss://api.natively.software/v1/transcribe").trim();
 const nativelyLLMUrl = () => (process.env.CALLPILOT_NATIVELY_LLM_URL || "https://api.natively.software/v1/chat/completions").trim();
@@ -295,16 +301,41 @@ const getStoredNativelyKey = () => {
   }
 };
 
-const credentialStatus = () => ({
-  ok: true,
-  hasOpenAIKey: Boolean(getStoredOpenAIKey()),
-  hasNativelyKey: Boolean(getStoredNativelyKey()),
-  encryptionAvailable: safeStorage.isEncryptionAvailable(),
-});
+const getStoredNvidiaKey = () => {
+  const encrypted = readCredentials().nvidiaApiKey;
+  if (!encrypted || typeof encrypted !== "string" || !safeStorage.isEncryptionAvailable()) return "";
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+  } catch {
+    return "";
+  }
+};
+
+const credentialStatus = () => {
+  const hasOpenAIStoredKey = Boolean(getStoredOpenAIKey());
+  const hasNativelyStoredKey = Boolean(getStoredNativelyKey());
+  const hasNvidiaStoredKey = Boolean(getStoredNvidiaKey());
+  const hasOpenAIEnvKey = Boolean(process.env.OPENAI_API_KEY);
+  const hasNativelyEnvKey = Boolean(process.env.NATIVELY_API_KEY);
+  const hasNvidiaEnvKey = Boolean(process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY);
+  return {
+    ok: true,
+    hasOpenAIKey: hasOpenAIStoredKey || hasOpenAIEnvKey,
+    hasNativelyKey: hasNativelyStoredKey || hasNativelyEnvKey,
+    hasNvidiaKey: hasNvidiaStoredKey || hasNvidiaEnvKey,
+    hasOpenAIStoredKey,
+    hasNativelyStoredKey,
+    hasNvidiaStoredKey,
+    hasOpenAIEnvKey,
+    hasNativelyEnvKey,
+    hasNvidiaEnvKey,
+    encryptionAvailable: safeStorage.isEncryptionAvailable(),
+  };
+};
 
 const saveStoredOpenAIKey = (apiKey) => {
   if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, hasOpenAIKey: false, hasNativelyKey: Boolean(getStoredNativelyKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
+    return { ok: false, hasOpenAIKey: false, hasNativelyKey: Boolean(getStoredNativelyKey()), hasNvidiaKey: Boolean(getStoredNvidiaKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
   }
   const key = typeof apiKey === "string" ? apiKey.trim() : "";
   if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
@@ -317,13 +348,26 @@ const saveStoredOpenAIKey = (apiKey) => {
 
 const saveStoredNativelyKey = (apiKey) => {
   if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: false, encryptionAvailable: false, error: "safe_storage_unavailable" };
+    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: false, hasNvidiaKey: Boolean(getStoredNvidiaKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
   }
   const key = typeof apiKey === "string" ? apiKey.trim() : "";
   if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
   saveCredentials({
     ...readCredentials(),
     nativelyApiKey: safeStorage.encryptString(key).toString("base64"),
+  });
+  return { ...credentialStatus(), ok: true };
+};
+
+const saveStoredNvidiaKey = (apiKey) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: Boolean(getStoredNativelyKey()), hasNvidiaKey: false, encryptionAvailable: false, error: "safe_storage_unavailable" };
+  }
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
+  saveCredentials({
+    ...readCredentials(),
+    nvidiaApiKey: safeStorage.encryptString(key).toString("base64"),
   });
   return { ...credentialStatus(), ok: true };
 };
@@ -338,6 +382,13 @@ const clearStoredOpenAIKey = () => {
 const clearStoredNativelyKey = () => {
   const credentials = readCredentials();
   delete credentials.nativelyApiKey;
+  saveCredentials(credentials);
+  return { ...credentialStatus(), ok: true };
+};
+
+const clearStoredNvidiaKey = () => {
+  const credentials = readCredentials();
+  delete credentials.nvidiaApiKey;
   saveCredentials(credentials);
   return { ...credentialStatus(), ok: true };
 };
@@ -615,10 +666,10 @@ const providerPresets = {
   nvidia: {
     id: "nvidia",
     protocol: "openai_chat",
-    defaultModel: process.env.CALLPILOT_NVIDIA_MODEL || "nvidia-default",
+    defaultModel: process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct",
     auth: "bearer",
     chatUrl: () => normalizeOpenAICompatibleChatUrl(process.env.CALLPILOT_NVIDIA_LLM_URL || "https://integrate.api.nvidia.com/v1/chat/completions"),
-    apiKey: (input) => (typeof input?.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim() : process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || ""),
+    apiKey: (input) => (typeof input?.nvidiaApiKey === "string" && input.nvidiaApiKey.trim() ? input.nvidiaApiKey.trim() : process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || getStoredNvidiaKey()),
   },
 };
 
@@ -816,6 +867,24 @@ const extractOllamaModels = (response) => {
         name,
         modifiedAt: typeof model?.modified_at === "string" ? model.modified_at : undefined,
         size: typeof model?.size === "number" ? model.size : undefined,
+      };
+    })
+    .filter(Boolean);
+};
+
+const extractOpenAICompatibleModels = (response) => {
+  if (!Array.isArray(response?.data)) return [];
+  return response.data
+    .map((model) => {
+      const name = typeof model?.id === "string" && model.id.trim()
+        ? model.id.trim()
+        : typeof model?.name === "string" && model.name.trim()
+          ? model.name.trim()
+          : "";
+      if (!name) return undefined;
+      return {
+        name,
+        ownedBy: typeof model?.owned_by === "string" && model.owned_by.trim() ? model.owned_by.trim() : undefined,
       };
     })
     .filter(Boolean);
@@ -1343,14 +1412,27 @@ ipcMain.handle("answer:publish-structured", (_event, payload) => {
   sendToSessionWindows("answer:structured", payload);
   return { ok: true };
 });
+ipcMain.handle("answer:publish-status", (_event, payload) => {
+  appendTraceEvent("answer_status_published", {
+    requestId: payload?.requestId,
+    status: payload?.status,
+    error: payload?.error,
+    renderedText: textSummary(payload?.text, 160),
+  });
+  writeActiveSessionTrace("active");
+  sendToSessionWindows("answer:status", payload);
+  return { ok: true };
+});
 ipcMain.handle("settings:get", () => readSettings());
 ipcMain.handle("settings:save", (_event, settings) => writeSettings(settings));
 ipcMain.handle("shortcuts:health", () => shortcutHealth.map((item) => ({ ...item })));
 ipcMain.handle("credentials:status", () => credentialStatus());
 ipcMain.handle("credentials:save-openai-key", (_event, apiKey) => saveStoredOpenAIKey(apiKey));
 ipcMain.handle("credentials:save-natively-key", (_event, apiKey) => saveStoredNativelyKey(apiKey));
+ipcMain.handle("credentials:save-nvidia-key", (_event, apiKey) => saveStoredNvidiaKey(apiKey));
 ipcMain.handle("credentials:clear-openai-key", () => clearStoredOpenAIKey());
 ipcMain.handle("credentials:clear-natively-key", () => clearStoredNativelyKey());
+ipcMain.handle("credentials:clear-nvidia-key", () => clearStoredNvidiaKey());
 ipcMain.handle("natively:start", async (_event, input) => {
   const startedAt = Date.now();
   const WebSocketCtor = globalThis.WebSocket;
@@ -1545,6 +1627,49 @@ ipcMain.handle("ollama:list-models", async (_event, input) => {
       models: [],
       baseUrl,
       error: error instanceof Error ? `ollama_unavailable: ${error.message}` : "ollama_unavailable",
+    };
+  }
+});
+ipcMain.handle("nvidia:list-models", async () => {
+  const provider = providerPresets.nvidia;
+  const modelsUrl = openAICompatibleModelsUrl(provider.chatUrl());
+  const apiKey = provider.apiKey?.({}) ?? "";
+  if (!apiKey) {
+    return {
+      ok: false,
+      models: [],
+      baseUrl: modelsUrl,
+      error: "missing_nvidia_api_key",
+    };
+  }
+  try {
+    const response = await fetch(modelsUrl, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        ok: false,
+        models: [],
+        baseUrl: modelsUrl,
+        error: payload?.error?.message ?? payload?.error ?? `nvidia_models_http_${response.status}`,
+      };
+    }
+    return {
+      ok: true,
+      models: extractOpenAICompatibleModels(payload),
+      baseUrl: modelsUrl,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      models: [],
+      baseUrl: modelsUrl,
+      error: error instanceof Error ? `nvidia_models_unavailable: ${error.message}` : "nvidia_models_unavailable",
     };
   }
 });

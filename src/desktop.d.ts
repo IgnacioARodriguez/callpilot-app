@@ -1,4 +1,4 @@
-import type { AssistantModeId, AudioTranscriptionResult, GenerateAnswerInput, GenerateAnswerResult, LiveAudioSource, LiveLatencyPreset, LiveTranscriptionProvider, ModelProvider, OcrLanguage, OcrResult, OllamaModelListResult, PrivacyCheckResult, SavedSession, StealthState, StructuredAnswerPayload } from "./core";
+import type { AssistantModeId, AudioTranscriptionResult, GenerateAnswerInput, GenerateAnswerResult, LiveAudioSource, LiveLatencyPreset, LiveTranscriptionProvider, ModelProvider, OcrLanguage, OcrResult, OllamaModelListResult, PrivacyCheckResult, ProviderModelListResult, SavedSession, StealthState, StructuredAnswerPayload } from "./core";
 
 export type DesktopShortcutAction =
   | { type: "ask" }
@@ -41,6 +41,13 @@ export interface CredentialStatus {
   ok: boolean;
   hasOpenAIKey: boolean;
   hasNativelyKey: boolean;
+  hasNvidiaKey: boolean;
+  hasOpenAIStoredKey?: boolean;
+  hasNativelyStoredKey?: boolean;
+  hasNvidiaStoredKey?: boolean;
+  hasOpenAIEnvKey?: boolean;
+  hasNativelyEnvKey?: boolean;
+  hasNvidiaEnvKey?: boolean;
   encryptionAvailable: boolean;
   error?: string;
 }
@@ -123,7 +130,9 @@ declare global {
       publishTranscriptMessage: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishLiveTranscript: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishStructuredAnswer: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => Promise<{ ok: boolean }>;
+      publishAnswerStatus: (payload: { requestId?: string; status: "busy" | "completed" | "failed" | "cancelled"; text?: string; error?: string; timestamp: number }) => Promise<{ ok: boolean }>;
       listOllamaModels: (input?: { ollamaBaseUrl?: string }) => Promise<OllamaModelListResult>;
+      listNvidiaModels: () => Promise<ProviderModelListResult>;
       generateAnswer: (input: GenerateAnswerInput) => Promise<GenerateAnswerResult>;
       transcribeAudio: (input: {
         arrayBuffer: ArrayBuffer;
@@ -146,8 +155,10 @@ declare global {
       getCredentialStatus: () => Promise<CredentialStatus>;
       saveOpenAIKey: (apiKey: string) => Promise<CredentialStatus>;
       saveNativelyKey: (apiKey: string) => Promise<CredentialStatus>;
+      saveNvidiaKey: (apiKey: string) => Promise<CredentialStatus>;
       clearOpenAIKey: () => Promise<CredentialStatus>;
       clearNativelyKey: () => Promise<CredentialStatus>;
+      clearNvidiaKey: () => Promise<CredentialStatus>;
       exportSessionFile: (session: SavedSession) => Promise<SessionFileResult>;
       importSessionFile: () => Promise<SessionFileResult>;
       getSettings: () => Promise<DesktopSettings>;
@@ -159,6 +170,7 @@ declare global {
       onAnswerHeadline: (callback: (payload: { requestId?: string; headline: string; keywords: string[] }) => void) => () => void;
       onAnswerDetailChunk: (callback: (payload: { requestId?: string; sequence?: number; text?: string; done?: boolean; error?: string } | string) => void) => () => void;
       onStructuredAnswer: (callback: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => void) => () => void;
+      onAnswerStatus: (callback: (payload: { requestId?: string; status: "busy" | "completed" | "failed" | "cancelled"; text?: string; error?: string; timestamp: number }) => void) => () => void;
       onTranscriptMessage: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onLiveTranscript: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onNativelyTranscript: (callback: (payload: { streamId: string; text: string; isFinal: boolean; confidence: number }) => void) => () => void;

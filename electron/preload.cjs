@@ -21,7 +21,9 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   publishTranscriptMessage: (message) => ipcRenderer.invoke("transcript:publish", message),
   publishLiveTranscript: (message) => ipcRenderer.invoke("transcript:publish-live", message),
   publishStructuredAnswer: (payload) => ipcRenderer.invoke("answer:publish-structured", payload),
+  publishAnswerStatus: (payload) => ipcRenderer.invoke("answer:publish-status", payload),
   listOllamaModels: (input) => ipcRenderer.invoke("ollama:list-models", input),
+  listNvidiaModels: () => ipcRenderer.invoke("nvidia:list-models"),
   generateAnswer: (input) => ipcRenderer.invoke("model:generate", input),
   transcribeAudio: (input) => ipcRenderer.invoke("audio:transcribe", input),
   startNativelyTranscription: (input) => ipcRenderer.invoke("natively:start", input),
@@ -30,8 +32,10 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   getCredentialStatus: () => ipcRenderer.invoke("credentials:status"),
   saveOpenAIKey: (apiKey) => ipcRenderer.invoke("credentials:save-openai-key", apiKey),
   saveNativelyKey: (apiKey) => ipcRenderer.invoke("credentials:save-natively-key", apiKey),
+  saveNvidiaKey: (apiKey) => ipcRenderer.invoke("credentials:save-nvidia-key", apiKey),
   clearOpenAIKey: () => ipcRenderer.invoke("credentials:clear-openai-key"),
   clearNativelyKey: () => ipcRenderer.invoke("credentials:clear-natively-key"),
+  clearNvidiaKey: () => ipcRenderer.invoke("credentials:clear-nvidia-key"),
   exportSessionFile: (session) => ipcRenderer.invoke("session:export-file", session),
   importSessionFile: () => ipcRenderer.invoke("session:import-file"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
@@ -66,6 +70,11 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on("answer:structured", handler);
     return () => ipcRenderer.removeListener("answer:structured", handler);
+  },
+  onAnswerStatus: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("answer:status", handler);
+    return () => ipcRenderer.removeListener("answer:status", handler);
   },
   onTranscriptMessage: (callback) => {
     const handler = (_event, message) => callback(message);

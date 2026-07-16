@@ -313,6 +313,31 @@ button:disabled {
   gap: 6px;
 }
 
+.cp-bubble__typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 18px;
+  margin-top: 2px;
+}
+
+.cp-bubble__typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #534ab7;
+  opacity: 0.35;
+  animation: cp-typing-bounce 1s infinite ease-in-out;
+}
+
+.cp-bubble__typing i:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.cp-bubble__typing i:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
 .cp-coding {
   height: 100vh;
   background: rgba(248, 250, 252, 0.84);
