@@ -27,6 +27,7 @@ export {
 } from "./answerPayload.ts";
 export {
   assessAnswerGrounding,
+  assessPlainInterviewAnswerGrounding,
   withNoAnswerForUngroundedDrift,
   type AnswerGroundingAssessment,
 } from "./answerGrounding.ts";

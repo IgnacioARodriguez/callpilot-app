@@ -9,6 +9,7 @@ import {
   SESSION_LIBRARY_KEY,
   TranscriptBuffer,
   assessAnswerGrounding,
+  assessPlainInterviewAnswerGrounding,
   assembleTurn,
   browserRecognitionLanguage,
   buildPrompt,
@@ -691,14 +692,42 @@ function App() {
           unsupportedTerms: grounding.unsupportedTerms,
         });
       }
-      const structured = parsedStructured && grounding
+      let structured = parsedStructured && grounding
         ? withNoAnswerForUngroundedDrift(parsedStructured, grounding)
         : parsedStructured;
-      const text = result.ok
+      let text = result.ok
         ? formatAnswerForDisplay(result.text, structured, {
           mode: context.activeMode === "live_coding" ? "coding" : "interview",
         })
         : `Generation failed: ${result.error ?? "unknown error"}`;
+      if (result.ok && !parsedStructured && context.activeMode === "behavioral") {
+        const plainGrounding = assessPlainInterviewAnswerGrounding(context, effectiveQuestion, text);
+        void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
+          requestId,
+          ok: plainGrounding.ok,
+          reason: plainGrounding.reason,
+          overlapCount: plainGrounding.overlapCount,
+          unsupportedTerms: plainGrounding.unsupportedTerms,
+          source: "plain_text",
+        });
+        if (!plainGrounding.ok) {
+          structured = withNoAnswerForUngroundedDrift({
+            kind: "interview",
+            payload: {
+              version: "1",
+              answerNeeded: true,
+              intent: "behavioral",
+              spokenAnswer: text,
+              keyPoints: [],
+              correction: { needed: false, transition: null, correctedClaim: null },
+              assumptions: [],
+              evidenceRefs: [],
+              followUpHint: null,
+            },
+          }, plainGrounding);
+          text = formatAnswerForDisplay(text, structured, { mode: "interview" });
+        }
+      }
       if (activeAnswerRequestIdRef.current === requestId) {
         setAnswer(text);
         if (result.ok && structured) {

@@ -8,6 +8,7 @@ import {
   DEFAULT_TRANSCRIPTION_MODEL,
   TranscriptBuffer,
   assessAnswerGrounding,
+  assessPlainInterviewAnswerGrounding,
   assembleTurn,
   buildOllamaChatRequest,
   buildRealtimeTranscriptionSessionUpdate,
@@ -205,6 +206,17 @@ test("prompt builder grounds interview answers in resume, STAR stories, and job 
   assert.ok(prompt.system.includes("Use resume, STAR stories"));
   assert.ok(prompt.user.includes("<company_name>\nEbury"));
   assert.ok(prompt.user.includes("<selected_evidence>"));
+});
+
+test("prompt builder forbids invented behavioral specifics without evidence", () => {
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "behavioral", preferredLanguage: "english" }),
+    "interviewer: Tell me about a time you handled a production incident.",
+  );
+
+  assert.match(prompt.system, /never invent concrete incidents/i);
+  assert.match(prompt.system, /user counts, timelines, outages, metrics/i);
+  assert.match(prompt.system, /placeholders/i);
 });
 
 test("technical definitions do not force candidate background into the prompt", () => {
@@ -1096,6 +1108,97 @@ test("answer grounding guard blocks unsupported topic drift", () => {
     assert.equal(guarded.payload.intent, "no_answer");
     assert.equal(guarded.payload.answerNeeded, false);
   }
+});
+
+test("answer grounding guard blocks invented behavioral specifics", () => {
+  const context = createGlobalContext({
+    activeMode: "behavioral",
+    preferredLanguage: "english",
+    resumeText: "Backend engineer with production incident runbook experience.",
+  });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "behavioral",
+      responseType: null,
+      spokenAnswer: "As a Backend Engineer at TechCorp, I handled a Black Friday outage in 2022 that affected over 10,000 users. I found the root cause and rolled back the deployment within 15 minutes.",
+      keyPoints: ["TechCorp", "10,000 users", "15 minutes"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "Describe a production incident you handled.", structured);
+  const guarded = withNoAnswerForUngroundedDrift(structured, assessment);
+
+  assert.equal(assessment.ok, false);
+  assert.equal(assessment.reason, "unsupported_behavioral_specifics");
+  assert.match(assessment.unsupportedTerms.join(" "), /TechCorp|Black Friday|10,000 users|15 minutes/);
+  assert.equal(guarded.kind, "interview");
+  if (guarded.kind === "interview") {
+    assert.equal(guarded.payload.intent, "no_answer");
+    assert.match(guarded.payload.spokenAnswer, /sin inventar datos/i);
+  }
+});
+
+test("answer grounding guard allows supported behavioral specifics", () => {
+  const context = createGlobalContext({
+    activeMode: "behavioral",
+    preferredLanguage: "english",
+    starStories: "At TechCorp during Black Friday 2022, I handled a production incident affecting 10,000 users and rolled back within 15 minutes after finding the root cause.",
+  });
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "behavioral",
+      responseType: null,
+      spokenAnswer: "At TechCorp during Black Friday 2022, I handled a production incident affecting 10,000 users and rolled back within 15 minutes after finding the root cause.",
+      keyPoints: ["TechCorp", "10,000 users", "15 minutes"],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  const assessment = assessAnswerGrounding(context, "Describe a production incident you handled.", structured);
+
+  assert.equal(assessment.ok, true);
+});
+
+test("plain behavioral answer grounding blocks unstructured invented specifics", () => {
+  const context = createGlobalContext({
+    activeMode: "behavioral",
+    preferredLanguage: "english",
+    resumeText: "Backend engineer with production incident runbook experience.",
+  });
+  const assessment = assessPlainInterviewAnswerGrounding(
+    context,
+    "Describe a production incident you handled.",
+    "**Respuesta:** En mi ultimo rol como Backend Engineer en TechCorp, el servicio UserSync afecto 10,000 users durante Black Friday.",
+  );
+
+  assert.equal(assessment.ok, false);
+  assert.equal(assessment.reason, "unsupported_behavioral_specifics");
+  assert.match(assessment.unsupportedTerms.join(" "), /TechCorp|UserSync|10,000 users|Black Friday/);
 });
 
 test("answer grounding guard allows explicitly mentioned technical topics", () => {

@@ -11,7 +11,14 @@ import {
   type PreferredLanguage,
 } from "../../../src/core/index.ts";
 
-type Track = "no-answer" | "coding-fixtures" | "coding-objective-smoke" | "real-behavioral" | "real-text-interview" | "all";
+type Track =
+  | "no-answer"
+  | "coding-fixtures"
+  | "coding-objective-smoke"
+  | "real-behavioral"
+  | "real-text-interview"
+  | "real-natively-interview"
+  | "all";
 
 interface NoAnswerCase {
   scenarioId: string;
@@ -319,6 +326,66 @@ const audioMimeType = (filePath: string) => {
   return "audio/webm";
 };
 
+const readPcmWavAsMono16k = (filePath: string): Buffer => {
+  const wav = fs.readFileSync(filePath);
+  if (wav.toString("ascii", 0, 4) !== "RIFF" || wav.toString("ascii", 8, 12) !== "WAVE") {
+    throw new Error(`Expected WAV audio for Natively PCM test: ${filePath}`);
+  }
+  let offset = 12;
+  let channels = 1;
+  let sampleRate = 16000;
+  let bitsPerSample = 16;
+  let audioFormat = 1;
+  let dataStart = -1;
+  let dataSize = 0;
+  while (offset + 8 <= wav.length) {
+    const id = wav.toString("ascii", offset, offset + 4);
+    const size = wav.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    if (id === "fmt ") {
+      audioFormat = wav.readUInt16LE(start);
+      channels = wav.readUInt16LE(start + 2);
+      sampleRate = wav.readUInt32LE(start + 4);
+      bitsPerSample = wav.readUInt16LE(start + 14);
+    }
+    if (id === "data") {
+      dataStart = start;
+      dataSize = size;
+      break;
+    }
+    offset = start + size + (size % 2);
+  }
+  if (audioFormat !== 1 || bitsPerSample !== 16 || dataStart < 0 || dataSize <= 0) {
+    throw new Error(`Unsupported WAV format for Natively PCM test: format=${audioFormat} bits=${bitsPerSample}`);
+  }
+  const frames = Math.floor(dataSize / (channels * 2));
+  const mono = new Float32Array(frames);
+  for (let frame = 0; frame < frames; frame += 1) {
+    let sum = 0;
+    for (let channel = 0; channel < channels; channel += 1) {
+      const sampleOffset = dataStart + (frame * channels + channel) * 2;
+      sum += wav.readInt16LE(sampleOffset) / 32768;
+    }
+    mono[frame] = sum / channels;
+  }
+  const outputRate = 16000;
+  const ratio = sampleRate / outputRate;
+  const outputLength = sampleRate === outputRate ? mono.length : Math.max(1, Math.floor(mono.length / ratio));
+  const output = Buffer.alloc(outputLength * 2);
+  for (let index = 0; index < outputLength; index += 1) {
+    const sourceIndex = sampleRate === outputRate ? index : index * ratio;
+    const left = Math.floor(sourceIndex);
+    const right = Math.min(mono.length - 1, left + 1);
+    const weight = sourceIndex - left;
+    const sample = sampleRate === outputRate
+      ? mono[index] ?? 0
+      : (mono[left] ?? 0) * (1 - weight) + (mono[right] ?? 0) * weight;
+    const clamped = Math.max(-1, Math.min(1, sample));
+    output.writeInt16LE(Math.round(clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff), index * 2);
+  }
+  return output;
+};
+
 const generateWindowsSpeechAudio = (text: string, outputPath: string): boolean => {
   if (process.platform !== "win32") return false;
   const escapedText = text.replace(/'/g, "''");
@@ -348,7 +415,7 @@ const resolveBehavioralAudio = () => {
 
   fs.mkdirSync(tmpDir, { recursive: true });
   const audioPath = path.join(tmpDir, `behavioral-${Date.now()}.wav`);
-  const spokenText = "Tell me about a time you handled a production incident.";
+  const spokenText = "Describe a production incident you handled.";
   if (!generateWindowsSpeechAudio(spokenText, audioPath)) {
     throw new Error("Could not generate temporary speech audio. Set E2E_AUDIO_PATH to a real audio file.");
   }
@@ -459,8 +526,42 @@ const makeTextInterviewSession = (
   };
 };
 
-const waitForAnswerEvents = async (mainClient: CdpClient, provider: string, modelName: string) => {
-  await evaluate(mainClient, `window.callpilotDesktop.startSession({ mode: "technical_qa" })`);
+const makeEmptyInterviewSession = (provider: "openai" | "nvidia", modelName: string, activeMode: "technical_qa" | "behavioral") => {
+  const now = Date.now();
+  return {
+    id: `e2e-natively-${now}`,
+    title: "E2E Natively interview",
+    createdAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+    activeMode,
+    transcript: {
+      messages: [],
+      paused: false,
+      updatedAt: now,
+    },
+    screenText: "",
+    companyName: "",
+    roleTitle: "Backend Engineer",
+    resumeText: "",
+    starStories: "",
+    jobDescription: "Backend interview with concise technical follow-ups.",
+    notes: "",
+    profile: "",
+    targetUseCase: "technical interview preparation",
+    preferredLanguage: "english",
+    codingLanguage: "Python",
+    answerVerbosity: "medium",
+    modelProvider: provider,
+    modelName,
+    question: "",
+    answer: "",
+  };
+};
+
+const waitForAnswerEvents = async (mainClient: CdpClient, provider: string, modelName: string, options: { startSession?: boolean } = {}) => {
+  if (options.startSession !== false) {
+    await evaluate(mainClient, `window.callpilotDesktop.startSession({ mode: "technical_qa" })`);
+  }
   const overlayTarget = await getPageTarget((target) => target.url.includes("#/overlay"), 10000);
   if (!overlayTarget?.webSocketDebuggerUrl) throw new Error("Overlay target did not open for text interview run");
   const overlayClient = await cdp(overlayTarget.webSocketDebuggerUrl);
@@ -503,6 +604,271 @@ const waitForAnswerEvents = async (mainClient: CdpClient, provider: string, mode
     structured,
     answerText: String(completed?.payload?.text || structured?.payload?.renderedText || ""),
   };
+};
+
+const runRealNativelyInterview = async (): Promise<RunResult[]> => {
+  if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
+    return [{
+      scenarioId: "natively_interview_smoke",
+      track: "real_natively_interview_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        nvidiaKeyAvailable: false,
+        nativelyTranscriptReceived: false,
+        answerCompleted: false,
+      },
+      judge: null,
+      latency_ms: finishLatency("real-natively-interview-blocked"),
+      diagnostics: {
+        blocked: true,
+        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for the answer half of --track=real-natively-interview",
+      },
+    }];
+  }
+  checkBudget(2);
+  if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
+    throw new Error("dist/index.html is missing. Run npm run build before --track=real-natively-interview.");
+  }
+
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.2-1b-instruct";
+  const useDefaultUserData = process.env.E2E_USE_DEFAULT_USER_DATA === "1" && !process.env.NATIVELY_API_KEY;
+  const userDataDir = path.join(tmpDir, `user-data-natively-${Date.now()}`);
+  if (!useDefaultUserData) fs.mkdirSync(userDataDir, { recursive: true });
+
+  const audio = resolveBehavioralAudio();
+  const pcm = readPcmWavAsMono16k(audio.path);
+  const childEnv = { ...process.env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  const electronEnv = {
+    ...childEnv,
+    CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
+    ...(useDefaultUserData ? {} : { CALLPILOT_USER_DATA_DIR: userDataDir }),
+  };
+  const electron = spawn(electronBin, ["."], {
+    cwd: root,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: electronEnv,
+  });
+
+  let stdout = "";
+  let stderr = "";
+  electron.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  electron.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  let client: CdpClient | null = null;
+  let originalSettings: unknown = null;
+  try {
+    const mainTarget = await getPageTarget((target) => !target.url.includes("#/overlay") && !target.url.includes("#/coding"), 30000);
+    if (!mainTarget?.webSocketDebuggerUrl) {
+      throw new Error(`Could not find Electron main target.\nstdout:\n${stdout.slice(-1200)}\nstderr:\n${stderr.slice(-1200)}`);
+    }
+    client = await cdp(mainTarget.webSocketDebuggerUrl);
+    await client.send("Runtime.enable");
+    const hasBridge = await evaluate<boolean>(client, waitForBridgeExpression);
+    if (!hasBridge) throw new Error("Desktop bridge did not become available in renderer");
+
+    const credentialStatus = await evaluate<any>(client, `window.callpilotDesktop.getCredentialStatus()`);
+    if (!credentialStatus?.hasNativelyKey && !process.env.NATIVELY_API_KEY) {
+      return [{
+        scenarioId: "natively_interview_smoke",
+        track: "real_natively_interview_ipc",
+        run: runNumber,
+        deterministicChecks: {
+          nativelyKeyAvailable: false,
+          nativelyTranscriptReceived: false,
+          answerCompleted: false,
+        },
+        judge: null,
+        latency_ms: finishLatency("real-natively-interview-blocked"),
+        diagnostics: {
+          blocked: true,
+          reason: useDefaultUserData
+            ? "No stored Natively key was available in the default Electron profile."
+            : "Set NATIVELY_API_KEY or rerun with E2E_USE_DEFAULT_USER_DATA=1 to use the Natively key saved in the app.",
+          credentialStatus: {
+            hasNativelyKey: Boolean(credentialStatus?.hasNativelyKey),
+            hasNvidiaKey: Boolean(credentialStatus?.hasNvidiaKey),
+          },
+        },
+      }];
+    }
+
+    originalSettings = await evaluate(client, `window.callpilotDesktop.getSettings()`);
+    await evaluate(client, `window.callpilotDesktop.saveSettings(${JSON.stringify({
+      activeMode: "behavioral",
+      preferredLanguage: "english",
+      defaultCodingLanguage: "Python",
+      answerVerbosity: "medium",
+      modelProvider: "nvidia",
+      modelName,
+      ollamaBaseUrl: "http://localhost:11434",
+      transcriptionModelName: "gpt-4o-transcribe",
+      liveTranscriptionProvider: "natively",
+      liveLatencyPreset: "balanced",
+      liveAudioSource: "system",
+      autoAnswerCooldownMs: 12000,
+      autoAnswerMinConfidence: 0.45,
+    })})`);
+
+    await evaluate(client, seedSessionExpression(makeEmptyInterviewSession("nvidia", modelName, "behavioral")));
+    const bridgeAfterReload = await evaluate<boolean>(client, waitForBridgeExpression);
+    if (!bridgeAfterReload) throw new Error("Desktop bridge did not recover after Natively session seed reload");
+    await evaluate(client, `window.callpilotDesktop.startSession({ mode: "behavioral" })`);
+    await evaluate(client, `(() => {
+      window.__callpilotNativelyEvents = [];
+      window.__callpilotNativelyDispose = [
+        window.callpilotDesktop.onNativelyStatus((payload) => window.__callpilotNativelyEvents.push({ type: "status", at: Date.now(), payload })),
+        window.callpilotDesktop.onNativelyTranscript((payload) => window.__callpilotNativelyEvents.push({ type: "transcript", at: Date.now(), payload }))
+      ];
+      return true;
+    })()`);
+
+    const streamId = `system-e2e-${Date.now()}`;
+    const sttStarted = markLatencyStage(createLatencyMetricRun("real-natively-stt"), "audio_or_screen_capture");
+    recordRealCall();
+    const startResult = await evaluate<{ ok: boolean; streamId?: string; error?: string }>(client, `window.callpilotDesktop.startNativelyTranscription({
+      streamId: ${JSON.stringify(streamId)},
+      channel: "system",
+      sampleRate: 16000,
+      language: "english",
+      apiKey: ${JSON.stringify(process.env.NATIVELY_API_KEY || "")}
+    })`);
+    if (!startResult.ok) throw new Error(`natively:start failed: ${startResult.error || "unknown"}`);
+
+    await evaluate(client, `new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        const events = window.__callpilotNativelyEvents || [];
+        if (events.some((event) => event.type === "status" && /connected/i.test(event.payload?.status || event.payload?.detail || ""))) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - started > 7000) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 100);
+      };
+      tick();
+    })`);
+
+    const chunkSize = 3200;
+    for (let offset = 0; offset < pcm.length; offset += chunkSize) {
+      const chunk = pcm.subarray(offset, Math.min(pcm.length, offset + chunkSize)).toString("base64");
+      const audioResult = await evaluate<{ ok: boolean; error?: string }>(client, `window.callpilotDesktop.sendNativelyAudio({
+        streamId: ${JSON.stringify(streamId)},
+        arrayBuffer: Uint8Array.from(atob(${JSON.stringify(chunk)}), (char) => char.charCodeAt(0)).buffer
+      })`);
+      if (!audioResult.ok) throw new Error(`natively:audio failed: ${audioResult.error || "unknown"}`);
+      await sleep(45);
+    }
+
+    const transcriptEvents = await evaluate<Array<{ type: string; at: number; payload: any }>>(client, `new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        const events = window.__callpilotNativelyEvents || [];
+        const transcripts = events.filter((event) => event.type === "transcript");
+        if (transcripts.some((event) => event.payload?.isFinal && String(event.payload?.text || "").trim().length > 0)) {
+          resolve(events);
+          return;
+        }
+        if (Date.now() - started > 45000) {
+          resolve(events);
+          return;
+        }
+        setTimeout(tick, 250);
+      };
+      tick();
+    })`);
+    await evaluate(client, `window.callpilotDesktop.stopNativelyTranscription({ streamId: ${JSON.stringify(streamId)} })`);
+    const sttDone = markLatencyStage(sttStarted, "transcription_or_vision_done");
+    const transcriptPayloads = transcriptEvents
+      .filter((event) => event.type === "transcript")
+      .map((event) => event.payload);
+    const finalTranscript = [...transcriptPayloads].reverse().find((payload) => payload?.isFinal && String(payload.text || "").trim())?.text
+      || transcriptPayloads.map((payload) => payload?.text).filter(Boolean).at(-1)
+      || "";
+
+    await sleep(700);
+    const answerStarted = markLatencyStage(createLatencyMetricRun("real-natively-answer"), "model_call_start");
+    const answer = await waitForAnswerEvents(client, "nvidia", modelName, { startSession: false });
+    const answerDone = markLatencyStage(answerStarted, "response_complete");
+    const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
+    const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
+    const tracePath = endSession?.tracePath || traceStatus?.path || "";
+    const failed = answer.events.find((event) => event.type === "status" && event.payload?.status === "failed");
+    const unsupportedSpecifics = [
+      /\b\d{2,}(?:,\d{3})?\s+(?:users|customers|requests|minutes|hours|horas|minutos)\b/i,
+      /\b(?:TechCorp|UserSync|Black Friday|SLAs?|e-?commerce platform)\b/i,
+      /\b(?:database|db)\s+outage\b/i,
+      /\b(?:hotfix|root cause)\b/i,
+      /\brestored service in\b/i,
+    ].filter((pattern) => pattern.test(answer.answerText)).map((pattern) => pattern.source);
+    const totalLatency = answerDone.events.find((event) => event.stage === "response_complete")?.elapsedMs ?? 0;
+    const sttLatency = sttDone.events.find((event) => event.stage === "transcription_or_vision_done")?.elapsedMs ?? 0;
+    const deterministicChecks = {
+      nativelyStreamStarted: startResult.ok,
+      nativelyTranscriptReceived: finalTranscript.trim().length > 0,
+      transcriptMentionsIncident: /incident|production|producci/i.test(finalTranscript),
+      answerRequestAccepted: answer.requestResult.ok,
+      answerCompleted: Boolean(answer.completed) && !failed,
+      answerNonEmpty: answer.answerText.trim().length > 40,
+      noUnsupportedBehavioralSpecifics: unsupportedSpecifics.length === 0,
+      traceRecorded: Boolean(tracePath && traceStatus?.eventCount >= 3),
+    };
+
+    return [{
+      scenarioId: "natively_interview_smoke",
+      track: "real_natively_interview_ipc",
+      run: runNumber,
+      deterministicChecks,
+      judge: null,
+      latency_ms: {
+        first_token: null,
+        total: totalLatency,
+      },
+      diagnostics: {
+        userData: useDefaultUserData ? "default" : "isolated",
+        audio: {
+          generated: audio.generated,
+          fileName: path.basename(audio.path),
+          pcmBytes: pcm.length,
+        },
+        stt_latency_ms: sttLatency,
+        transcript_result: finalTranscript,
+        transcript_events: transcriptPayloads.map((payload) => ({
+          text: String(payload?.text || "").slice(0, 240),
+          isFinal: Boolean(payload?.isFinal),
+          confidence: payload?.confidence,
+        })),
+        answer_received: answer.answerText,
+        unsupportedSpecifics,
+        answer_events: answer.events.map((event) => ({
+          type: event.type,
+          status: event.payload?.status,
+          answerKind: event.payload?.answer?.kind,
+          textPreview: String(event.payload?.text || event.payload?.renderedText || "").slice(0, 240),
+        })),
+        trace: {
+          path: tracePath,
+          eventCount: traceStatus?.eventCount,
+        },
+      },
+    }];
+  } finally {
+    if (client && useDefaultUserData && originalSettings) {
+      await evaluate(client, `window.callpilotDesktop.saveSettings(${JSON.stringify(originalSettings)})`).catch(() => undefined);
+      await evaluate(client, `window.localStorage.removeItem("callpilot_v0_session")`).catch(() => undefined);
+    }
+    client?.close();
+    electron.kill();
+    if (audio.generated) fs.rmSync(audio.path, { force: true });
+  }
 };
 
 const runRealBehavioral = async (): Promise<RunResult[]> => {
@@ -859,6 +1225,7 @@ const run = async () => {
     ...(selectedTrack === "all" || selectedTrack === "coding-objective-smoke" ? runCodingObjectiveSmoke() : []),
     ...(selectedTrack === "real-behavioral" ? await runRealBehavioral() : []),
     ...(selectedTrack === "real-text-interview" ? await runRealTextInterview() : []),
+    ...(selectedTrack === "real-natively-interview" ? await runRealNativelyInterview() : []),
   ];
 
   if (results.length === 0) {

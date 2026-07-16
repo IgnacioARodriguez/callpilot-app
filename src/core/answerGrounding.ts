@@ -3,7 +3,13 @@ import type { StructuredAnswerPayload } from "./answerPayload.ts";
 
 export interface AnswerGroundingAssessment {
   ok: boolean;
-  reason: "grounded" | "empty" | "unsupported_topic_drift" | "topic_anchor_mismatch" | "definition_subject_mismatch";
+  reason:
+    | "grounded"
+    | "empty"
+    | "unsupported_topic_drift"
+    | "topic_anchor_mismatch"
+    | "definition_subject_mismatch"
+    | "unsupported_behavioral_specifics";
   overlapCount: number;
   unsupportedTerms: string[];
 }
@@ -184,6 +190,46 @@ const groundingText = (context: GlobalContext, userInput: string): string =>
       .join("\n"),
   ].join("\n");
 
+const allowedBehavioralProperNouns = new Set([
+  "Action",
+  "Backend Engineer",
+  "Production Incident",
+  "Response",
+  "Situation",
+  "STAR",
+  "Task",
+]);
+
+const unsupportedBehavioralSpecifics = (candidateText: string, grounding: string): string[] => {
+  const normalizedGrounding = normalize(grounding).replace(/\s+/g, " ");
+  const unsupported = new Set<string>();
+  const addIfUnsupported = (raw: string | undefined) => {
+    const value = raw?.replace(/\s+/g, " ").trim();
+    if (!value) return;
+    const normalizedValue = normalize(value).replace(/\s+/g, " ").trim();
+    if (!normalizedValue || normalizedGrounding.includes(normalizedValue)) return;
+    unsupported.add(value);
+  };
+
+  const patterns = [
+    /\b\d{2,}(?:,\d{3})?(?:\s*%|\s+(?:concurrent\s+)?(?:users|customers|requests|minutes|hours|seconds|days|weeks|errors|revenue|sales))\b/gi,
+    /\b20\d{2}\b/g,
+    /\b(?:black friday|database outage|e-commerce platform|hotfix|ops team|on-call|revenue loss|rollback|root cause)\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of candidateText.matchAll(pattern)) addIfUnsupported(match[0]);
+  }
+
+  for (const match of candidateText.matchAll(/\b[A-Z][A-Za-z0-9&.-]{2,}(?:\s+[A-Z][A-Za-z0-9&.-]{2,}){0,3}\b/g)) {
+    const value = match[0].replace(/\s+/g, " ").trim();
+    if (allowedBehavioralProperNouns.has(value)) continue;
+    if (/^(As|Could|Describe|Format|I|If|No|Tell|The|This|Within)$/.test(value)) continue;
+    addIfUnsupported(value);
+  }
+
+  return [...unsupported].slice(0, 12);
+};
+
 export const assessAnswerGrounding = (
   context: GlobalContext,
   userInput: string,
@@ -194,6 +240,18 @@ export const assessAnswerGrounding = (
   if (answerTerms.length === 0) return { ok: true, reason: "empty", overlapCount: 0, unsupportedTerms: [] };
   if (structured.kind === "interview" && structured.payload.intent === "no_answer") {
     return { ok: true, reason: "grounded", overlapCount: 0, unsupportedTerms: [] };
+  }
+
+  if (structured.kind === "interview" && (context.activeMode === "behavioral" || structured.payload.intent === "behavioral")) {
+    const unsupportedSpecifics = unsupportedBehavioralSpecifics(candidateText, groundingText(context, userInput));
+    if (unsupportedSpecifics.length > 0) {
+      return {
+        ok: false,
+        reason: "unsupported_behavioral_specifics",
+        overlapCount: 0,
+        unsupportedTerms: unsupportedSpecifics,
+      };
+    }
   }
 
   const definitionSubject = extractDefinitionSubject(userInput);
@@ -264,11 +322,46 @@ export const assessAnswerGrounding = (
   };
 };
 
+export const assessPlainInterviewAnswerGrounding = (
+  context: GlobalContext,
+  userInput: string,
+  candidateText: string,
+): AnswerGroundingAssessment => assessAnswerGrounding(context, userInput, {
+  kind: "interview",
+  payload: {
+    version: "1",
+    answerNeeded: true,
+    intent: context.activeMode === "behavioral" ? "behavioral" : "technical_qa",
+    spokenAnswer: candidateText,
+    keyPoints: [],
+    correction: { needed: false, transition: null, correctedClaim: null },
+    assumptions: [],
+    evidenceRefs: [],
+    followUpHint: null,
+  },
+});
+
 export const withNoAnswerForUngroundedDrift = (
   structured: StructuredAnswerPayload,
   assessment: AnswerGroundingAssessment,
 ): StructuredAnswerPayload => {
   if (assessment.ok || structured.kind !== "interview") return structured;
+  if (assessment.reason === "unsupported_behavioral_specifics") {
+    return {
+      kind: "interview",
+      payload: {
+        version: "1",
+        answerNeeded: false,
+        intent: "no_answer",
+        spokenAnswer: "No responderia todavia: la pregunta pide una experiencia real, pero faltan detalles verificables para contar una historia concreta sin inventar datos.",
+        keyPoints: ["Pedir mas contexto o usar una historia real del candidato", "No inventar empresa, metricas, fechas ni incidente"],
+        correction: { needed: false, transition: null, correctedClaim: null },
+        assumptions: [],
+        evidenceRefs: [],
+        followUpHint: null,
+      },
+    };
+  }
   return {
     kind: "interview",
     payload: {
