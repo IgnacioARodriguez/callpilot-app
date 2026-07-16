@@ -285,6 +285,8 @@ test("acceptance: overlay starts a new live bubble after an assistant answer", (
   const overlay = read("src/overlay/OverlayApp.tsx");
 
   assert.match(overlay, /assistantAfterExisting/);
+  assert.match(overlay, /hasTranscriptProgress/);
+  assert.match(overlay, /mode === "partial" && committed && !hasTranscriptProgress\(committed, clean\)/);
   assert.match(overlay, /targetId = mode === "partial" && assistantAfterExisting/);
   assert.match(overlay, /!assistantAfterExistingBeforeUpdate/);
   assert.match(overlay, /baseline\?: string/);

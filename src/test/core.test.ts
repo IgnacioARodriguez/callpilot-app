@@ -44,6 +44,7 @@ import {
   normalizeOllamaBaseUrl,
   normalizeOcrLanguage,
   normalizeLiveTranscriptionSettings,
+  normalizeTechnicalTranscript,
   normalizeTranscriptionModelName,
   ocrConfidenceLabel,
   pickEvidence,
@@ -474,6 +475,13 @@ test("partial turn stability requires unchanged non-truncated text", () => {
   assert.equal(assessPartialTurnStability("Que es S", "Que es S", 1000, 2200).reason, "truncated_definition");
   assert.equal(assessPartialTurnStability("Que es SQL exactamente", "Que es SQ", 1000, 2200).reason, "changed_recently");
   assert.equal(assessPartialTurnStability("Que es SQL exactamente", "Que es SQL exactamente", 1000, 1200).reason, "changed_recently");
+});
+
+test("technical transcript normalization repairs trailing acronym prefixes in definition questions", () => {
+  assert.equal(normalizeTechnicalTranscript("¿Qué es SQ"), "¿Qué es SQL");
+  assert.equal(normalizeTechnicalTranscript("What is AP"), "What is API");
+  assert.equal(normalizeTechnicalTranscript("What is CI"), "What is CI");
+  assert.equal(normalizeTechnicalTranscript("SQ puede significar otra cosa"), "SQ puede significar otra cosa");
 });
 
 test("interview display renderer repairs question-mark mojibake from provider text", () => {

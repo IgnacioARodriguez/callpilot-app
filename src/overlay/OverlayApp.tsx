@@ -69,6 +69,17 @@ const isDuplicateTranscript = (left: string, right: string): boolean => {
   return a === b || a.includes(b) || b.includes(a);
 };
 
+const hasTranscriptProgress = (baseline: string, next: string): boolean => {
+  const cleanBaseline = normalizeText(baseline);
+  const cleanNext = normalizeText(next);
+  if (!cleanBaseline || !cleanNext) return Boolean(cleanNext);
+  if (cleanBaseline === cleanNext || cleanBaseline.includes(cleanNext)) return false;
+  if (cleanNext.startsWith(cleanBaseline)) {
+    return normalizeText(next.slice(baseline.length)).length > 0;
+  }
+  return !isDuplicateTranscript(baseline, next);
+};
+
 const transcriptDelta = (baseline = "", next = ""): string => {
   const cleanBaseline = baseline.trim();
   const cleanNext = next.trim();
@@ -168,6 +179,15 @@ export default function OverlayApp() {
           ? committed.length >= clean.length ? committed : clean
           : [committed, clean].filter(Boolean).join(" ")
         : committed;
+      if (mode === "partial" && committed && !hasTranscriptProgress(committed, clean)) {
+        liveTranscriptByRole.current[role] = {
+          id,
+          committed,
+          baseline,
+          lastUpdatedAt: now,
+        };
+        return;
+      }
       if (mode === "partial" && committed && isDuplicateTranscript(committed, clean) && !assistantAfterExistingBeforeUpdate) {
         liveTranscriptByRole.current[role] = {
           id,

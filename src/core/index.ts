@@ -40,6 +40,7 @@ export {
   type OcrResult,
 } from "./ocr.ts";
 export { DEFAULT_MAX_TRANSCRIPT_MESSAGES, TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, formatConversationWindow, type TranscriptSnapshot, type TranscriptSpeaker } from "./transcriptBuffer.ts";
+export { normalizeTechnicalTranscript } from "./transcriptNormalize.ts";
 export {
   assessPartialTurnStability,
   detectQuestionIntent,

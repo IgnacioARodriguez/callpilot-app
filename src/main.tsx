@@ -28,6 +28,7 @@ import {
   formatAnswerForDisplay,
   liveTranscriptionPlan,
   markLatencyStage,
+  normalizeTechnicalTranscript,
   normalizeLiveTranscriptionSettings,
   normalizeOcrLanguage,
   ocrConfidenceLabel,
@@ -313,14 +314,6 @@ function App() {
     if (speaker === "interviewer") return "Interviewer";
     return "Unknown";
   };
-
-  const normalizeTechnicalTranscript = (text: string): string =>
-    text
-      .replace(/\bese\s*cu\s*ele\b/gi, "SQL")
-      .replace(/\besecoele\b/gi, "SQL")
-      .replace(/\bsequel\b/gi, "SQL")
-      .replace(/\ba\s*pi\b/gi, "API")
-      .replace(/\bapis\b/gi, "APIs");
 
   const stripKnownTranscriptHistory = (text: string, speaker: TranscriptSpeaker): string => {
     let candidate = text.trim();
