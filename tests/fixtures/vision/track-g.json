@@ -1,0 +1,62 @@
+{
+  "_meta": {
+    "description": "Track G: fixtures de Vision con ground truth exacto. Las imágenes fueron generadas por mí (Playwright renderizando HTML con contenido que yo mismo escribí), no descargadas de internet — así el texto exacto de cada captura es 100% conocido y verificable, cosa que no podía garantizar con capturas sueltas de la web.",
+    "how_to_use": "Cada imagen se pasa al pipeline real de Vision (mismo camino que desktopCapturer + análisis) tal cual estuviera en pantalla. Se compara la respuesta contra exact_text_present (debe usarse/reflejarse) y must_not_mention (si aparece, es alucinación)."
+  },
+  "scenarios": [
+    {
+      "scenarioId": "vision_full_problem_statement",
+      "image": "scenario1_full_problem.png",
+      "description": "Enunciado completo de un ejercicio (LeetCode-style), sin código todavía.",
+      "exact_text_present": ["Longest Word With All Prefixes", "words = [\"w\",\"wo\",\"wor\",\"worl\",\"world\"]", "Output: \"world\""],
+      "must_not_mention": ["ninguna solución de código (no hay código en pantalla todavía)"],
+      "expected_behavior": "Debe identificar el enunciado y ayudar a plantear el enfoque, sin inventar una solución que 'ya estaba en pantalla' cuando lo único visible es el problema.",
+      "critical_failure_categories": ["alucinacion_vision"]
+    },
+    {
+      "scenarioId": "vision_partial_code_subtle_bug",
+      "image": "scenario2_partial_bug.png",
+      "description": "Código real a medio escribir, con un bug sutil: la condición 'all(w[:i] in word_set for i in range(1, len(w)))' no incluye el prefijo de longitud completa (range debería llegar a len(w)+1), y tampoco maneja el caso de empate lexicográfico pedido en el enunciado.",
+      "exact_text_present": ["find_longest_prefix_word", "word_set = set(words)", "range(1, len(w))"],
+      "must_not_mention": ["cualquier línea de código que no está en la imagen (ej. no debe citar un 'return sorted(...)' que no existe ahí)"],
+      "expected_behavior": "Debe leer el código real presente y detectar el bug de rango real, no inventar una versión distinta del código para analizar.",
+      "critical_failure_categories": ["alucinacion_vision"]
+    },
+    {
+      "scenarioId": "vision_traceback_panel",
+      "image": "scenario3_traceback.png",
+      "description": "Editor arriba con código real, panel de terminal abajo con un traceback real de IndexError.",
+      "exact_text_present": ["get_last_element", "IndexError: list index out of range", "arr[len(arr)]"],
+      "must_not_mention": ["otro tipo de excepción que no sea IndexError", "una línea de traceback que no está (ej. no debe inventar un KeyError)"],
+      "expected_behavior": "Debe conectar el error real del traceback con la línea real del editor que lo causa (arr[len(arr)] en vez de arr[len(arr)-1]).",
+      "critical_failure_categories": ["alucinacion_vision"]
+    },
+    {
+      "scenarioId": "vision_two_panels_distraction",
+      "image": "scenario4_two_panels.png",
+      "description": "Panel izquierdo: código real de un RateLimiter sin implementar. Panel derecho: una notificación de Slack irrelevante + resultados de tests reales (2 failed, 1 passed).",
+      "exact_text_present": ["class RateLimiter", "def allow(self):", "TODO implement", "test_allow_exceeds_limit", "FAILED"],
+      "must_not_mention": ["el contenido del mensaje de Slack como si fuera parte del problema técnico"],
+      "expected_behavior": "Debe enfocarse en el código y los resultados de test reales, ignorando la notificación de Slack como ruido de fondo, sin mezclarla en el análisis técnico.",
+      "critical_failure_categories": ["confunde_ventana_relevante_en_pantalla"]
+    },
+    {
+      "scenarioId": "vision_small_low_legibility_text",
+      "image": "scenario5_small_text.png",
+      "description": "Mismo tipo de código real pero renderizado con fuente muy chica (8px), simulando una ventana no maximizada o zoom bajo.",
+      "exact_text_present": ["is_palindrome", "cleaned[::-1]"],
+      "must_not_mention": ["contenido inventado si el texto no llegara a ser legible del todo"],
+      "expected_behavior": "Si el texto es parcialmente ilegible, debe expresar incertidumbre razonable en vez de inventar código con confianza total. Con esta imagen específica el texto SÍ es técnicamente legible, así que debe leerlo bien; sirve como baseline antes de degradar más la resolución.",
+      "critical_failure_categories": ["alucinacion_vision"]
+    },
+    {
+      "scenarioId": "vision_irrelevant_screenshot",
+      "image": "scenario6_irrelevant.png",
+      "description": "Captura sin ningún contenido técnico: una tarjeta de recordatorio de calendario.",
+      "exact_text_present": ["Recordatorio de calendario", "Reunión de equipo"],
+      "must_not_mention": ["cualquier código, ejercicio o problema técnico inventado"],
+      "expected_behavior": "Debe reconocer que no hay contenido de coding relevante en pantalla y no forzar un análisis técnico inventado sobre una imagen que no lo tiene.",
+      "critical_failure_categories": ["alucinacion_vision", "responde_sin_necesidad"]
+    }
+  ]
+}

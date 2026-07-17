@@ -11,10 +11,12 @@ import {
   assessAnswerGrounding,
   assessPlainInterviewAnswerGrounding,
   assembleTurn,
+  appendSegmentChunk,
   browserRecognitionLanguage,
   buildPrompt,
   buildPromptWithEvidence,
   classifyScreenText,
+  consumeSegmentChunks,
   createGlobalContext,
   createLatencyMetricRun,
   createSessionSnapshot,
@@ -39,6 +41,8 @@ import {
   pruneRecentSpeech,
   reduceStealthState,
   shouldDropCandidateEcho,
+  shouldDrainTranscriptionQueue,
+  shouldSendNativelyFrame,
   shouldAutoAnswer,
   speechSimilarity,
   serializeSession,
@@ -690,7 +694,8 @@ function App() {
         nativelyApiKey,
         nvidiaApiKey,
         ollamaBaseUrl,
-        maxTokens: context.activeMode === "live_coding" ? 900 : 220,
+        maxTokens: context.activeMode === "live_coding" ? 1200 : 700,
+        timeoutMs: context.activeMode === "live_coding" ? 120000 : 90000,
       });
       void window.callpilotDesktop?.publishAnswerStatus?.({
         requestId,
@@ -1161,15 +1166,10 @@ function App() {
     liveRecordersRef.current = [];
     liveStreamsRef.current.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
     liveStreamsRef.current = [];
-    localSegmentChunksByIdRef.current.clear();
-    localSttBusyByIdRef.current.clear();
-    localSttQueueByIdRef.current.clear();
     liveRecorderRef.current?.stop();
     liveRecorderRef.current = null;
     liveStreamRef.current?.getTracks().forEach((track) => track.stop());
     liveStreamRef.current = null;
-    liveChunkBusyByIdRef.current.clear();
-    liveChunkQueueByIdRef.current.clear();
     localSegmentChunksRef.current = [];
     turnAssemblerRef.current = createTurnAssemblerState();
     nativelyPartialStabilityRef.current = {};
@@ -1451,7 +1451,7 @@ function App() {
     if (localSttBusyByIdRef.current.has(channelId)) return;
     localSttBusyByIdRef.current.add(channelId);
     try {
-      while (liveContinueRef.current || (localSttQueueByIdRef.current.get(channelId)?.length ?? 0) > 0) {
+      while (shouldDrainTranscriptionQueue(liveContinueRef.current, localSttQueueByIdRef.current.get(channelId)?.length ?? 0)) {
         const next = localSttQueueByIdRef.current.get(channelId)?.shift();
         if (!next) break;
         const audio = await decodeAudioBlobToMono16k(next.blob);
@@ -1502,9 +1502,7 @@ function App() {
         liveRecordersRef.current.push(recorder);
         recorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
-            const chunks = localSegmentChunksByIdRef.current.get(channelId) ?? [];
-            chunks.push(event.data);
-            localSegmentChunksByIdRef.current.set(channelId, chunks);
+            appendSegmentChunk(localSegmentChunksByIdRef.current, channelId, event.data);
           }
         };
         recorder.onerror = () => {
@@ -1512,8 +1510,7 @@ function App() {
           stopLiveRecording();
         };
         recorder.onstop = () => {
-          const chunks = localSegmentChunksByIdRef.current.get(channelId) ?? [];
-          localSegmentChunksByIdRef.current.delete(channelId);
+          const chunks = consumeSegmentChunks(localSegmentChunksByIdRef.current, channelId);
           liveRecordersRef.current = liveRecordersRef.current.filter((item) => item !== recorder);
           if (chunks.length > 0) {
             const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
@@ -1550,7 +1547,7 @@ function App() {
     if (liveChunkBusyByIdRef.current.has(channelId)) return;
     liveChunkBusyByIdRef.current.add(channelId);
     try {
-      while (liveContinueRef.current || (liveChunkQueueByIdRef.current.get(channelId)?.length ?? 0) > 0) {
+      while (shouldDrainTranscriptionQueue(liveContinueRef.current, liveChunkQueueByIdRef.current.get(channelId)?.length ?? 0)) {
         const next = liveChunkQueueByIdRef.current.get(channelId)?.shift();
         if (!next) break;
         const arrayBuffer = await next.blob.arrayBuffer();
@@ -1672,7 +1669,8 @@ function App() {
             lastSystemAudioSignalAtRef.current = Date.now();
             setDesktopStatus("Computer audio signal detected");
           }
-          if (energy.rms < 0.0018 && energy.peak < 0.018) return;
+          const nativelySpeaker = channel.speaker === "candidate" ? "candidate" : "interviewer";
+          if (!shouldSendNativelyFrame(nativelySpeaker, energy)) return;
           const pcm = floatToLinear16(resampled);
           void window.callpilotDesktop?.sendNativelyAudio?.({ streamId, arrayBuffer: pcm });
         };

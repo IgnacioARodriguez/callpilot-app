@@ -1,0 +1,317 @@
+{
+  "_meta": {
+    "description": "Batch 1 de fixtures de texto (no audio) para tests/fixtures/. Cubre Track F (coding evolutivo), Track A/B (entrevista técnica + CV) y system design. No cubre Track D (STT/ruido/acento) porque requiere audio real, no texto.",
+    "how_to_use": "Cada 'turns[].prompt_transcript' o 'turns[].text' se alimenta directo a answer:request como si viniera de audio ya transcripto, saltando el paso de STT a propósito.",
+    "critical_failure_categories_reference": [
+      "responde_otra_pregunta",
+      "inventa_experiencia",
+      "confunde_candidato_interviewer",
+      "responde_sin_necesidad",
+      "codigo_no_solicitado",
+      "cambia_idioma",
+      "contradice_contexto",
+      "sobre_explica_pregunta_simple",
+      "trata_todo_como_tecnico_profundo"
+    ]
+  },
+  "live_coding_evolutivo": [
+    {
+      "scenarioId": "coding_evol_two_sum",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Resolveme Two Sum: dado un array y un target, devolvé los índices de dos números que sumen el target.", "expected_behavior": "Solución O(n^2) o O(n) válida, con explicación breve." },
+        { "turnId": 2, "prompt_transcript": "Bien, ahora optimizalo a O(n).", "expected_behavior": "Debe preservar la firma de la función y solo cambiar el algoritmo interno (hashmap).", "test_cases": "assert two_sum([2,7,11,15], 9) == [0,1]" },
+        { "turnId": 3, "prompt_transcript": "¿Qué pasa si hay valores duplicados en el array?", "expected_behavior": "Debe manejar duplicados usando índices, no valores, sin romper el test anterior." },
+        { "turnId": 4, "prompt_transcript": "Ahora manejá el caso en que no hay solución, sin que explote.", "expected_behavior": "Debe devolver None o lista vacía documentada, no lanzar excepción no controlada.", "test_cases": "assert two_sum([1,2,3], 100) is None" },
+        { "turnId": 5, "prompt_transcript": "Agregale tests con pytest.", "expected_behavior": "Tests deben cubrir los 4 turnos anteriores, no solo el último." }
+      ],
+      "critical_failure_categories": ["codigo_no_solicitado", "contradice_contexto"],
+      "notes": "Gate: todos los test_cases de turnos 2 y 4 deben seguir pasando después del turno 5."
+    },
+    {
+      "scenarioId": "coding_evol_threadsafe_counter",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Implementá una clase Counter simple con increment y get_value.", "expected_behavior": "Clase básica funcional." },
+        { "turnId": 2, "prompt_transcript": "Ahora hacela thread-safe, la vamos a usar desde varios hilos.", "expected_behavior": "Debe usar threading.Lock, sin cambiar la firma pública.", "test_cases": "10 threads incrementando 1000 veces cada uno -> get_value() == 10000" },
+        { "turnId": 3, "prompt_transcript": "Agregale un método reset que también sea seguro.", "expected_behavior": "reset() debe tomar el mismo lock, no un lock nuevo." },
+        { "turnId": 4, "prompt_transcript": "Corregí este test que me está fallando: falla por race condition intermitente.", "expected_behavior": "Debe identificar y corregir el bug real (lock mal aplicado o liberado antes de tiempo), no ocultar el fallo bajando la concurrencia del test." }
+      ],
+      "critical_failure_categories": ["codigo_no_solicitado"],
+      "notes": "Turno 4 es la prueba de fuego: un juez/reviewer débil aceptaría 'arreglar' bajando threads del test en vez de arreglar el lock."
+    },
+    {
+      "scenarioId": "coding_evol_lru_cache",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Implementá un LRU cache simple con capacidad fija.", "expected_behavior": "get/put O(1) idealmente (OrderedDict o dict + doubly linked list)." },
+        { "turnId": 2, "prompt_transcript": "Agregale expiración por TTL a cada entrada.", "expected_behavior": "No debe romper la política LRU existente." },
+        { "turnId": 3, "prompt_transcript": "Necesito que sea thread-safe también.", "expected_behavior": "Lock alrededor de las operaciones de mutación." },
+        { "turnId": 4, "prompt_transcript": "Agregá un get_or_set atómico: si no existe, lo setea y lo devuelve en la misma operación.", "expected_behavior": "Debe ser atómico respecto al lock existente, no una condición de carrera get-then-set." }
+      ],
+      "critical_failure_categories": ["codigo_no_solicitado"]
+    },
+    {
+      "scenarioId": "coding_evol_rate_limiter_redis",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Implementá un rate limiter tipo token bucket en memoria, para un solo proceso.", "expected_behavior": "Token bucket funcional single-process." },
+        { "turnId": 2, "prompt_transcript": "Ahora adaptalo para que funcione distribuido usando Redis, porque vamos a tener varias instancias del servicio.", "expected_behavior": "Debe usar operaciones atómicas de Redis (INCR + EXPIRE o script Lua), no leer-modificar-escribir sin atomicidad." },
+        { "turnId": 3, "prompt_transcript": "Agregale límites distintos por usuario.", "expected_behavior": "Key de Redis parametrizada por user_id, no un contador global." },
+        { "turnId": 4, "prompt_transcript": "¿Cómo lo testeás sin pegarle a un Redis real?", "expected_behavior": "Debe proponer mockear el cliente de Redis (fakeredis o mock), no requerir infraestructura real para el test unitario." }
+      ],
+      "critical_failure_categories": ["responde_otra_pregunta"]
+    },
+    {
+      "scenarioId": "coding_evol_django_n_plus_one",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Tengo este endpoint de Django que lista pedidos con su cliente y devuelve 200 queries para 50 pedidos. ¿Qué pasa?", "expected_behavior": "Debe diagnosticar N+1 queries." },
+        { "turnId": 2, "prompt_transcript": "Corregilo.", "expected_behavior": "select_related para FK, prefetch_related para reverse FK / M2M, según corresponda al modelo dado." },
+        { "turnId": 3, "prompt_transcript": "Ahora agregale una capa de cache con Redis para no pegarle a la base en cada request.", "expected_behavior": "Cache invalidation explícita al modificar un pedido, no solo TTL ciego." },
+        { "turnId": 4, "prompt_transcript": "Escribí un test que falle si alguien reintroduce el N+1.", "expected_behavior": "Test debe usar assertNumQueries o django.test.utils.CaptureQueriesContext, no solo verificar el output." }
+      ],
+      "critical_failure_categories": ["contradice_contexto"]
+    },
+    {
+      "scenarioId": "coding_evol_fastapi_async_retry",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Escribí un endpoint FastAPI async que llama a una API externa y devuelve el resultado.", "expected_behavior": "Endpoint async funcional con httpx o aiohttp." },
+        { "turnId": 2, "prompt_transcript": "Agregale retry con backoff exponencial si la API externa falla.", "expected_behavior": "Backoff real (no retry inmediato en loop), límite de intentos." },
+        { "turnId": 3, "prompt_transcript": "Agregale timeout, no puede colgarse esperando para siempre.", "expected_behavior": "Timeout explícito en la llamada HTTP, no solo en el retry loop." },
+        { "turnId": 4, "prompt_transcript": "Ahora necesito procesar 100 de estos en paralelo sin tumbar el servicio externo.", "expected_behavior": "asyncio.gather con semáforo o límite de concurrencia, no 100 requests simultáneos sin control." }
+      ],
+      "critical_failure_categories": ["codigo_no_solicitado"]
+    }
+  ],
+  "technical_interview": [
+    {
+      "scenarioId": "interview_redis_persistence",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Qué es Redis?" },
+        { "speaker": "candidate", "text": "Es una base de datos relacional muy rápida." },
+        { "speaker": "interviewer", "text": "¿Y cuándo lo usarías?" }
+      ],
+      "trigger_turn": 3,
+      "expected_behavior": {
+        "must_correct_candidate_error": true,
+        "must_resolve_referent": "Redis",
+        "must_stay_on_topic": true,
+        "must_not_leak_resume": true,
+        "language": "es"
+      },
+      "critical_failure_categories": ["confunde_candidato_interviewer", "cambia_idioma"]
+    },
+    {
+      "scenarioId": "interview_django_orm_relations",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Cuál es la diferencia entre select_related y prefetch_related en Django?" },
+        { "speaker": "candidate", "text": "select_related es para hacer un join en la misma query, prefetch_related hace queries separadas." },
+        { "speaker": "interviewer", "text": "¿Y en cuál caso usarías el otro entonces?" }
+      ],
+      "trigger_turn": 3,
+      "expected_behavior": { "must_resolve_referent": "prefetch_related aplicado a relaciones reverse FK o M2M", "must_stay_on_topic": true, "language": "es" },
+      "critical_failure_categories": ["responde_otra_pregunta"]
+    },
+    {
+      "scenarioId": "interview_postgres_indexing",
+      "turns": [
+        { "speaker": "candidate", "text": "Los índices siempre mejoran el rendimiento de la base, así que le pondría índice a todas las columnas." },
+        { "speaker": "interviewer", "text": "Ok, seguimos." }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": {
+        "must_correct_candidate_error": true,
+        "correction_content": "índices aceleran lectura pero penalizan escritura/espacio, no se indexa todo indiscriminadamente",
+        "must_not_be_confrontational": true,
+        "language": "es"
+      },
+      "critical_failure_categories": ["confunde_candidato_interviewer"]
+    },
+    {
+      "scenarioId": "interview_docker_networking",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Qué modos de red conocés en Docker?" },
+        { "speaker": "candidate", "text": "Bridge y host, principalmente." },
+        { "speaker": "interviewer", "text": "¿Y eso cuándo lo cambiarías?" }
+      ],
+      "trigger_turn": 3,
+      "expected_behavior": { "must_resolve_referent": "modo de red (bridge vs host)", "must_stay_on_topic": true, "language": "es" },
+      "critical_failure_categories": ["responde_otra_pregunta"]
+    },
+    {
+      "scenarioId": "interview_aws_lambda_cold_start",
+      "turns": [
+        { "speaker": "interviewer", "text": "What causes cold starts in AWS Lambda?" },
+        { "speaker": "candidate", "text": "It's when the container needs to initialize from scratch." },
+        { "speaker": "interviewer", "text": "How would you mitigate that?" }
+      ],
+      "trigger_turn": 3,
+      "expected_behavior": { "language": "en", "must_stay_on_topic": true, "expected_topics": ["provisioned concurrency", "smaller package size", "runtime choice"] },
+      "critical_failure_categories": ["cambia_idioma"],
+      "notes": "Escenario en inglés a propósito: valida que no cambie a español a mitad de respuesta."
+    },
+    {
+      "scenarioId": "interview_react_state_vs_ref",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Cuál es la diferencia entre useState y useRef en React?" },
+        { "speaker": "candidate", "text": "useRef también dispara un re-render cuando cambia, como useState." },
+        { "speaker": "interviewer", "text": "Ok, seguimos." }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_correct_candidate_error": true, "correction_content": "useRef NO dispara re-render", "language": "es" },
+      "critical_failure_categories": ["confunde_candidato_interviewer"]
+    },
+    {
+      "scenarioId": "interview_typescript_generics",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Para qué sirven los generics en TypeScript?" },
+        { "speaker": "candidate", "text": "Son básicamente lo mismo que usar any, para no tener que tipar tanto." },
+        { "speaker": "interviewer", "text": "Seguimos." }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_correct_candidate_error": true, "correction_content": "generics preservan type-safety parametrizando el tipo, any la elimina", "language": "es" },
+      "critical_failure_categories": ["confunde_candidato_interviewer"]
+    },
+    {
+      "scenarioId": "interview_mongodb_vs_postgres",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Cuándo elegirías MongoDB sobre PostgreSQL?" },
+        { "speaker": "candidate", "text": "Cuando necesito transacciones ACID complejas." },
+        { "speaker": "interviewer", "text": "Ok, seguimos." }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_correct_candidate_error": true, "correction_content": "es al revés: Postgres es la opción típica para ACID complejo; Mongo brilla con esquema flexible/documentos anidados", "language": "es" },
+      "critical_failure_categories": ["confunde_candidato_interviewer"]
+    },
+    {
+      "scenarioId": "interview_python_gil",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Qué es el GIL en Python y cómo afecta la concurrencia?" },
+        { "speaker": "candidate", "text": "Impide que corran dos threads Python al mismo tiempo dentro del mismo proceso para bytecode puro." },
+        { "speaker": "interviewer", "text": "¿Y entonces cómo lograrías paralelismo real?" }
+      ],
+      "trigger_turn": 3,
+      "expected_behavior": { "must_resolve_referent": "paralelismo real dado el GIL", "expected_topics": ["multiprocessing", "liberar GIL en I/O-bound", "extensiones en C"], "language": "es" },
+      "critical_failure_categories": ["responde_otra_pregunta"]
+    },
+    {
+      "scenarioId": "interview_fastapi_project_experience",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Usaste FastAPI en producción?" },
+        { "speaker": "interviewer", "text": "¿Por qué lo elegiste frente a Flask en ese proyecto?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": {
+        "first_mention_must_not_invent_experience": true,
+        "later_turn_can_recall_real_project_context": true,
+        "must_not_leak_resume_if_not_relevant": true,
+        "language": "es"
+      },
+      "critical_failure_categories": ["inventa_experiencia"],
+      "notes": "Track B: primer turno no debe inventar detalles de un proyecto que CallPilot no tiene en el CV; si el CV real tiene un proyecto FastAPI, el segundo turno sí puede traerlo."
+    },
+    {
+      "scenarioId": "interview_basic_sql_definition",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Qué es SQL?" },
+        { "speaker": "candidate", "text": "Es una base de datos que usan las empresas grandes." }
+      ],
+      "trigger_turn": 2,
+      "expected_behavior": {
+        "must_correct_candidate_error": true,
+        "correction_content": "SQL es un lenguaje de consulta/manipulación de datos, no una base de datos en sí (la base de datos es el motor, ej. PostgreSQL, que usa SQL)",
+        "must_stay_concise_not_overexplain": true,
+        "must_not_treat_as_deep_technical_exam": true,
+        "language": "es"
+      },
+      "critical_failure_categories": ["sobre_explica_pregunta_simple"],
+      "notes": "El escenario base que pediste explícitamente: pregunta definicional simple, candidato responde mal, se aprieta Answer. La corrección tiene que ser breve y clara, no un ensayo técnico de nivel senior sobre una pregunta de nivel introductorio."
+    },
+    {
+      "scenarioId": "interview_basic_api_definition",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Qué es una API?" },
+        { "speaker": "candidate", "text": "Es un lenguaje de programación para conectar páginas web." }
+      ],
+      "trigger_turn": 2,
+      "expected_behavior": {
+        "must_correct_candidate_error": true,
+        "correction_content": "una API es una interfaz de comunicación entre sistemas, no un lenguaje de programación",
+        "must_stay_concise_not_overexplain": true,
+        "language": "es"
+      },
+      "critical_failure_categories": ["sobre_explica_pregunta_simple"]
+    },
+    {
+      "scenarioId": "interview_nontechnical_answer_press",
+      "turns": [
+        { "speaker": "interviewer", "text": "Contame un poco cómo te organizás cuando tenés varias tareas en paralelo." },
+        { "speaker": "candidate", "text": "Eh... uso una lista, más o menos." }
+      ],
+      "trigger_turn": 2,
+      "expected_behavior": {
+        "must_not_treat_as_technical_qa": true,
+        "must_offer_helpful_talking_points_not_code": true,
+        "response_shape_is_coaching_not_answer_shape": true,
+        "language": "es"
+      },
+      "critical_failure_categories": ["trata_todo_como_tecnico_profundo"],
+      "notes": "Momento de Answer sobre algo no técnico ni de conocimiento factual — la app debe actuar como ayudador dando ideas/estructura para responder mejor, no como si tuviera que corregir un dato técnico o generar código."
+    },
+    {
+      "scenarioId": "interview_ambiguous_topic_answer_press",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Y cómo manejás el estrés en el trabajo?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": {
+        "must_not_treat_as_technical_qa": true,
+        "must_offer_helpful_talking_points_not_code": true,
+        "language": "es"
+      },
+      "critical_failure_categories": ["trata_todo_como_tecnico_profundo"],
+      "notes": "Pregunta directamente no-técnica, sin respuesta previa del candidato de por medio — testea que Answer no asuma por default que toda pregunta necesita una respuesta 'de examen'."
+    }
+  ],
+  "system_design": [
+    {
+      "scenarioId": "design_url_shortener",
+      "question": "Diseñá un acortador de URLs que soporte 100M de links y 10k requests/s de lectura.",
+      "expected_coverage": ["esquema de encoding (base62/hash)", "colisiones", "lectura vs escritura (ratio, cache)", "particionamiento de la base", "TTL/expiración de links"],
+      "critical_failure_categories": ["respuesta_generica_sin_tradeoffs"]
+    },
+    {
+      "scenarioId": "design_distributed_rate_limiter",
+      "question": "Diseñá un rate limiter distribuido para una API con múltiples instancias.",
+      "expected_coverage": ["algoritmo (token bucket/sliding window/fixed window)", "almacenamiento centralizado (Redis)", "atomicidad de la operación", "consistencia vs disponibilidad bajo partición de red", "manejo de bursts"],
+      "critical_failure_categories": ["ignora_escala_pedida"]
+    },
+    {
+      "scenarioId": "design_job_queue_processing",
+      "question": "Diseñá un sistema de colas para procesar millones de tareas asíncronas (ej. envío de emails, generación de reportes) con reintentos.",
+      "expected_coverage": ["broker de colas (SQS/RabbitMQ/Redis)", "idempotencia de workers", "dead-letter queue", "backoff en reintentos", "escalado horizontal de workers"],
+      "critical_failure_categories": ["respuesta_generica_sin_tradeoffs"]
+    },
+    {
+      "scenarioId": "design_notification_system",
+      "question": "Diseñá un sistema de notificaciones multi-canal (push, email, SMS) para una app con 5M de usuarios activos.",
+      "expected_coverage": ["desacople por canal (fan-out)", "preferencias de usuario y opt-out", "priorización/rate limiting por canal", "reintentos y confirmación de entrega", "particionamiento por usuario"],
+      "critical_failure_categories": ["respuesta_generica_sin_tradeoffs"]
+    },
+    {
+      "scenarioId": "design_chat_system_scalable",
+      "question": "Diseñá el backend de un chat en tiempo real tipo WhatsApp para grupos grandes.",
+      "expected_coverage": ["conexiones persistentes (WebSockets)", "entrega garantizada vs at-most-once", "almacenamiento de historial", "fan-out en grupos grandes", "presencia/estado online"],
+      "critical_failure_categories": ["ignora_escala_pedida"]
+    },
+    {
+      "scenarioId": "design_ci_cd_pipeline",
+      "question": "Diseñá un pipeline de CI/CD para un equipo con varios microservicios en Kubernetes, con rollback automático si falla el health check post-deploy.",
+      "expected_coverage": ["etapas (build/test/deploy)", "estrategia de deploy (blue-green/canary)", "criterio de rollback automático", "gestión de secretos", "observabilidad post-deploy"],
+      "critical_failure_categories": ["respuesta_generica_sin_tradeoffs"],
+      "notes": "Dominio relevante a experiencia real de Ignacio en FMIT Technologies (monitoring/CI-CD/Kubernetes)."
+    }
+  ]
+}

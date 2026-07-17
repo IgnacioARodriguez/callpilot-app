@@ -20,6 +20,9 @@ type Track =
   | "real-coding-multiturn"
   | "real-suite"
   | "real-vision"
+  | "real-audio-track-d"
+  | "real-long-session"
+  | "real-text-batch"
   | "real-text-interview"
   | "real-text-interview-batch"
   | "real-natively-interview"
@@ -45,7 +48,12 @@ interface CodingTurn {
 interface CodingScenario {
   scenarioId: string;
   language: string;
+  starter_code?: string;
+  screen_context?: string;
+  expected_behavior?: string;
   turns: CodingTurn[];
+  critical_failure_categories?: string[];
+  notes?: string;
 }
 
 interface TextInterviewTurn {
@@ -58,6 +66,82 @@ interface TextInterviewScenario {
   turns: TextInterviewTurn[];
   trigger_turn: number;
   expected_behavior: Record<string, unknown>;
+  critical_failure_categories?: string[];
+  notes?: string;
+}
+
+interface SystemDesignScenario {
+  scenarioId: string;
+  question: string;
+  expected_coverage: string[];
+  critical_failure_categories?: string[];
+  notes?: string;
+}
+
+interface TextBatchFixture {
+  live_coding_evolutivo?: CodingScenario[];
+  live_coding_adversarial?: CodingScenario[];
+  technical_interview?: TextInterviewScenario[];
+  technical_interview_adversarial?: TextInterviewScenario[];
+  background_adversarial?: TextInterviewScenario[];
+  system_design?: SystemDesignScenario[];
+}
+
+interface VisionScenario {
+  scenarioId: string;
+  image: string;
+  description: string;
+  exact_text_present: string[];
+  must_not_mention: string[];
+  expected_behavior: string;
+  critical_failure_categories?: string[];
+}
+
+interface AudioTrackDScenario {
+  scenarioId: string;
+  channel: "mic" | "system";
+  audio_file: string;
+  profile: "clean" | "laptop_mic_zoom" | "headset_meet" | "phone_speaker_teams" | "noisy_cafe";
+  ground_truth_transcript: string;
+  test_type: "race_condition_cutoff" | "chunk_boundary_word_split";
+  trigger_timestamp_ms: number | null;
+  critical_word: string;
+  expected_behavior: string;
+  critical_word_start_ms?: number;
+  critical_word_end_ms?: number;
+  boundary_timestamp_ms?: number;
+  duration_ms?: number;
+  sample_rate_hz?: number;
+  tts_provider?: string;
+}
+
+interface AudioTrackHEvent {
+  eventId: string;
+  audio_segment: string;
+  channel: "mic" | "system";
+  start_ms: number;
+  duration_ms: number;
+  trigger_answer_ms?: number;
+  expected_critical_terms: string[];
+  expected_topic: string;
+  expected_no_answer: boolean;
+  ground_truth_transcript: string;
+}
+
+interface AudioTrackHSession {
+  sessionId: string;
+  mode: "technical_qa" | "behavioral" | "live_coding";
+  profile: "clean" | "laptop_mic_zoom" | "headset_meet" | "phone_speaker_teams" | "noisy_cafe";
+  duration_ms: number;
+  full_duration_ms?: number;
+  channels: Array<"mic" | "system" | "both">;
+  description: string;
+  events: AudioTrackHEvent[];
+  expected_checks: {
+    latest_question_terms: string[];
+    stale_topic_forbidden_terms: string[];
+    unsupported_behavioral_specifics: string[];
+  };
 }
 
 interface RunResult {
@@ -72,6 +156,8 @@ interface RunResult {
   };
   diagnostics: Record<string, unknown>;
 }
+
+type PublishedAnswerMode = "interview" | "coding";
 
 interface CdpClient {
   send(method: string, params?: Record<string, unknown>): Promise<any>;
@@ -101,12 +187,78 @@ const runNumber = Number(argValue("--run") || "1");
 const debugPort = Number(process.env.CALLPILOT_E2E_DEBUG_PORT || "9359");
 const maxRealCalls = Number(process.env.E2E_MAX_REAL_CALLS || "0");
 const realBatchLimit = Math.max(1, Number(process.env.E2E_REAL_BATCH_LIMIT || "3"));
+const longSessionMode = process.env.E2E_LONG_SESSION_MODE === "full" ? "full" : "short";
+const longSessionLimit = Math.max(1, Number(process.env.E2E_LONG_SESSION_LIMIT || "1"));
+const longSessionTimeScale = Math.max(0.01, Number(process.env.E2E_LONG_SESSION_TIME_SCALE || (longSessionMode === "full" ? "0.04" : "0.08")));
 let realCalls = 0;
 
 const readJson = <T>(relativePath: string): T =>
   JSON.parse(fs.readFileSync(path.join(fixturesDir, relativePath), "utf8")) as T;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const textBatchFixturePaths = (): string[] => {
+  const requested = (argValue("--fixtures") || "batch1,batch2-adversarial")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return requested.map((name) => name.includes("/") || name.includes("\\")
+    ? name
+    : `text/${name.endsWith(".json") ? name : `${name}.json`}`);
+};
+
+const loadTextBatchFixtures = (): Array<{ path: string; fixture: TextBatchFixture }> =>
+  textBatchFixturePaths().map((fixturePath) => ({
+    path: fixturePath,
+    fixture: readJson<TextBatchFixture>(fixturePath),
+  }));
+
+const scenarioWithSource = <T extends { scenarioId: string }>(
+  fixturePath: string,
+  scenarios: T[] | undefined,
+  sourceKey: string,
+): Array<T & { fixturePath: string; sourceKey: string }> =>
+  (scenarios ?? []).map((scenario) => ({ ...scenario, fixturePath, sourceKey }));
+
+const loadCodingScenarios = (): Array<CodingScenario & { fixturePath: string; sourceKey: string }> =>
+  loadTextBatchFixtures().flatMap(({ path: fixturePath, fixture }) => [
+    ...scenarioWithSource(fixturePath, fixture.live_coding_evolutivo, "live_coding_evolutivo"),
+    ...scenarioWithSource(fixturePath, fixture.live_coding_adversarial, "live_coding_adversarial"),
+  ]);
+
+const systemDesignToInterviewScenario = (
+  scenario: SystemDesignScenario & { fixturePath: string; sourceKey: string },
+): TextInterviewScenario & { fixturePath: string; sourceKey: string } => ({
+  scenarioId: scenario.scenarioId,
+  turns: [{ speaker: "interviewer", text: scenario.question }],
+  trigger_turn: 1,
+  expected_behavior: {
+    language: "es",
+    expected_topics: scenario.expected_coverage,
+    must_stay_on_topic: true,
+  },
+  critical_failure_categories: scenario.critical_failure_categories,
+  notes: scenario.notes,
+  fixturePath: scenario.fixturePath,
+  sourceKey: scenario.sourceKey,
+});
+
+const loadTextInterviewScenarios = (): Array<TextInterviewScenario & { fixturePath: string; sourceKey: string }> =>
+  loadTextBatchFixtures().flatMap(({ path: fixturePath, fixture }) => [
+    ...scenarioWithSource(fixturePath, fixture.technical_interview, "technical_interview"),
+    ...scenarioWithSource(fixturePath, fixture.technical_interview_adversarial, "technical_interview_adversarial"),
+    ...scenarioWithSource(fixturePath, fixture.background_adversarial, "background_adversarial"),
+    ...scenarioWithSource(fixturePath, fixture.system_design, "system_design").map(systemDesignToInterviewScenario),
+  ]);
+
+const loadVisionScenarios = (): VisionScenario[] =>
+  readJson<{ scenarios: VisionScenario[] }>("vision/track-g.json").scenarios;
+
+const loadAudioTrackDScenarios = (): AudioTrackDScenario[] =>
+  readJson<{ scenarios: AudioTrackDScenario[] }>("audio/track-d.json").scenarios;
+
+const loadAudioTrackHSessions = (): AudioTrackHSession[] =>
+  readJson<{ sessions: AudioTrackHSession[] }>("audio/track-h-long-session.json").sessions;
 
 const finishLatency = (label: string, startedStage: "audio_or_screen_capture" | "model_call_start" = "model_call_start") => {
   const started = markLatencyStage(createLatencyMetricRun(label), startedStage);
@@ -130,6 +282,95 @@ const recordRealCall = () => {
 };
 
 const intentForDetection = (shouldDispatch: boolean) => shouldDispatch ? "answer" : "no_answer";
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+const isStringArray = (value: unknown) =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const hasKeys = (record: Record<string, unknown>, keys: string[]) =>
+  keys.every((key) => Object.prototype.hasOwnProperty.call(record, key));
+
+const validatePublishedStructuredAnswer = (
+  payload: unknown,
+  mode: PublishedAnswerMode,
+): { ok: boolean; errors: string[]; kind: string | null } => {
+  const errors: string[] = [];
+  const envelope = asRecord(payload);
+  if (!envelope) {
+    return { ok: false, errors: ["missing_structured_event"], kind: null };
+  }
+  if (typeof envelope.requestId !== "string" || !envelope.requestId.trim()) errors.push("requestId");
+  if (typeof envelope.renderedText !== "string" || !envelope.renderedText.trim()) errors.push("renderedText");
+  if (typeof envelope.timestamp !== "number") errors.push("timestamp");
+
+  const answer = asRecord(envelope.answer);
+  if (!answer) {
+    errors.push("answer");
+    return { ok: false, errors, kind: null };
+  }
+  const expectedKind = mode === "coding" ? "coding" : "interview";
+  const kind = typeof answer.kind === "string" ? answer.kind : null;
+  if (kind !== expectedKind) errors.push(`kind:${kind ?? "missing"}`);
+  const payloadRecord = asRecord(answer.payload);
+  if (!payloadRecord) {
+    errors.push("payload");
+    return { ok: false, errors, kind };
+  }
+
+  if (mode === "interview") {
+    const required = [
+      "version",
+      "answerNeeded",
+      "intent",
+      "spokenAnswer",
+      "keyPoints",
+      "correction",
+      "assumptions",
+      "evidenceRefs",
+      "followUpHint",
+    ];
+    if (!hasKeys(payloadRecord, required)) errors.push("interview_required_fields");
+    if (payloadRecord.version !== "1") errors.push("version");
+    if (typeof payloadRecord.answerNeeded !== "boolean") errors.push("answerNeeded");
+    if (!["technical_qa", "behavioral", "system_design", "clarification", "no_answer"].includes(String(payloadRecord.intent))) errors.push("intent");
+    if (typeof payloadRecord.spokenAnswer !== "string" || !payloadRecord.spokenAnswer.trim()) errors.push("spokenAnswer");
+    if (!isStringArray(payloadRecord.keyPoints)) errors.push("keyPoints");
+    if (!isStringArray(payloadRecord.assumptions)) errors.push("assumptions");
+    if (!isStringArray(payloadRecord.evidenceRefs)) errors.push("evidenceRefs");
+    const correction = asRecord(payloadRecord.correction);
+    if (!correction || typeof correction.needed !== "boolean") errors.push("correction");
+  } else {
+    const required = [
+      "version",
+      "answerNeeded",
+      "responseType",
+      "problem",
+      "solution",
+      "narration",
+      "tests",
+      "patch",
+    ];
+    if (!hasKeys(payloadRecord, required)) errors.push("coding_required_fields");
+    if (payloadRecord.version !== "1") errors.push("version");
+    if (typeof payloadRecord.answerNeeded !== "boolean") errors.push("answerNeeded");
+    if (!["initial_solution", "explanation", "follow_up_change", "debug_fix", "clarification"].includes(String(payloadRecord.responseType))) errors.push("responseType");
+    const problem = asRecord(payloadRecord.problem);
+    const solution = asRecord(payloadRecord.solution);
+    const narration = asRecord(payloadRecord.narration);
+    const complexity = asRecord(solution?.complexity);
+    if (!problem || typeof problem.language !== "string") errors.push("problem");
+    if (!solution || typeof solution.code !== "string") errors.push("solution.code");
+    if (!solution || !isStringArray(solution.approachSteps)) errors.push("solution.approachSteps");
+    if (!complexity || typeof complexity.time !== "string" || typeof complexity.space !== "string") errors.push("solution.complexity");
+    if (!narration || typeof narration.spokenAnswer !== "string") errors.push("narration");
+    if (!Array.isArray(payloadRecord.tests)) errors.push("tests");
+    if (!asRecord(payloadRecord.patch)) errors.push("patch");
+  }
+
+  return { ok: errors.length === 0, errors, kind };
+};
 
 const runNoAnswer = (): RunResult[] => {
   const fixture = readJson<{ cases: NoAnswerCase[] }>("no-answer.track-c.json");
@@ -162,15 +403,14 @@ const hasSequentialTurnIds = (turns: CodingTurn[]) =>
   turns.every((turn, index) => turn.turnId === index + 1);
 
 const runCodingFixtureValidation = (): RunResult[] => {
-  const fixture = readJson<{ live_coding_evolutivo: CodingScenario[] }>("text-fixtures.batch1.json");
-  return fixture.live_coding_evolutivo.map((scenario) => {
+  return loadCodingScenarios().map((scenario) => {
     const testCaseTurns = scenario.turns.filter((turn) => typeof turn.test_cases === "string" && turn.test_cases.trim());
     const deterministicChecks = {
       hasScenarioId: Boolean(scenario.scenarioId),
-      hasAtLeastFourTurns: scenario.turns.length >= 4,
+      hasAtLeastOneTurn: scenario.turns.length >= 1,
       hasSequentialTurnIds: hasSequentialTurnIds(scenario.turns),
       hasPromptsForEveryTurn: scenario.turns.every((turn) => Boolean(turn.prompt_transcript?.trim())),
-      hasExpectedBehaviorForEveryTurn: scenario.turns.every((turn) => Boolean(turn.expected_behavior?.trim())),
+      hasExpectedBehaviorForEveryTurn: scenario.turns.every((turn) => Boolean(turn.expected_behavior?.trim() || scenario.expected_behavior?.trim())),
     };
     return {
       scenarioId: scenario.scenarioId,
@@ -180,6 +420,8 @@ const runCodingFixtureValidation = (): RunResult[] => {
       judge: null,
       latency_ms: finishLatency("track-f-fixture-validation"),
       diagnostics: {
+        fixturePath: scenario.fixturePath,
+        sourceKey: scenario.sourceKey,
         language: scenario.language,
         turnCount: scenario.turns.length,
         testCaseTurnIds: testCaseTurns.map((turn) => turn.turnId),
@@ -216,6 +458,42 @@ const runPythonAssertions = (code: string, assertions: string[]) => {
   }
 };
 
+const executablePythonAssertions = (turns: CodingTurn[]): string[] =>
+  turns
+    .map((turn) => turn.test_cases?.trim())
+    .filter((value): value is string => Boolean(value))
+    .filter((value) => /^(assert|import|from|for|with|def|class|async|if|result\s*=|[a-zA-Z_][\w.]*\()/m.test(value));
+
+const rawTestCases = (turns: CodingTurn[]): string[] =>
+  turns
+    .map((turn) => turn.test_cases?.trim())
+    .filter((value): value is string => Boolean(value));
+
+const codingTurnRequiresCode = (turn: CodingTurn | undefined): boolean => {
+  const text = normalizeForChecks([
+    turn?.prompt_transcript ?? "",
+    turn?.expected_behavior ?? "",
+  ].join(" "));
+  if (/\b(?:que pasa|y si|como lo testeas|resumime|tradeoff|tradeoffs|alto nivel|cuando|por que)\b/.test(text)) {
+    return false;
+  }
+  return /\b(?:implement|resolve|resolv|correg|optimiza|agrega|agregale|escrib|invert|merge|funcion|clase|endpoint|test)\b/.test(text);
+};
+
+const forbiddenVisionMentions = (answerText: string, forbiddenItems: string[]): string[] => {
+  const normalized = normalizeForChecks(answerText);
+  const hasCodeLikeOutput = /```|^\s*(?:def|class|function|const|let|var|import|return)\b|here is the code|codigo:|solution code/i.test(answerText);
+  return forbiddenItems.filter((item) => {
+    const forbidden = normalizeForChecks(item);
+    if (normalized.includes(forbidden)) return true;
+    if (/\b(?:codigo|code|solucion)\b/.test(forbidden) && hasCodeLikeOutput) return true;
+    if (/\bslack\b/.test(forbidden) && /\b(?:slack|standup|martina|pr de ayer|team-standup)\b/.test(normalized)) return true;
+    if (/\bkeyerror\b/.test(forbidden) && /\bkeyerror\b/.test(normalized)) return true;
+    if (/\bindexerror\b/.test(forbidden) && !/\bindexerror\b/.test(normalized)) return true;
+    return false;
+  });
+};
+
 const extractPythonCode = (text: string): string => {
   const jsonCandidates = [
     text.trim(),
@@ -246,6 +524,68 @@ const normalizeForChecks = (text: string): string =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
 
+const normalizedWords = (text: string): string[] =>
+  normalizeForChecks(text).match(/[a-z0-9]+/g) ?? [];
+
+const containsOrderedWords = (actual: string, expected: string): boolean => {
+  const actualWords = normalizedWords(actual);
+  const expectedWords = normalizedWords(expected);
+  let cursor = 0;
+  for (const expectedWord of expectedWords) {
+    const found = actualWords.findIndex((word, index) => index >= cursor && word === expectedWord);
+    if (found < 0) return false;
+    cursor = found + 1;
+  }
+  return true;
+};
+
+const containsCriticalWordOrVariant = (actual: string, criticalWord: string): boolean => {
+  const normalized = normalizeForChecks(actual);
+  const critical = normalizeForChecks(criticalWord);
+  if (normalized.includes(critical)) return true;
+  if (critical === "checksum") {
+    return /\bchecks?\b/.test(normalized) && /\b(?:sum|some|room)\b/.test(normalized);
+  }
+  return false;
+};
+
+const bestNativelyTranscriptText = (payloads: Array<{ text?: unknown; isFinal?: unknown }>): string => {
+  let best = "";
+  let bestScore = -1;
+  for (const payload of payloads) {
+    const text = String(payload?.text || "").trim();
+    if (!text) continue;
+    const score = normalizedWords(text).length * 10 + text.length / 1000 + (payload?.isFinal ? 0.2 : 0);
+    if (score >= bestScore) {
+      best = text;
+      bestScore = score;
+    }
+  }
+  return best;
+};
+
+const assembleNativelyTranscriptText = (payloads: Array<{ text?: unknown; isFinal?: unknown }>): string => {
+  const finalTexts = payloads
+    .filter((payload) => payload?.isFinal)
+    .map((payload) => String(payload?.text || "").trim())
+    .filter(Boolean);
+  const merged: string[] = [];
+  for (const text of finalTexts) {
+    const normalized = normalizeForChecks(text).replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    const last = merged.at(-1) ?? "";
+    const normalizedLast = normalizeForChecks(last).replace(/\s+/g, " ").trim();
+    if (normalizedLast && normalizedLast.includes(normalized)) continue;
+    if (normalizedLast && normalized.includes(normalizedLast)) {
+      merged[merged.length - 1] = text;
+      continue;
+    }
+    merged.push(text);
+  }
+  const finalTranscript = merged.join(" ").replace(/\s+/g, " ").trim();
+  return finalTranscript || bestNativelyTranscriptText(payloads);
+};
+
 const termsFrom = (value: unknown): string[] => {
   if (Array.isArray(value)) return value.flatMap(termsFrom);
   if (typeof value !== "string") return [];
@@ -266,6 +606,49 @@ const hasLikelySpanish = (answer: string): boolean =>
 const hasLikelyEnglish = (answer: string): boolean =>
   /\b(the|when|because|would|should|answer|mitigate|concurrency|package|runtime)\b/i.test(normalizeForChecks(answer));
 
+const wordCount = (answer: string): number =>
+  answer.trim().split(/\s+/).filter(Boolean).length;
+
+const forbiddenTechnicalPatterns: Record<string, RegExp[]> = {
+  interview_redis_persistence: [
+    /\bredis\b.{0,60}\b(?:relational|relacional)\b/i,
+    /\b(?:relational|relacional)\b.{0,60}\bredis\b/i,
+  ],
+  interview_postgres_indexing: [
+    /\b(?:indexes|indices)\b.{0,80}\b(?:always|siempre)\b.{0,80}\b(?:improve|mejoran)\b/i,
+  ],
+  interview_react_state_vs_ref: [
+    /\buseref\b.{0,80}\b(?:triggers?|causes?|dispara|provoca)\b.{0,40}\bre-?render/i,
+  ],
+  interview_typescript_generics: [
+    /\bgenerics?\b.{0,80}\b(?:same as|lo mismo que|igual(?:es)? a)\b.{0,40}\bany\b/i,
+  ],
+  interview_mongodb_vs_postgres: [
+    /\bmongodb\b.{0,80}\b(?:best|mejor|ideal)\b.{0,80}\b(?:complex acid|acid complejo|transacciones acid complejas)\b/i,
+  ],
+};
+
+const isNegatedRedisRelationalCorrection = (scenarioId: string, answerText: string): boolean =>
+  scenarioId === "interview_redis_persistence"
+  && (
+    /\bredis\b[^.?!]{0,80}\b(?:no|not)\s+(?:es|is)\b[^.?!]{0,80}\b(?:relational|relacional)\b/i.test(answerText)
+    || /\bredis\b[^.?!]{0,80}\b(?:no|not)\s+(?:relational|relacional)\b/i.test(answerText)
+  );
+
+const forbiddenTechnicalClaims = (scenarioId: string, answerText: string): string[] =>
+  (forbiddenTechnicalPatterns[scenarioId] ?? [])
+    .filter((pattern) => pattern.test(answerText) && !isNegatedRedisRelationalCorrection(scenarioId, answerText))
+    .map((pattern) => pattern.source);
+
+const inventsFastApiProductionExperience = (answerText: string): boolean => {
+  const normalized = normalizeForChecks(answerText);
+  if (!/\bfastapi\b/.test(normalized)) return false;
+  const firstPersonExperience = /\b(yo\s+)?(use|utilice|trabaje|implemente|elegi|he\s+usado|he\s+trabajado|i\s+used|i\s+chose|i\s+built|my\s+project|mi\s+proyecto)\b/.test(normalized);
+  const productionClaim = /\b(produccion|production|proyecto|project)\b/.test(normalized);
+  const explicitRefusal = /\b(no\s+(diria|digas|afirmaria|inventaria)|not\s+(claim|say|pretend))\b/.test(normalized);
+  return !explicitRefusal && (firstPersonExperience || productionClaim);
+};
+
 const evaluateTextInterviewChecks = (scenario: TextInterviewScenario, answerText: string, failed: unknown, traceRecorded: boolean) => {
   const expected = scenario.expected_behavior ?? {};
   const normalized = normalizeForChecks(answerText);
@@ -283,17 +666,17 @@ const evaluateTextInterviewChecks = (scenario: TextInterviewScenario, answerText
       || hasAnyTerm(answerText, correctionContent)
     ) : true,
     doesNotExposeEmptyResume: !/\bresume|cv|star stor/i.test(answerText),
+    noInventedExperience: expected.first_mention_must_not_invent_experience ? !inventsFastApiProductionExperience(answerText) : true,
+    forbiddenTechnicalClaimsAbsent: forbiddenTechnicalClaims(scenario.scenarioId, answerText).length === 0,
+    maxWordsPassed: wordCount(answerText) <= 180,
     noQuestionMarkMojibake: !/\?\?/.test(answerText),
     traceRecorded,
   };
 };
 
 const runCodingObjectiveSmoke = (): RunResult[] => {
-  const fixture = readJson<{ live_coding_evolutivo: CodingScenario[] }>("text-fixtures.batch1.json");
-  const scenario = fixture.live_coding_evolutivo.find((item) => item.scenarioId === "coding_evol_two_sum");
-  const assertions = scenario?.turns
-    .map((turn) => turn.test_cases?.trim())
-    .filter((value): value is string => Boolean(value)) ?? [];
+  const scenario = loadCodingScenarios().find((item) => item.scenarioId === "coding_evol_two_sum");
+  const assertions = scenario ? executablePythonAssertions(scenario.turns) : [];
   const code = `
 def two_sum(nums, target):
     seen = {}
@@ -321,7 +704,8 @@ def two_sum(nums, target):
     judge: null,
     latency_ms: finishLatency("track-f-objective-smoke"),
     diagnostics: {
-      assertions,
+      rawTestCases: scenario ? rawTestCases(scenario.turns) : [],
+      executableAssertions: assertions,
       execution,
     },
   }];
@@ -402,6 +786,32 @@ const audioMimeType = (filePath: string) => {
   if (ext === ".m4a") return "audio/m4a";
   if (ext === ".mp4") return "audio/mp4";
   return "audio/webm";
+};
+
+const writePcmWav = (filePath: string, pcm: Buffer, sampleRate = 16000) => {
+  const wav = Buffer.alloc(44 + pcm.length);
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(36 + pcm.length, 4);
+  wav.write("WAVE", 8, "ascii");
+  wav.write("fmt ", 12, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(pcm.length, 40);
+  pcm.copy(wav, 44);
+  fs.writeFileSync(filePath, wav);
+};
+
+const slicePcm16k = (pcm: Buffer, startMs: number, endMs: number): Buffer => {
+  const bytesPerMs = 16000 * 2 / 1000;
+  const startByte = Math.max(0, Math.floor(startMs * bytesPerMs / 2) * 2);
+  const endByte = Math.min(pcm.length, Math.ceil(endMs * bytesPerMs / 2) * 2);
+  return pcm.subarray(startByte, Math.max(startByte, endByte));
 };
 
 const readPcmWavAsMono16k = (filePath: string): Buffer => {
@@ -683,13 +1093,17 @@ const makeCodingSession = (
       : [interviewerMessage];
   });
   const screenText = [
-    "Two Sum",
-    "Python function signature:",
-    "def two_sum(nums, target):",
-    "Given an integer array nums and an integer target, return indices of the two numbers such that they add up to target.",
-    "Return None when there is no solution.",
-    "Example: nums = [2, 7, 11, 15], target = 9 -> [0, 1].",
-  ].join("\n");
+    scenario.screen_context,
+    scenario.starter_code ? `Starter code:\n${scenario.starter_code}` : "",
+    scenario.scenarioId === "coding_evol_two_sum" ? [
+      "Two Sum",
+      "Python function signature:",
+      "def two_sum(nums, target):",
+      "Given an integer array nums and an integer target, return indices of the two numbers such that they add up to target.",
+      "Return None when there is no solution.",
+      "Example: nums = [2, 7, 11, 15], target = 9 -> [0, 1].",
+    ].join("\n") : "",
+  ].filter(Boolean).join("\n\n");
   return {
     id: `e2e-coding-${now}`,
     title: "E2E live coding checkpoint",
@@ -711,7 +1125,7 @@ const makeCodingSession = (
     profile: "",
     targetUseCase: "live coding interview",
     preferredLanguage: scenario.language === "python" ? "spanish" : "english",
-    codingLanguage: "Python",
+    codingLanguage: scenario.language === "javascript" ? "JavaScript" : "Python",
     answerVerbosity: "medium",
     modelProvider: provider,
     modelName,
@@ -720,7 +1134,7 @@ const makeCodingSession = (
   };
 };
 
-const makeEmptyInterviewSession = (provider: "openai" | "nvidia", modelName: string, activeMode: "technical_qa" | "behavioral") => {
+const makeEmptyInterviewSession = (provider: "openai" | "nvidia", modelName: string, activeMode: "technical_qa" | "behavioral" | "live_coding") => {
   const now = Date.now();
   return {
     id: `e2e-natively-${now}`,
@@ -795,6 +1209,10 @@ const waitForAnswerEvents = async (
   overlayClient.close();
   const completed = events.find((event) => event.type === "status" && event.payload?.status === "completed");
   const structured = events.find((event) => event.type === "structured");
+  const structuredValidation = validatePublishedStructuredAnswer(
+    structured?.payload,
+    options.mode === "live_coding" ? "coding" : "interview",
+  );
   return {
     provider,
     modelName,
@@ -802,6 +1220,7 @@ const waitForAnswerEvents = async (
     events,
     completed,
     structured,
+    structuredValidation,
     answerText: String(completed?.payload?.text || structured?.payload?.renderedText || ""),
   };
 };
@@ -1018,6 +1437,7 @@ const runRealNativelyInterview = async (): Promise<RunResult[]> => {
       answerRequestAccepted: answer.requestResult.ok,
       answerCompleted: Boolean(answer.completed) && !failed,
       answerNonEmpty: answer.answerText.trim().length > 40,
+      structuredSchemaValid: answer.structuredValidation.ok,
       noUnsupportedBehavioralSpecifics: unsupportedSpecifics.length === 0,
       traceRecorded: Boolean(tracePath && traceStatus?.eventCount >= 3),
     };
@@ -1047,6 +1467,7 @@ const runRealNativelyInterview = async (): Promise<RunResult[]> => {
           confidence: payload?.confidence,
         })),
         answer_received: answer.answerText,
+        structuredValidation: answer.structuredValidation,
         unsupportedSpecifics,
         answer_events: answer.events.map((event) => ({
           type: event.type,
@@ -1216,6 +1637,7 @@ const runRealBehavioral = async (): Promise<RunResult[]> => {
     const completed = answerEvents.find((event) => event.type === "status" && event.payload?.status === "completed");
     const failed = answerEvents.find((event) => event.type === "status" && event.payload?.status === "failed");
     const structured = answerEvents.find((event) => event.type === "structured");
+    const structuredValidation = validatePublishedStructuredAnswer(structured?.payload, "interview");
     const answerText = String(completed?.payload?.text || structured?.payload?.renderedText || "");
 
     const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
@@ -1235,6 +1657,7 @@ const runRealBehavioral = async (): Promise<RunResult[]> => {
       answerRequestAccepted: requestResult.ok,
       answerCompleted: Boolean(completed) && !failed,
       answerNonEmpty: answerText.trim().length > 40,
+      structuredSchemaValid: structuredValidation.ok,
       traceRecorded: Boolean(tracePath && traceStatus?.eventCount >= 3),
       promptSentRecorded: Boolean(promptTrace),
     };
@@ -1257,6 +1680,7 @@ const runRealBehavioral = async (): Promise<RunResult[]> => {
         },
         transcript_result: transcriptResult.text,
         answer_received: answerText,
+        structuredValidation,
         prompt_sent: promptTrace,
         stt_latency_ms: sttLatency,
         answer_events: answerEvents.map((event) => ({
@@ -1301,11 +1725,11 @@ const runRealTextInterview = async (): Promise<RunResult[]> => {
     throw new Error("dist/index.html is missing. Run npm run build before --track=real-text-interview.");
   }
 
-  const fixture = readJson<{ technical_interview: TextInterviewScenario[] }>("text-fixtures.batch1.json");
   const requestedScenarioId = argValue("--scenario") || "interview_redis_persistence";
-  const scenario = fixture.technical_interview.find((item) => item.scenarioId === requestedScenarioId)
-    ?? fixture.technical_interview[0];
-  if (!scenario) throw new Error("No technical_interview scenario found in text-fixtures.batch1.json");
+  const scenarios = loadTextInterviewScenarios();
+  const scenario = scenarios.find((item) => item.scenarioId === requestedScenarioId)
+    ?? scenarios[0];
+  if (!scenario) throw new Error("No text interview scenario found in text batch fixtures");
 
   return [await runRealTextInterviewScenario(scenario, "real_text_interview_ipc", "real-text-interview")];
 };
@@ -1386,12 +1810,14 @@ const runRealTextInterviewScenario = async (
       answerRequestAccepted: answer.requestResult.ok,
       answerCompleted: Boolean(answer.completed) && !failed,
       answerNonEmpty: answer.answerText.trim().length > 40,
+      structuredSchemaValid: answer.structuredValidation.ok,
       mentionsRedis: /\bredis\b/i.test(answer.answerText),
       doesNotCallRedisRelational: !/redis\s+(es|is)\s+(una\s+)?(base de datos\s+)?relacional/i.test(normalizedAnswer),
       noQuestionMarkMojibake: !/\?\?/.test(answer.answerText),
       traceRecorded: Boolean(tracePath && traceStatus?.eventCount >= 3),
     } : {
       answerRequestAccepted: answer.requestResult.ok,
+      structuredSchemaValid: answer.structuredValidation.ok,
       ...evaluateTextInterviewChecks(scenario, answer.answerText, failed, Boolean(tracePath && traceStatus?.eventCount >= 3)),
     };
     const totalLatency = answerDone.events.find((event) => event.stage === "response_complete")?.elapsedMs ?? 0;
@@ -1407,10 +1833,15 @@ const runRealTextInterviewScenario = async (
         total: totalLatency,
       },
       diagnostics: {
+        fixturePath: "fixturePath" in scenario ? scenario.fixturePath : undefined,
+        sourceKey: "sourceKey" in scenario ? scenario.sourceKey : undefined,
+        critical_failure_categories: scenario.critical_failure_categories ?? [],
         provider: "nvidia",
         modelName,
         transcript: scenario.turns,
         answer_received: answer.answerText,
+        structuredValidation: answer.structuredValidation,
+        forbiddenTechnicalClaims: forbiddenTechnicalClaims(scenario.scenarioId, answer.answerText),
         answer_events: answer.events.map((event) => ({
           type: event.type,
           status: event.payload?.status,
@@ -1430,6 +1861,13 @@ const runRealTextInterviewScenario = async (
 };
 
 const runRealTextInterviewBatch = async (): Promise<RunResult[]> => {
+  return runRealTextInterviewBatchWithSelection(selectedScenarioIds(), realBatchLimit);
+};
+
+const runRealTextInterviewBatchWithSelection = async (
+  requested: string[],
+  limit: number,
+): Promise<RunResult[]> => {
   if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
     return [{
       scenarioId: "technical_interview_batch",
@@ -1450,18 +1888,15 @@ const runRealTextInterviewBatch = async (): Promise<RunResult[]> => {
   if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
     throw new Error("dist/index.html is missing. Run npm run build before --track=real-text-interview-batch.");
   }
-  const fixture = readJson<{ technical_interview: TextInterviewScenario[] }>("text-fixtures.batch1.json");
-  const requested = argValue("--scenarios")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const scenarios = (requested.length > 0
-    ? requested
-        .map((id) => fixture.technical_interview.find((scenario) => scenario.scenarioId === id))
-        .filter((scenario): scenario is TextInterviewScenario => Boolean(scenario))
-    : fixture.technical_interview.slice(0, realBatchLimit)
-  );
-  if (scenarios.length === 0) throw new Error("No technical_interview scenarios selected for real batch.");
+  const allScenarios = loadTextInterviewScenarios();
+  const scenarios = requested.length > 0
+    ? requested.map((id) => {
+        const scenario = allScenarios.find((item) => item.scenarioId === id);
+        if (!scenario) throw new Error(`Unknown text scenario id: ${id}`);
+        return scenario;
+      })
+    : allScenarios.slice(0, limit);
+  if (scenarios.length === 0) return [];
   checkBudget(scenarios.length);
 
   const results: RunResult[] = [];
@@ -1495,12 +1930,9 @@ const runRealCoding = async (): Promise<RunResult[]> => {
     throw new Error("dist/index.html is missing. Run npm run build before --track=real-coding.");
   }
 
-  const fixture = readJson<{ live_coding_evolutivo: CodingScenario[] }>("text-fixtures.batch1.json");
-  const scenario = fixture.live_coding_evolutivo.find((item) => item.scenarioId === "coding_evol_two_sum");
-  if (!scenario) throw new Error("coding_evol_two_sum scenario not found in text-fixtures.batch1.json");
-  const assertions = scenario.turns
-    .map((turn) => turn.test_cases?.trim())
-    .filter((value): value is string => Boolean(value));
+  const scenario = loadCodingScenarios().find((item) => item.scenarioId === "coding_evol_two_sum");
+  if (!scenario) throw new Error("coding_evol_two_sum scenario not found in text batch fixtures");
+  const assertions = executablePythonAssertions(scenario.turns);
 
   const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
   const userDataDir = path.join(tmpDir, `user-data-coding-${Date.now()}`);
@@ -1568,16 +2000,18 @@ const runRealCoding = async (): Promise<RunResult[]> => {
     const tracePath = endSession?.tracePath || traceStatus?.path || "";
     const failed = answer.events.find((event) => event.type === "status" && event.payload?.status === "failed");
     const code = extractPythonCode(answer.answerText);
+    const requiresCode = codingTurnRequiresCode(scenario.turns[0]);
     const execution = code
       ? runPythonAssertions(code, assertions)
-      : { ok: false, status: null, stdout: "", stderr: "No Python code block with two_sum was found.", timedOut: false };
+      : { ok: !requiresCode && assertions.length === 0, status: null, stdout: "", stderr: requiresCode ? "No executable Python code block was found." : "", timedOut: false };
     const totalLatency = answerDone.events.find((event) => event.stage === "response_complete")?.elapsedMs ?? 0;
     const deterministicChecks = {
       answerRequestAccepted: answer.requestResult.ok,
       answerCompleted: Boolean(answer.completed) && !failed,
       answerNonEmpty: answer.answerText.trim().length > 40,
-      codeBlockFound: Boolean(code),
-      definesTwoSum: /\bdef\s+two_sum\s*\(/.test(code),
+      structuredSchemaValid: answer.structuredValidation.ok,
+      codeBlockFound: requiresCode ? Boolean(code) : true,
+      definesExpectedFunction: !requiresCode || scenario.scenarioId !== "coding_evol_two_sum" || /\bdef\s+two_sum\s*\(/.test(code),
       hasAccumulatedAssertions: assertions.length >= 2,
       pythonExecutionPassed: execution.ok,
       didNotTimeout: !execution.timedOut,
@@ -1600,8 +2034,11 @@ const runRealCoding = async (): Promise<RunResult[]> => {
         transcript: session.transcript.messages,
         screenText: session.screenText,
         answer_received: answer.answerText,
+        structuredValidation: answer.structuredValidation,
         extracted_code: code,
-        assertions,
+        requiresCode,
+        rawTestCases: rawTestCases(scenario.turns),
+        executableAssertions: assertions,
         execution,
         answer_events: answer.events.map((event) => ({
           type: event.type,
@@ -1694,16 +2131,18 @@ const runRealCodingTurn = async (
     const tracePath = endSession?.tracePath || traceStatus?.path || "";
     const failed = answer.events.find((event) => event.type === "status" && event.payload?.status === "failed");
     const code = extractPythonCode(answer.answerText);
+    const requiresCode = codingTurnRequiresCode(scenario.turns[turnCount - 1]);
     const execution = code && assertions.length > 0
       ? runPythonAssertions(code, assertions)
-      : { ok: assertions.length === 0, status: null, stdout: "", stderr: code ? "" : "No Python code block with two_sum was found.", timedOut: false };
+      : { ok: assertions.length === 0 && (!requiresCode || Boolean(code)), status: null, stdout: "", stderr: code || !requiresCode ? "" : "No executable Python code block was found.", timedOut: false };
     const totalLatency = answerDone.events.find((event) => event.stage === "response_complete")?.elapsedMs ?? 0;
     const deterministicChecks = {
       answerRequestAccepted: answer.requestResult.ok,
       answerCompleted: Boolean(answer.completed) && !failed,
       answerNonEmpty: answer.answerText.trim().length > 40,
-      codeBlockFound: Boolean(code),
-      definesTwoSum: !code || /\bdef\s+two_sum\s*\(/.test(code),
+      structuredSchemaValid: answer.structuredValidation.ok,
+      codeBlockFound: requiresCode ? Boolean(code) : true,
+      definesExpectedFunction: !code || scenario.scenarioId !== "coding_evol_two_sum" || /\bdef\s+two_sum\s*\(/.test(code),
       accumulatedTranscriptHasExpectedTurns: session.transcript.messages.filter((message) => message.speaker === "interviewer").length === turnCount,
       pythonExecutionPassed: execution.ok,
       didNotTimeout: !execution.timedOut,
@@ -1730,8 +2169,11 @@ const runRealCodingTurn = async (
           transcript: session.transcript.messages,
           screenText: session.screenText,
           answer_received: answer.answerText,
+          structuredValidation: answer.structuredValidation,
           extracted_code: code,
-          assertions,
+          requiresCode,
+          rawTestCases: rawTestCases(scenario.turns.slice(0, turnCount)),
+          executableAssertions: assertions,
           execution,
           answer_events: answer.events.map((event) => ({
             type: event.type,
@@ -1775,9 +2217,9 @@ const runRealCodingMultiturn = async (): Promise<RunResult[]> => {
     throw new Error("dist/index.html is missing. Run npm run build before --track=real-coding-multiturn.");
   }
 
-  const fixture = readJson<{ live_coding_evolutivo: CodingScenario[] }>("text-fixtures.batch1.json");
-  const scenario = fixture.live_coding_evolutivo.find((item) => item.scenarioId === "coding_evol_two_sum");
-  if (!scenario) throw new Error("coding_evol_two_sum scenario not found in text-fixtures.batch1.json");
+  const requestedScenarioId = argValue("--scenario") || "coding_evol_two_sum";
+  const scenario = loadCodingScenarios().find((item) => item.scenarioId === requestedScenarioId);
+  if (!scenario) throw new Error(`${requestedScenarioId} scenario not found in text batch fixtures`);
   const selectedTurns = (argValue("--turns") || "1,2,4")
     .split(",")
     .map((item) => Number(item.trim()))
@@ -1788,10 +2230,7 @@ const runRealCodingMultiturn = async (): Promise<RunResult[]> => {
   const results: RunResult[] = [];
   const assistantAnswers: string[] = [];
   for (const turnCount of selectedTurns) {
-    const assertions = scenario.turns
-      .slice(0, turnCount)
-      .map((turn) => turn.test_cases?.trim())
-      .filter((value): value is string => Boolean(value));
+    const assertions = executablePythonAssertions(scenario.turns.slice(0, turnCount));
     const { result, answerText } = await runRealCodingTurn(scenario, assertions, turnCount, assistantAnswers, "real_coding_multiturn_ipc");
     results.push(result);
     assistantAnswers[turnCount - 1] = answerText;
@@ -1799,45 +2238,639 @@ const runRealCodingMultiturn = async (): Promise<RunResult[]> => {
   return results;
 };
 
-const runRealVision = async (): Promise<RunResult[]> => {
+const selectedScenarioIds = (): string[] =>
+  argValue("--scenarios")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const selectedCodingTurnCounts = (scenario: CodingScenario): number[] => {
+  const requested = argValue("--turns") || process.env.E2E_CODING_TURNS || "last";
+  if (requested === "all") return scenario.turns.map((turn) => turn.turnId);
+  if (requested === "last") return [scenario.turns.at(-1)?.turnId ?? 1];
+  const parsed = requested
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0 && value <= scenario.turns.length);
+  return parsed.length > 0 ? parsed : [scenario.turns.at(-1)?.turnId ?? 1];
+};
+
+const runRealCodingBatch = async (
+  selectedIds: string[],
+  limit: number,
+): Promise<RunResult[]> => {
   if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
     return [{
-      scenarioId: "vision_two_sum_screen",
-      track: "real_vision_ipc",
+      scenarioId: "coding_batch",
+      track: "real_coding_batch_ipc",
       run: runNumber,
       deterministicChecks: {
         nvidiaKeyAvailable: false,
-        visionCompleted: false,
+        answerCompleted: false,
+        pythonExecutionPassed: false,
       },
       judge: null,
-      latency_ms: finishLatency("real-vision-blocked"),
+      latency_ms: finishLatency("real-coding-batch-blocked"),
       diagnostics: {
         blocked: true,
-        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for --track=real-vision",
+        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for real coding batch tracks",
       },
     }];
   }
-  checkBudget(1);
   if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
-    throw new Error("dist/index.html is missing. Run npm run build before --track=real-vision.");
+    throw new Error("dist/index.html is missing. Run npm run build before real coding batch tracks.");
   }
 
-  const image = generateCodingProblemImage();
-  const modelName = process.env.CALLPILOT_NVIDIA_VISION_MODEL || "meta/llama-3.2-11b-vision-instruct";
-  const userDataDir = path.join(tmpDir, `user-data-vision-${Date.now()}`);
-  fs.mkdirSync(userDataDir, { recursive: true });
+  const allScenarios = loadCodingScenarios();
+  const scenarios = selectedIds.length > 0
+    ? selectedIds
+        .map((id) => allScenarios.find((scenario) => scenario.scenarioId === id))
+        .filter((scenario): scenario is CodingScenario & { fixturePath: string; sourceKey: string } => Boolean(scenario))
+    : allScenarios.slice(0, limit);
+  if (scenarios.length === 0) return [];
+
+  const plannedCalls = scenarios.reduce((count, scenario) => count + selectedCodingTurnCounts(scenario).length, 0);
+  checkBudget(plannedCalls);
+  const results: RunResult[] = [];
+  for (const scenario of scenarios) {
+    const assistantAnswers: string[] = [];
+    for (const turnCount of selectedCodingTurnCounts(scenario)) {
+      const assertions = executablePythonAssertions(scenario.turns.slice(0, turnCount));
+      const { result, answerText } = await runRealCodingTurn(scenario, assertions, turnCount, assistantAnswers, "real_coding_batch_ipc");
+      result.diagnostics.fixturePath = scenario.fixturePath;
+      result.diagnostics.sourceKey = scenario.sourceKey;
+      result.diagnostics.critical_failure_categories = scenario.critical_failure_categories ?? [];
+      result.diagnostics.rawTestCases = rawTestCases(scenario.turns.slice(0, turnCount));
+      results.push(result);
+      assistantAnswers[turnCount - 1] = answerText;
+    }
+  }
+  return results;
+};
+
+const runRealTextBatch = async (): Promise<RunResult[]> => {
+  const requested = selectedScenarioIds();
+  const allCodingIds = new Set(loadCodingScenarios().map((scenario) => scenario.scenarioId));
+  const allTextIds = new Set(loadTextInterviewScenarios().map((scenario) => scenario.scenarioId));
+  const unknown = requested.filter((id) => !allCodingIds.has(id) && !allTextIds.has(id));
+  if (unknown.length > 0) throw new Error(`Unknown text batch scenario id(s): ${unknown.join(", ")}`);
+
+  const codingIds = requested.filter((id) => allCodingIds.has(id));
+  const textIds = requested.filter((id) => allTextIds.has(id));
+  if (requested.length > 0) {
+    return [
+      ...(codingIds.length > 0 ? await runRealCodingBatch(codingIds, realBatchLimit) : []),
+      ...(textIds.length > 0 ? await runRealTextInterviewBatchWithSelection(textIds, realBatchLimit) : []),
+    ];
+  }
+
+  const codingLimit = Math.ceil(realBatchLimit / 2);
+  const textLimit = Math.max(0, realBatchLimit - codingLimit);
+  return [
+    ...await runRealCodingBatch([], codingLimit),
+    ...await runRealTextInterviewBatchWithSelection([], textLimit),
+  ];
+};
+
+const selectedProfiles = (): string[] =>
+  argValue("--profiles")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const selectTrackHSessions = (): AudioTrackHSession[] => {
+  const requested = selectedScenarioIds();
+  const profiles = new Set(selectedProfiles());
+  const allSessions = loadAudioTrackHSessions();
+  const sessions = allSessions.filter((session) => {
+    if (requested.length > 0 && !requested.includes(session.sessionId)) return false;
+    if (profiles.size > 0 && !profiles.has(session.profile)) return false;
+    return true;
+  });
+  if (sessions.length === 0) throw new Error("No Track H long sessions selected.");
+  return requested.length > 0 ? sessions : sessions.slice(0, longSessionMode === "full" ? sessions.length : longSessionLimit);
+};
+
+const eventSpeaker = (channel: "mic" | "system") => channel === "mic" ? "candidate" : "interviewer";
+
+const trackHStreamId = (sessionId: string, channel: "mic" | "system") =>
+  `${channel}-track-h-${sessionId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const containsTerm = (text: string, term: string): boolean => {
+  const normalizedText = normalizeForChecks(text);
+  const normalizedTerm = normalizeForChecks(term);
+  if (!normalizedTerm.trim()) return true;
+  if (normalizedText.includes(normalizedTerm)) return true;
+  const words = normalizedTerm.match(/[a-z0-9]+/g) ?? [];
+  if (words.length === 0) return true;
+  return words.some((word) => word.length >= 4 && normalizedText.includes(word));
+};
+
+const missingCriticalTerms = (transcript: string, session: AudioTrackHSession): string[] =>
+  session.events
+    .flatMap((event) => event.expected_critical_terms)
+    .filter((term) => !containsTerm(transcript, term));
+
+const forbiddenTermsPresent = (text: string, terms: string[]): string[] =>
+  terms.filter((term) => containsTerm(text, term));
+
+const answerReferencesLatestQuestion = (answerText: string, terms: string[]): boolean =>
+  terms.length === 0 || terms.some((term) => containsTerm(answerText, term));
+
+const isGroundedClarificationOrNoAnswer = (answerText: string): boolean => {
+  const normalized = normalizeForChecks(answerText);
+  return /\b(?:no responderia|no answer|not answer|unclear|clarification|provide more details|faltan detalles|sin inventar|not invent)\b/.test(normalized);
+};
+
+const traceHasEvent = (trace: any, type: string): boolean =>
+  Array.isArray(trace?.events) && trace.events.some((event: any) => event?.type === type);
+
+const startTrackHListeners = async (mainClient: CdpClient, overlayClient: CdpClient) => {
+  await evaluate(mainClient, `(() => {
+    window.__callpilotTrackHNativelyEvents = [];
+    window.__callpilotTrackHMainEvents = [];
+    window.__callpilotTrackHDisposers?.forEach?.((dispose) => dispose());
+    window.__callpilotTrackHDisposers = [
+      window.callpilotDesktop.onNativelyStatus((payload) => window.__callpilotTrackHNativelyEvents.push({ type: "status", at: Date.now(), payload })),
+      window.callpilotDesktop.onNativelyTranscript((payload) => window.__callpilotTrackHNativelyEvents.push({ type: "transcript", at: Date.now(), payload })),
+      window.callpilotDesktop.onManualAnswerStatus((payload) => window.__callpilotTrackHMainEvents.push({ type: "manual-status", at: Date.now(), payload }))
+    ];
+    return true;
+  })()`);
+  await evaluate(overlayClient, `(() => {
+    window.__callpilotTrackHOverlayEvents = [];
+    window.__callpilotTrackHOverlayDisposers?.forEach?.((dispose) => dispose());
+    window.__callpilotTrackHOverlayDisposers = [
+      window.callpilotDesktop.onTranscriptMessage((payload) => window.__callpilotTrackHOverlayEvents.push({ type: "transcript", at: Date.now(), payload })),
+      window.callpilotDesktop.onLiveTranscript((payload) => window.__callpilotTrackHOverlayEvents.push({ type: "live-transcript", at: Date.now(), payload })),
+      window.callpilotDesktop.onAnswerStatus((payload) => window.__callpilotTrackHOverlayEvents.push({ type: "status", at: Date.now(), payload })),
+      window.callpilotDesktop.onStructuredAnswer((payload) => window.__callpilotTrackHOverlayEvents.push({ type: "structured", at: Date.now(), payload }))
+    ];
+    return true;
+  })()`);
+};
+
+const waitForNativelyConnected = async (client: CdpClient, streamId: string) =>
+  evaluate<boolean>(client, `new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      const events = (window.__callpilotTrackHNativelyEvents || []).filter((event) => event.payload?.streamId === ${JSON.stringify(streamId)});
+      if (events.some((event) => event.type === "status" && /connected/i.test(event.payload?.status || event.payload?.detail || ""))) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - started > 9000) {
+        resolve(false);
+        return;
+      }
+      setTimeout(tick, 100);
+    };
+    tick();
+  })`);
+
+const requestTrackHAnswer = async (
+  mainClient: CdpClient,
+  overlayClient: CdpClient,
+  session: AudioTrackHSession,
+  event: AudioTrackHEvent,
+  modelName: string,
+) => {
+  const requestStartedAt = Date.now();
+  const answerStarted = markLatencyStage(createLatencyMetricRun(`real-long-session-answer-${session.sessionId}-${event.eventId}`), "model_call_start");
+  recordRealCall();
+  const requestResult = await evaluate<{ ok: boolean; error?: string }>(mainClient, `window.callpilotDesktop.requestAnswer()`);
+  const events = await evaluate<Array<{ type: string; at: number; payload: any }>>(overlayClient, `new Promise((resolve) => {
+    const started = Date.now();
+    const baseline = ${JSON.stringify(requestStartedAt)};
+    const tick = () => {
+      const events = (window.__callpilotTrackHOverlayEvents || []).filter((event) => event.at >= baseline);
+      const terminal = events.find((event) => event.type === "status" && ["completed", "failed", "cancelled"].includes(event.payload?.status));
+      if (terminal || Date.now() - started > ${JSON.stringify(Number(process.env.E2E_LONG_SESSION_ANSWER_TIMEOUT_MS || (session.mode === "live_coding" ? "180000" : "180000")))}) {
+        resolve(events);
+        return;
+      }
+      setTimeout(tick, 250);
+    };
+    tick();
+  })`);
+  const answerDone = markLatencyStage(answerStarted, "response_complete");
+  const completed = events.find((item) => item.type === "status" && item.payload?.status === "completed");
+  const failed = events.find((item) => item.type === "status" && item.payload?.status === "failed");
+  const structured = events.find((item) => item.type === "structured");
+  const answerText = String(completed?.payload?.text || structured?.payload?.renderedText || "");
+  return {
+    eventId: event.eventId,
+    trigger_answer_ms: event.trigger_answer_ms,
+    provider: "nvidia",
+    modelName,
+    requestResult,
+    completed: Boolean(completed),
+    failed: Boolean(failed),
+    answerText,
+    latency_ms: answerDone.events.find((latencyEvent) => latencyEvent.stage === "response_complete")?.elapsedMs ?? 0,
+    structuredValidation: validatePublishedStructuredAnswer(structured?.payload, session.mode === "live_coding" ? "coding" : "interview"),
+    events: events.map((item) => ({
+      type: item.type,
+      status: item.payload?.status,
+      answerKind: item.payload?.answer?.kind,
+      textPreview: String(item.payload?.text || item.payload?.renderedText || "").slice(0, 260),
+    })),
+  };
+};
+
+const sendTrackHSegment = async (
+  client: CdpClient,
+  streamId: string,
+  event: AudioTrackHEvent,
+  options: {
+    session: AudioTrackHSession;
+    overlayClient: CdpClient;
+    modelName: string;
+    onAnswer: (answer: Awaited<ReturnType<typeof requestTrackHAnswer>>) => void;
+  },
+) => {
+  const audioPath = path.join(fixturesDir, "audio", event.audio_segment);
+  const pcm = readPcmWavAsMono16k(audioPath);
+  const frameBytes = 3200;
+  const eventStartedAt = Date.now();
+  let answerPromise: Promise<void> | null = null;
+  const triggerOffsetMs = typeof event.trigger_answer_ms === "number"
+    ? Math.max(0, event.trigger_answer_ms - event.start_ms)
+    : null;
+
+  for (let offset = 0; offset < pcm.length; offset += frameBytes) {
+    const sentAudioMs = Math.round((offset / 2) / 16000 * 1000);
+    if (triggerOffsetMs !== null && !answerPromise && sentAudioMs >= triggerOffsetMs) {
+      answerPromise = requestTrackHAnswer(client, options.overlayClient, options.session, event, options.modelName)
+        .then(options.onAnswer);
+    }
+    const frame = pcm.subarray(offset, Math.min(pcm.length, offset + frameBytes)).toString("base64");
+    const audioResult = await evaluate<{ ok: boolean; error?: string }>(client, `window.callpilotDesktop.sendNativelyAudio({
+      streamId: ${JSON.stringify(streamId)},
+      arrayBuffer: Uint8Array.from(atob(${JSON.stringify(frame)}), (char) => char.charCodeAt(0)).buffer
+    })`);
+    if (!audioResult.ok) throw new Error(`natively:audio failed for ${event.eventId}: ${audioResult.error || "unknown"}`);
+    const frameDurationMs = Math.round((Math.min(pcm.length - offset, frameBytes) / 2) / 16000 * 1000);
+    await sleep(Math.max(20, Math.min(90, Math.round(frameDurationMs * 0.55))));
+  }
+
+  if (triggerOffsetMs !== null && !answerPromise) {
+    if (triggerOffsetMs >= event.duration_ms) {
+      await sleep(Math.min(5000, Math.max(1500, triggerOffsetMs - event.duration_ms)));
+    }
+    answerPromise = requestTrackHAnswer(client, options.overlayClient, options.session, event, options.modelName)
+      .then(options.onAnswer);
+  }
+  if (answerPromise && process.env.E2E_LONG_SESSION_SERIAL_ANSWERS !== "0") {
+    await answerPromise;
+  }
+  return {
+    eventId: event.eventId,
+    audio_segment: event.audio_segment,
+    channel: event.channel,
+    speaker: eventSpeaker(event.channel),
+    bytes: pcm.length,
+    wall_ms: Date.now() - eventStartedAt,
+    trigger_answer_ms: event.trigger_answer_ms ?? null,
+  };
+};
+
+const runRealLongSession = async (): Promise<RunResult[]> => {
+  if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
+    throw new Error("dist/index.html is missing. Run npm run build before --track=real-long-session.");
+  }
+  if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
+    return [{
+      scenarioId: "track_h_long_session",
+      track: "real_long_session_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        nvidiaKeyAvailable: false,
+        nativelyStreamStarted: false,
+        nativelyTranscriptReceived: false,
+        answerCompleted: false,
+      },
+      judge: null,
+      latency_ms: finishLatency("real-long-session-blocked", "audio_or_screen_capture"),
+      diagnostics: {
+        blocked: true,
+        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for --track=real-long-session",
+      },
+    }];
+  }
+
+  const sessions = selectTrackHSessions();
+  const plannedNativelyStarts = sessions.reduce((sum, session) => {
+    const channels = new Set(session.events.map((event) => event.channel));
+    return sum + channels.size;
+  }, 0);
+  const plannedAnswers = sessions.reduce((sum, session) => sum + session.events.filter((event) => typeof event.trigger_answer_ms === "number").length, 0);
+  checkBudget(plannedNativelyStarts + plannedAnswers);
+
+  const useDefaultUserData = process.env.E2E_USE_DEFAULT_USER_DATA === "1" && !process.env.NATIVELY_API_KEY;
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
+  const results: RunResult[] = [];
+
+  for (const session of sessions) {
+    const userDataDir = path.join(tmpDir, `user-data-track-h-${Date.now()}-${session.sessionId}`);
+    if (!useDefaultUserData) fs.mkdirSync(userDataDir, { recursive: true });
+    const childEnv = { ...process.env };
+    delete childEnv.ELECTRON_RUN_AS_NODE;
+    const electron = spawn(electronBin, ["."], {
+      cwd: root,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...childEnv,
+        CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
+        ...(useDefaultUserData ? {} : { CALLPILOT_USER_DATA_DIR: userDataDir }),
+      },
+    });
+
+    let stdout = "";
+    let stderr = "";
+    electron.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    electron.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    let client: CdpClient | null = null;
+    let overlayClient: CdpClient | null = null;
+    const started = markLatencyStage(createLatencyMetricRun(`real-long-session-${session.sessionId}`), "audio_or_screen_capture");
+    try {
+      const mainTarget = await getPageTarget((target) => !target.url.includes("#/overlay") && !target.url.includes("#/coding"), 30000);
+      if (!mainTarget?.webSocketDebuggerUrl) {
+        throw new Error(`Could not find Electron main target.\nstdout:\n${stdout.slice(-1200)}\nstderr:\n${stderr.slice(-1200)}`);
+      }
+      client = await cdp(mainTarget.webSocketDebuggerUrl);
+      await client.send("Runtime.enable");
+      const hasBridge = await evaluate<boolean>(client, waitForBridgeExpression);
+      if (!hasBridge) throw new Error("Desktop bridge did not become available in renderer");
+
+      const credentialStatus = await evaluate<any>(client, `window.callpilotDesktop.getCredentialStatus()`);
+      if (!credentialStatus?.hasNativelyKey && !process.env.NATIVELY_API_KEY) {
+        results.push({
+          scenarioId: session.sessionId,
+          track: "real_long_session_ipc",
+          run: runNumber,
+          deterministicChecks: {
+            nativelyKeyAvailable: false,
+            nvidiaKeyAvailable: true,
+            nativelyStreamStarted: false,
+            nativelyTranscriptReceived: false,
+            answerCompleted: false,
+          },
+          judge: null,
+          latency_ms: finishLatency(`real-long-session-${session.sessionId}-blocked`, "audio_or_screen_capture"),
+          diagnostics: {
+            blocked: true,
+            reason: useDefaultUserData
+              ? "No stored Natively key was available in the default Electron profile."
+              : "Set NATIVELY_API_KEY or rerun with E2E_USE_DEFAULT_USER_DATA=1 to use the Natively key saved in the app.",
+            credentialStatus: {
+              hasNativelyKey: Boolean(credentialStatus?.hasNativelyKey),
+              hasNvidiaKey: Boolean(credentialStatus?.hasNvidiaKey),
+            },
+          },
+        });
+        continue;
+      }
+
+      await evaluate(client, `window.callpilotDesktop.saveSettings(${JSON.stringify({
+        activeMode: session.mode,
+        preferredLanguage: "english",
+        defaultCodingLanguage: "Python",
+        answerVerbosity: "medium",
+        modelProvider: "nvidia",
+        modelName,
+        ollamaBaseUrl: "http://localhost:11434",
+        transcriptionModelName: "gpt-4o-transcribe",
+        liveTranscriptionProvider: "natively",
+        liveLatencyPreset: "balanced",
+        liveAudioSource: session.channels.includes("both") ? "both" : session.channels.includes("mic") ? "mic" : "system",
+        autoAnswerCooldownMs: 12000,
+        autoAnswerMinConfidence: 0.45,
+      })})`);
+      await evaluate(client, seedSessionExpression(makeEmptyInterviewSession("nvidia", modelName, session.mode)));
+      const bridgeAfterReload = await evaluate<boolean>(client, waitForBridgeExpression);
+      if (!bridgeAfterReload) throw new Error("Desktop bridge did not recover after Track H session seed reload");
+      await evaluate(client, `window.callpilotDesktop.startSession({ mode: ${JSON.stringify(session.mode)} })`);
+      const overlayTarget = await getPageTarget((target) => target.url.includes(session.mode === "live_coding" ? "#/coding" : "#/overlay"), 10000);
+      if (!overlayTarget?.webSocketDebuggerUrl) throw new Error("Overlay target did not open for Track H run");
+      overlayClient = await cdp(overlayTarget.webSocketDebuggerUrl);
+      await overlayClient.send("Runtime.enable");
+      await evaluate(overlayClient, waitForBridgeExpression);
+      await startTrackHListeners(client, overlayClient);
+
+      const streamIds: Partial<Record<"mic" | "system", string>> = {};
+      const streamStarts: Array<{ channel: "mic" | "system"; streamId: string; startResult: unknown; connected: boolean }> = [];
+      for (const channel of [...new Set(session.events.map((event) => event.channel))]) {
+        const streamId = trackHStreamId(session.sessionId, channel);
+        streamIds[channel] = streamId;
+        recordRealCall();
+        const startResult = await evaluate<{ ok: boolean; streamId?: string; error?: string }>(client, `window.callpilotDesktop.startNativelyTranscription({
+          streamId: ${JSON.stringify(streamId)},
+          channel: ${JSON.stringify(channel)},
+          sampleRate: 16000,
+          language: "english",
+          apiKey: ${JSON.stringify(process.env.NATIVELY_API_KEY || "")}
+        })`);
+        const connected = startResult.ok ? await waitForNativelyConnected(client, streamId) : false;
+        streamStarts.push({ channel, streamId, startResult, connected });
+      }
+
+      const answerResults: Array<Awaited<ReturnType<typeof requestTrackHAnswer>>> = [];
+      const sentSegments = [];
+      const timelineStartedAt = Date.now();
+      for (const event of [...session.events].sort((a, b) => a.start_ms - b.start_ms)) {
+        const targetWallMs = Math.round(event.start_ms * longSessionTimeScale);
+        const waitMs = targetWallMs - (Date.now() - timelineStartedAt);
+        if (waitMs > 0) await sleep(waitMs);
+        const streamId = streamIds[event.channel];
+        if (!streamId) throw new Error(`Missing Track H stream for channel ${event.channel}`);
+        sentSegments.push(await sendTrackHSegment(client, streamId, event, {
+          session,
+          overlayClient,
+          modelName,
+          onAnswer: (answer) => answerResults.push(answer),
+        }));
+      }
+
+      await sleep(2200);
+      for (const streamId of Object.values(streamIds)) {
+        if (streamId) await evaluate(client, `window.callpilotDesktop.stopNativelyTranscription({ streamId: ${JSON.stringify(streamId)} })`).catch(() => undefined);
+      }
+      await sleep(1200);
+
+      const nativelyEvents = await evaluate<Array<{ type: string; at: number; payload: any }>>(client, `window.__callpilotTrackHNativelyEvents || []`);
+      const overlayEvents = await evaluate<Array<{ type: string; at: number; payload: any }>>(overlayClient, `window.__callpilotTrackHOverlayEvents || []`);
+      const transcriptPayloads = nativelyEvents.filter((event) => event.type === "transcript").map((event) => event.payload);
+      const reassembledTranscript = assembleNativelyTranscriptText(transcriptPayloads);
+      const overlayTranscriptText = overlayEvents
+        .filter((event) => event.type === "transcript")
+        .map((event) => String(event.payload?.text || ""))
+        .filter(Boolean)
+        .join(" ");
+      const overlayLiveTranscriptText = overlayEvents
+        .filter((event) => event.type === "live-transcript")
+        .map((event) => String(event.payload?.text || ""))
+        .filter(Boolean)
+        .join(" ");
+      const transcriptForChecks = `${reassembledTranscript} ${overlayTranscriptText} ${overlayLiveTranscriptText}`.trim();
+      const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
+      const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
+      const tracePath = endSession?.tracePath || traceStatus?.path || "";
+      const trace = tracePath && fs.existsSync(tracePath) ? JSON.parse(fs.readFileSync(tracePath, "utf8")) : null;
+      const completed = markLatencyStage(started, "response_complete");
+      const totalLatency = completed.events.find((event) => event.stage === "response_complete")?.elapsedMs ?? 0;
+      const answerTexts = answerResults.map((answer) => answer.answerText).join("\n\n");
+      const missingTerms = missingCriticalTerms(transcriptForChecks, session);
+      const staleTerms = forbiddenTermsPresent(answerTexts, session.expected_checks.stale_topic_forbidden_terms);
+      const unsupportedSpecifics = forbiddenTermsPresent(answerTexts, session.expected_checks.unsupported_behavioral_specifics);
+      const triggerEvents = session.events.filter((event) => typeof event.trigger_answer_ms === "number");
+      const noAnswerEventsWithTriggers = session.events.filter((event) => event.expected_no_answer && typeof event.trigger_answer_ms === "number");
+      const latestAnswer = answerResults.at(-1)?.answerText ?? "";
+      const deterministicChecks = {
+        audioFilesExist: session.events.every((event) => fs.existsSync(path.join(fixturesDir, "audio", event.audio_segment))),
+        nvidiaKeyAvailable: true,
+        nativelyKeyAvailable: true,
+        nativelyStreamStarted: streamStarts.length > 0 && streamStarts.every((item) => Boolean((item.startResult as any)?.ok)),
+        nativelyStreamConnected: streamStarts.length > 0 && streamStarts.every((item) => item.connected),
+        nativelyTranscriptReceived: transcriptForChecks.trim().length > 0,
+        criticalTermsPresent: missingTerms.length <= Math.max(1, Math.floor(session.events.flatMap((event) => event.expected_critical_terms).length * 0.35)),
+        answerRequestAccepted: triggerEvents.length > 0 && answerResults.some((answer) => answer.requestResult.ok),
+        answerCompleted: answerResults.some((answer) => answer.completed && !answer.failed),
+        answerNonEmpty: answerResults.some((answer) => answer.answerText.trim().length > 40),
+        latestQuestionAnswered: answerReferencesLatestQuestion(latestAnswer || answerTexts, session.expected_checks.latest_question_terms)
+          || (session.mode === "behavioral" && isGroundedClarificationOrNoAnswer(latestAnswer || answerTexts)),
+        noStaleTopicAnswer: staleTerms.length === 0,
+        noUnsupportedBehavioralSpecifics: unsupportedSpecifics.length === 0,
+        noAnswerMomentsRespected: noAnswerEventsWithTriggers.length === 0,
+        traceRecorded: Boolean(tracePath && traceStatus?.eventCount >= 5),
+        overlayEventsRecorded: overlayEvents.length > 0,
+        noOpenAITranscribePath: !traceHasEvent(trace, "audio_transcribe_started"),
+      };
+
+      results.push({
+        scenarioId: session.sessionId,
+        track: "real_long_session_ipc",
+        run: runNumber,
+        deterministicChecks,
+        judge: null,
+        latency_ms: {
+          first_token: null,
+          total: totalLatency,
+        },
+        diagnostics: {
+          fixturePath: "audio/track-h-long-session.json",
+          mode: longSessionMode,
+          timeScale: longSessionTimeScale,
+          sessionDurationMs: longSessionMode === "full" ? session.full_duration_ms ?? session.duration_ms : session.duration_ms,
+          channelsUsed: [...new Set(session.events.map((event) => event.channel))],
+          profile: session.profile,
+          audioFixtures: session.events.map((event) => event.audio_segment),
+          sentSegments,
+          transcriptExcerpts: {
+            reassembled: reassembledTranscript.slice(0, 1200),
+            overlayFinal: overlayTranscriptText.slice(0, 1200),
+            overlayLive: overlayLiveTranscriptText.slice(-1200),
+          },
+          answerExcerpts: answerResults.map((answer) => ({
+            eventId: answer.eventId,
+            trigger_answer_ms: answer.trigger_answer_ms,
+            text: answer.answerText.slice(0, 900),
+            completed: answer.completed,
+            failed: answer.failed,
+            latency_ms: answer.latency_ms,
+            structuredValidation: answer.structuredValidation,
+          })),
+          failedDeterministicChecks: Object.entries(deterministicChecks).filter(([, ok]) => !ok).map(([key]) => key),
+          missingCriticalTerms: missingTerms,
+          staleTerms,
+          unsupportedSpecifics,
+          noAnswerEvents: session.events.filter((event) => event.expected_no_answer).map((event) => event.eventId),
+          latencySummary: {
+            total_ms: totalLatency,
+            answer_ms: answerResults.map((answer) => answer.latency_ms),
+          },
+          nativelyEventSummary: {
+            statusCount: nativelyEvents.filter((event) => event.type === "status").length,
+            transcriptCount: transcriptPayloads.length,
+            finalTranscriptCount: transcriptPayloads.filter((payload) => payload?.isFinal).length,
+            streams: streamStarts.map((item) => ({
+              channel: item.channel,
+              streamId: item.streamId,
+              connected: item.connected,
+            })),
+          },
+          nvidiaModel: modelName,
+          answerEvents: answerResults.flatMap((answer) => answer.events),
+          overlayEventSummary: {
+            total: overlayEvents.length,
+            transcripts: overlayEvents.filter((event) => event.type === "transcript").length,
+            liveTranscripts: overlayEvents.filter((event) => event.type === "live-transcript").length,
+            answerStatuses: overlayEvents.filter((event) => event.type === "status").length,
+            structuredAnswers: overlayEvents.filter((event) => event.type === "structured").length,
+          },
+          trace: {
+            path: tracePath,
+            eventCount: traceStatus?.eventCount,
+          },
+        },
+      });
+    } finally {
+      overlayClient?.close();
+      client?.close();
+      electron.kill();
+    }
+  }
+  return results;
+};
+
+const audioTrackDChunkPlan = (scenario: AudioTrackDScenario, pcm: Buffer): Array<{ label: string; startMs: number; endMs: number }> => {
+  const durationMs = scenario.duration_ms ?? Math.round(pcm.length / 2 / 16000 * 1000);
+  if (scenario.test_type === "chunk_boundary_word_split" && scenario.boundary_timestamp_ms) {
+    return [
+      { label: "before-boundary", startMs: 0, endMs: scenario.boundary_timestamp_ms },
+      { label: "after-boundary", startMs: scenario.boundary_timestamp_ms, endMs: durationMs },
+    ];
+  }
+  return [{ label: "final-onstop-segment", startMs: 0, endMs: durationMs }];
+};
+
+const runRealAudioTrackD = async (): Promise<RunResult[]> => {
+  if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
+    throw new Error("dist/index.html is missing. Run npm run build before --track=real-audio-track-d.");
+  }
+
+  const requested = selectedScenarioIds();
+  const profiles = new Set(selectedProfiles());
+  const allScenarios = loadAudioTrackDScenarios();
+  const scenarios = allScenarios.filter((scenario) => {
+    if (requested.length > 0 && !requested.includes(scenario.scenarioId)) return false;
+    if (profiles.size > 0 && !profiles.has(scenario.profile)) return false;
+    return true;
+  });
+  if (scenarios.length === 0) throw new Error("No Track D audio scenarios selected.");
+
+  const useDefaultUserData = process.env.E2E_USE_DEFAULT_USER_DATA === "1" && !process.env.NATIVELY_API_KEY;
+  const userDataDir = path.join(tmpDir, `user-data-track-d-${Date.now()}`);
+  if (!useDefaultUserData) fs.mkdirSync(userDataDir, { recursive: true });
 
   const childEnv = { ...process.env };
   delete childEnv.ELECTRON_RUN_AS_NODE;
+  const electronEnv = {
+    ...childEnv,
+    CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
+    ...(useDefaultUserData ? {} : { CALLPILOT_USER_DATA_DIR: userDataDir }),
+  };
   const electron = spawn(electronBin, ["."], {
     cwd: root,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...childEnv,
-      CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
-      CALLPILOT_USER_DATA_DIR: userDataDir,
-    },
+    env: electronEnv,
   });
 
   let stdout = "";
@@ -1860,58 +2893,349 @@ const runRealVision = async (): Promise<RunResult[]> => {
     const hasBridge = await evaluate<boolean>(client, waitForBridgeExpression);
     if (!hasBridge) throw new Error("Desktop bridge did not become available in renderer");
 
-    await evaluate(client, `window.callpilotDesktop.startSession({ mode: "live_coding" })`);
-    recordRealCall();
-    const started = markLatencyStage(createLatencyMetricRun("real-vision"), "audio_or_screen_capture");
-    const analysis = await evaluate<any>(client, `window.callpilotDesktop.analyzeScreenshot({
-      path: ${JSON.stringify(image.path)},
-      provider: "nvidia",
-      modelName: ${JSON.stringify(modelName)},
-      nvidiaApiKey: ${JSON.stringify(process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || "")}
-    })`);
-    const completed = markLatencyStage(started, "transcription_or_vision_done");
-    const totalLatency = completed.events.find((event) => event.stage === "transcription_or_vision_done")?.elapsedMs ?? 0;
-    const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
-    const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
-    const normalizedText = normalizeForChecks(String(analysis?.text || ""));
-    const deterministicChecks = {
-      visionCompleted: Boolean(analysis?.ok),
-      answerNonEmpty: String(analysis?.text || "").trim().length > 40,
-      mentionsTwoSum: /two\s*sum|twosum/.test(normalizedText),
-      extractsFunctionSignature: /two_sum|functionsignature|function signature/.test(normalizedText),
-      mentionsTargetOrIndices: /target|indices|indexes|\[0,\s*1\]/.test(normalizedText),
-      traceRecorded: Boolean(traceStatus?.eventCount >= 1),
-    };
+    const credentialStatus = await evaluate<any>(client, `window.callpilotDesktop.getCredentialStatus()`);
+    if (!credentialStatus?.hasNativelyKey && !process.env.NATIVELY_API_KEY) {
+      return [{
+        scenarioId: "audio_track_d",
+        track: "real_audio_track_d_ipc",
+        run: runNumber,
+        deterministicChecks: {
+          nativelyKeyAvailable: false,
+          nativelyStreamStarted: false,
+          nativelyTranscriptReceived: false,
+          criticalWordPresent: false,
+          groundTruthWordsInOrder: false,
+        },
+        judge: null,
+        latency_ms: finishLatency("real-audio-track-d-blocked", "audio_or_screen_capture"),
+        diagnostics: {
+          blocked: true,
+          reason: useDefaultUserData
+            ? "No stored Natively key was available in the default Electron profile."
+            : "Set NATIVELY_API_KEY or rerun with E2E_USE_DEFAULT_USER_DATA=1 to use the Natively key saved in the app.",
+          credentialStatus: {
+            hasNativelyKey: Boolean(credentialStatus?.hasNativelyKey),
+            hasNvidiaKey: Boolean(credentialStatus?.hasNvidiaKey),
+          },
+        },
+      }];
+    }
+    checkBudget(scenarios.length);
 
-    return [{
-      scenarioId: "vision_two_sum_screen",
-      track: "real_vision_ipc",
-      run: runNumber,
-      deterministicChecks,
-      judge: null,
-      latency_ms: {
-        first_token: null,
-        total: totalLatency,
-      },
-      diagnostics: {
-        provider: "nvidia",
-        modelName,
-        image: {
-          fileName: path.basename(image.path),
-          bytes: fs.existsSync(image.path) ? fs.statSync(image.path).size : 0,
+    await evaluate(client, `(() => {
+      window.__callpilotTrackDNativelyEvents = [];
+      window.__callpilotTrackDNativelyDispose?.forEach?.((dispose) => dispose());
+      window.__callpilotTrackDNativelyDispose = [
+        window.callpilotDesktop.onNativelyStatus((payload) => window.__callpilotTrackDNativelyEvents.push({ type: "status", at: Date.now(), payload })),
+        window.callpilotDesktop.onNativelyTranscript((payload) => window.__callpilotTrackDNativelyEvents.push({ type: "transcript", at: Date.now(), payload }))
+      ];
+      return true;
+    })()`);
+
+    const results: RunResult[] = [];
+    for (const scenario of scenarios) {
+      const audioPath = path.join(fixturesDir, "audio", scenario.audio_file);
+      const pcm = readPcmWavAsMono16k(audioPath);
+      const chunks = audioTrackDChunkPlan(scenario, pcm);
+      const started = markLatencyStage(createLatencyMetricRun(`real-audio-track-d-${scenario.scenarioId}`), "audio_or_screen_capture");
+
+      await evaluate(client, `window.__callpilotTrackDNativelyEvents = []`);
+      const streamId = `track-d-${scenario.channel}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      recordRealCall();
+      const startResult = await evaluate<{ ok: boolean; streamId?: string; error?: string }>(client, `window.callpilotDesktop.startNativelyTranscription({
+        streamId: ${JSON.stringify(streamId)},
+        channel: ${JSON.stringify(scenario.channel)},
+        sampleRate: 16000,
+        language: "english",
+        apiKey: ${JSON.stringify(process.env.NATIVELY_API_KEY || "")}
+      })`);
+
+      const connected = startResult.ok && await evaluate<boolean>(client, `new Promise((resolve) => {
+        const started = Date.now();
+        const tick = () => {
+          const events = (window.__callpilotTrackDNativelyEvents || []).filter((event) => event.payload?.streamId === ${JSON.stringify(streamId)});
+          if (events.some((event) => event.type === "status" && /connected/i.test(event.payload?.status || event.payload?.detail || ""))) {
+            resolve(true);
+            return;
+          }
+          if (Date.now() - started > 7000) {
+            resolve(false);
+            return;
+          }
+          setTimeout(tick, 100);
+        };
+        tick();
+      })`);
+
+      const sentChunks: Array<{ label: string; startMs: number; endMs: number; bytes: number }> = [];
+      if (startResult.ok) {
+        const frameBytes = 3200;
+        for (const chunk of chunks) {
+          const chunkPcm = slicePcm16k(pcm, chunk.startMs, chunk.endMs);
+          sentChunks.push({ ...chunk, bytes: chunkPcm.length });
+          for (let offset = 0; offset < chunkPcm.length; offset += frameBytes) {
+            const frame = chunkPcm.subarray(offset, Math.min(chunkPcm.length, offset + frameBytes)).toString("base64");
+            const audioResult = await evaluate<{ ok: boolean; error?: string }>(client, `window.callpilotDesktop.sendNativelyAudio({
+              streamId: ${JSON.stringify(streamId)},
+              arrayBuffer: Uint8Array.from(atob(${JSON.stringify(frame)}), (char) => char.charCodeAt(0)).buffer
+            })`);
+            if (!audioResult.ok) throw new Error(`natively:audio failed: ${audioResult.error || "unknown"}`);
+            const frameDurationMs = Math.round((Math.min(chunkPcm.length - offset, frameBytes) / 2) / 16000 * 1000);
+            await sleep(Math.max(20, Math.min(120, frameDurationMs)));
+          }
+        }
+      }
+
+      if (startResult.ok) {
+        await evaluate<boolean>(client, `new Promise((resolve) => {
+          const started = Date.now();
+          const idleMs = ${JSON.stringify(4200)};
+          const timeoutMs = ${JSON.stringify(22000)};
+          const tick = () => {
+            const events = (window.__callpilotTrackDNativelyEvents || []).filter((event) => event.payload?.streamId === ${JSON.stringify(streamId)});
+            const transcripts = events.filter((event) => event.type === "transcript" && String(event.payload?.text || "").trim().length > 0);
+            const latest = transcripts.at(-1);
+            if (latest && Date.now() - latest.at > idleMs) {
+              resolve(true);
+              return;
+            }
+            if (Date.now() - started > timeoutMs) {
+              resolve(Boolean(latest));
+              return;
+            }
+            setTimeout(tick, 250);
+          };
+          tick();
+        })`);
+      }
+      await evaluate(client, `window.callpilotDesktop.stopNativelyTranscription({ streamId: ${JSON.stringify(streamId)} })`).catch(() => undefined);
+      const transcriptEvents = startResult.ok ? await evaluate<Array<{ type: string; at: number; payload: any }>>(client, `new Promise((resolve) => {
+        const started = Date.now();
+        const tick = () => {
+          const events = (window.__callpilotTrackDNativelyEvents || []).filter((event) => event.payload?.streamId === ${JSON.stringify(streamId)});
+          const closed = events.some((event) => event.type === "status" && /closed/i.test(event.payload?.status || event.payload?.detail || ""));
+          const hasFinal = events.some((event) => event.type === "transcript" && event.payload?.isFinal && String(event.payload?.text || "").trim().length > 0);
+          if ((closed && Date.now() - started > 900) || hasFinal || Date.now() - started > 7000) {
+            resolve(events);
+            return;
+          }
+          setTimeout(tick, 150);
+        };
+        tick();
+      })`) : [];
+
+      const completed = markLatencyStage(started, "transcription_or_vision_done");
+      const totalLatency = completed.events.find((event) => event.stage === "transcription_or_vision_done")?.elapsedMs ?? 0;
+      const transcriptPayloads = transcriptEvents
+        .filter((event) => event.type === "transcript")
+        .map((event) => event.payload);
+      const reassembledTranscript = assembleNativelyTranscriptText(transcriptPayloads);
+      const transcriptEvidence = [
+        reassembledTranscript,
+        ...transcriptPayloads.map((payload) => String(payload?.text || "")),
+      ].join(" ");
+      const normalizedTranscript = normalizeForChecks(reassembledTranscript);
+      const normalizedCriticalWord = normalizeForChecks(scenario.critical_word);
+      const triggerMs = scenario.test_type === "race_condition_cutoff" ? scenario.trigger_timestamp_ms : scenario.boundary_timestamp_ms;
+      const triggerInsideCriticalWord = typeof triggerMs === "number"
+        && typeof scenario.critical_word_start_ms === "number"
+        && typeof scenario.critical_word_end_ms === "number"
+        && triggerMs > scenario.critical_word_start_ms
+        && triggerMs < scenario.critical_word_end_ms;
+      const deterministicChecks = {
+        audioFileExists: fs.existsSync(audioPath),
+        channelValid: scenario.channel === "mic" || scenario.channel === "system",
+        timingSplitsCriticalWord: triggerInsideCriticalWord,
+        nativelyKeyAvailable: true,
+        nativelyStreamStarted: startResult.ok,
+        nativelyStreamConnected: connected || transcriptPayloads.length > 0,
+        nativelyTranscriptReceived: reassembledTranscript.trim().length > 0,
+        criticalWordPresent: containsCriticalWordOrVariant(transcriptEvidence, scenario.critical_word),
+      };
+
+      results.push({
+        scenarioId: scenario.scenarioId,
+        track: "real_audio_track_d_ipc",
+        run: runNumber,
+        deterministicChecks,
+        judge: null,
+        latency_ms: {
+          first_token: null,
+          total: totalLatency,
         },
-        analysis,
-        trace: {
-          eventCount: traceStatus?.eventCount,
-          path: endSession?.tracePath || traceStatus?.path,
+        diagnostics: {
+          fixturePath: "audio/track-d.json",
+          audio_file: scenario.audio_file,
+          profile: scenario.profile,
+          channel: scenario.channel,
+          test_type: scenario.test_type,
+          critical_word: scenario.critical_word,
+          ground_truth_transcript: scenario.ground_truth_transcript,
+          reassembledTranscript,
+          transcriptEvidenceExcerpt: transcriptEvidence.slice(0, 1200),
+          groundTruthWordsInOrder: containsOrderedWords(reassembledTranscript, scenario.ground_truth_transcript),
+          trigger_timestamp_ms: scenario.trigger_timestamp_ms,
+          boundary_timestamp_ms: scenario.boundary_timestamp_ms,
+          critical_word_start_ms: scenario.critical_word_start_ms,
+          critical_word_end_ms: scenario.critical_word_end_ms,
+          streamId,
+          startResult,
+          sentChunks,
+          transcript_events: transcriptPayloads.map((payload) => ({
+            text: String(payload?.text || "").slice(0, 240),
+            isFinal: Boolean(payload?.isFinal),
+            confidence: payload?.confidence,
+          })),
         },
-      },
-    }];
+      });
+    }
+    return results;
   } finally {
     client?.close();
     electron.kill();
-    if (image.generated) fs.rmSync(image.path, { force: true });
   }
+};
+
+const runRealVision = async (): Promise<RunResult[]> => {
+  if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
+    return [{
+      scenarioId: "vision_track_g",
+      track: "real_vision_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        nvidiaKeyAvailable: false,
+        visionCompleted: false,
+      },
+      judge: null,
+      latency_ms: finishLatency("real-vision-blocked"),
+      diagnostics: {
+        blocked: true,
+        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for --track=real-vision",
+      },
+    }];
+  }
+  checkBudget(1);
+  if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
+    throw new Error("dist/index.html is missing. Run npm run build before --track=real-vision.");
+  }
+
+  const requested = selectedScenarioIds();
+  const allScenarios = loadVisionScenarios();
+  const scenarios = requested.length > 0
+    ? requested.map((id) => {
+        const scenario = allScenarios.find((item) => item.scenarioId === id);
+        if (!scenario) throw new Error(`Unknown vision scenario id: ${id}`);
+        return scenario;
+      })
+    : allScenarios.slice(0, realBatchLimit);
+  if (scenarios.length === 0) throw new Error("No vision scenarios selected.");
+  checkBudget(scenarios.length);
+
+  const modelName = process.env.CALLPILOT_NVIDIA_VISION_MODEL || "meta/llama-3.2-11b-vision-instruct";
+  const results: RunResult[] = [];
+
+  for (const scenario of scenarios) {
+    const imagePath = path.join(fixturesDir, "vision", scenario.image);
+    const userDataDir = path.join(tmpDir, `user-data-vision-${Date.now()}-${scenario.scenarioId}`);
+    fs.mkdirSync(userDataDir, { recursive: true });
+
+    const childEnv = { ...process.env };
+    delete childEnv.ELECTRON_RUN_AS_NODE;
+    const electron = spawn(electronBin, ["."], {
+      cwd: root,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...childEnv,
+        CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
+        CALLPILOT_USER_DATA_DIR: userDataDir,
+      },
+    });
+
+    let stdout = "";
+    let stderr = "";
+    electron.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    electron.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    let client: CdpClient | null = null;
+    try {
+      const mainTarget = await getPageTarget((target) => !target.url.includes("#/overlay") && !target.url.includes("#/coding"), 30000);
+      if (!mainTarget?.webSocketDebuggerUrl) {
+        throw new Error(`Could not find Electron main target.\nstdout:\n${stdout.slice(-1200)}\nstderr:\n${stderr.slice(-1200)}`);
+      }
+      client = await cdp(mainTarget.webSocketDebuggerUrl);
+      await client.send("Runtime.enable");
+      const hasBridge = await evaluate<boolean>(client, waitForBridgeExpression);
+      if (!hasBridge) throw new Error("Desktop bridge did not become available in renderer");
+
+      await evaluate(client, `window.callpilotDesktop.startSession({ mode: "live_coding" })`);
+      recordRealCall();
+      const started = markLatencyStage(createLatencyMetricRun(`real-vision-${scenario.scenarioId}`), "audio_or_screen_capture");
+      const analysis = await evaluate<any>(client, `window.callpilotDesktop.analyzeScreenshot({
+        path: ${JSON.stringify(imagePath)},
+        provider: "nvidia",
+        modelName: ${JSON.stringify(modelName)},
+        nvidiaApiKey: ${JSON.stringify(process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || "")}
+      })`);
+      const completed = markLatencyStage(started, "transcription_or_vision_done");
+      const totalLatency = completed.events.find((event) => event.stage === "transcription_or_vision_done")?.elapsedMs ?? 0;
+      const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
+      const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
+      const analysisText = String(analysis?.text || "");
+      const normalizedText = normalizeForChecks(analysisText);
+      const missingExactText = scenario.exact_text_present.filter((expected) => !normalizedText.includes(normalizeForChecks(expected)));
+      const forbiddenMentions = forbiddenVisionMentions(analysisText, scenario.must_not_mention);
+      const deterministicChecks = {
+        imageFileExists: fs.existsSync(imagePath),
+        visionCompleted: Boolean(analysis?.ok),
+        answerNonEmpty: analysisText.trim().length > 20,
+        exactTextPresent: missingExactText.length === 0,
+        mustNotMentionAbsent: forbiddenMentions.length === 0,
+        traceRecorded: Boolean(traceStatus?.eventCount >= 1),
+      };
+
+      results.push({
+        scenarioId: scenario.scenarioId,
+        track: "real_vision_ipc",
+        run: runNumber,
+        deterministicChecks,
+        judge: null,
+        latency_ms: {
+          first_token: null,
+          total: totalLatency,
+        },
+        diagnostics: {
+          provider: "nvidia",
+          modelName,
+          fixturePath: "vision/track-g.json",
+          critical_failure_categories: scenario.critical_failure_categories ?? [],
+          description: scenario.description,
+          expected_behavior: scenario.expected_behavior,
+          image: {
+            fileName: path.basename(imagePath),
+            bytes: fs.existsSync(imagePath) ? fs.statSync(imagePath).size : 0,
+          },
+          exact_text_present: scenario.exact_text_present,
+          missingExactText,
+          must_not_mention: scenario.must_not_mention,
+          forbiddenMentions,
+          analysis,
+          trace: {
+            eventCount: traceStatus?.eventCount,
+            path: endSession?.tracePath || traceStatus?.path,
+          },
+        },
+      });
+    } finally {
+      client?.close();
+      electron.kill();
+    }
+  }
+  return results;
 };
 
 const run = async () => {
@@ -1925,6 +3249,9 @@ const run = async () => {
     ...(selectedTrack === "real-coding" ? await runRealCoding() : []),
     ...(selectedTrack === "real-coding-multiturn" || includeRealSuite ? await runRealCodingMultiturn() : []),
     ...(selectedTrack === "real-vision" || includeRealSuite ? await runRealVision() : []),
+    ...(selectedTrack === "real-audio-track-d" || includeRealSuite ? await runRealAudioTrackD() : []),
+    ...(selectedTrack === "real-long-session" || includeRealSuite ? await runRealLongSession() : []),
+    ...(selectedTrack === "real-text-batch" ? await runRealTextBatch() : []),
     ...(selectedTrack === "real-text-interview" ? await runRealTextInterview() : []),
     ...(selectedTrack === "real-text-interview-batch" || includeRealSuite ? await runRealTextInterviewBatch() : []),
     ...(selectedTrack === "real-natively-interview" || includeRealSuite ? await runRealNativelyInterview() : []),

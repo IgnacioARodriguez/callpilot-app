@@ -269,8 +269,13 @@ export const buildOpenAIImageAnalysisRequest = (
   modelName: string,
   prompt = [
     "Analyze this screenshot for a live coding interview assistant.",
-    "If it shows a coding problem or code editor, use the image as the source of truth and return JSON with problemTitle, functionSignature, language, examples, constraints, and solution.",
-    "The solution must include: Problem detected, Approach, Solution, Complexity, Edge cases, What to say out loud.",
+    "Use the image as the source of truth and return only JSON.",
+    "Include fields problemTitle, functionSignature, language, examples, constraints, solution, and visibleTextExact.",
+    "Include visibleTextExact as short verbatim snippets of important text that is actually visible in the screenshot.",
+    "Do not invent code, errors, test results, or text that is not visible.",
+    "Do not write an implementation or code block unless code is visibly present in the screenshot. For problem-statement-only screenshots, describe the approach without code.",
+    "If unrelated chat, Slack, calendar, or notification content is visible, do not transcribe or treat that message as part of the technical problem.",
+    "If it shows only a problem statement and no code editor content, leave solution.code empty and summarize the approach without presenting code as visible.",
     "If it is not a coding screen, return a concise JSON summary with empty coding fields.",
   ].join(" "),
 ) => ({
@@ -280,7 +285,7 @@ export const buildOpenAIImageAnalysisRequest = (
       role: "user",
       content: [
         { type: "input_text", text: prompt },
-        { type: "input_image", image_url: imageDataUrl, detail: "low" },
+        { type: "input_image", image_url: imageDataUrl, detail: "high" },
       ],
     },
   ],
@@ -293,7 +298,12 @@ export const buildOpenAICompatibleImageAnalysisRequest = (
   prompt = [
     "Analyze this screenshot for a live coding interview assistant.",
     "Use the screenshot image, not OCR text, as the source of truth.",
-    "Return compact JSON with problemTitle, functionSignature, language, examples, constraints, solution, complexity, edgeCases, and spokenAnswer.",
+    "Return only JSON with visibleTextExact, problemTitle, functionSignature, language, examples, constraints, solution, complexity, edgeCases, and spokenAnswer.",
+    "visibleTextExact must contain short verbatim snippets of important text that is actually visible in the screenshot.",
+    "Do not invent code, errors, test results, or text that is not visible.",
+    "Do not write an implementation or code block unless code is visibly present in the screenshot. For problem-statement-only screenshots, describe the approach without code.",
+    "If unrelated chat, Slack, calendar, or notification content is visible, do not transcribe or treat that message as part of the technical problem.",
+    "If it shows only a problem statement and no code editor content, leave solution.code empty and summarize the approach without presenting code as visible.",
     "If it is not a coding screen, return empty coding fields and a concise summary.",
   ].join(" "),
 ) => ({
@@ -307,7 +317,7 @@ export const buildOpenAICompatibleImageAnalysisRequest = (
       role: "user",
       content: [
         { type: "text", text: prompt },
-        { type: "image_url", image_url: { url: imageDataUrl, detail: "low" } },
+        { type: "image_url", image_url: { url: imageDataUrl, detail: "high" } },
       ],
     },
   ],

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, safeStorage, session } = require("electron");
+const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, nativeImage, safeStorage, session } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -53,7 +53,7 @@ const fetchWithRetry = async (url, options = {}, meta = {}) => {
       });
       await sleep(retryDelayMs(attempt), options.signal);
     } catch (error) {
-      if (isAbortError(error) || attempt >= maxAttempts) throw error;
+      if ((isAbortError(error) && options.signal?.aborted) || attempt >= maxAttempts) throw error;
       appendTraceEvent("provider_retry_scheduled", {
         requestId: meta.requestId,
         provider: meta.provider,
@@ -419,6 +419,13 @@ const emitNativelyStatus = (streamId, status, detail) => {
   mainWindow?.webContents.send("natively:status", { streamId, status, detail });
 };
 
+const terminalNativelyErrors = new Set([
+  "auth_timeout",
+  "invalid_key_format",
+  "trial_expired",
+  "transcription_quota_exceeded",
+]);
+
 const stopNativelyStream = (streamId) => {
   const stream = nativelyStreams.get(streamId);
   if (!stream) return { ok: true };
@@ -427,6 +434,110 @@ const stopNativelyStream = (streamId) => {
     stream.ws?.close();
   } catch {}
   return { ok: true };
+};
+
+const openNativelyStreamSocket = (streamId, config, existing = {}) => {
+  const WebSocketCtor = globalThis.WebSocket;
+  const ws = new WebSocketCtor(nativelyTranscriptionUrl());
+  const stream = {
+    ws,
+    queue: existing.queue || [],
+    connected: false,
+    closed: false,
+    terminal: false,
+    reconnects: existing.reconnects || 0,
+    config,
+  };
+  nativelyStreams.set(streamId, stream);
+
+  ws.binaryType = "arraybuffer";
+  ws.addEventListener("open", () => {
+    const active = nativelyStreams.get(streamId);
+    if (active?.ws !== ws) return;
+    active.connected = true;
+    active.closed = false;
+    ws.send(JSON.stringify({
+      key: config.apiKey,
+      sample_rate: config.sampleRate,
+      audio_channels: 1,
+      language: config.language.language,
+      language_alternates: config.language.alternates,
+      channel: config.channel,
+    }));
+    for (const chunk of active.queue.splice(0)) ws.send(chunk);
+    emitNativelyStatus(streamId, "connected", `Natively ${config.channel} stream connected`);
+  });
+  ws.addEventListener("message", async (event) => {
+    let raw = "";
+    if (typeof event.data === "string") raw = event.data;
+    else if (event.data instanceof ArrayBuffer) raw = Buffer.from(event.data).toString("utf8");
+    else if (event.data && typeof event.data.text === "function") raw = await event.data.text().catch(() => "");
+    if (!raw) return;
+    try {
+      const message = JSON.parse(raw);
+      if (message?.error) {
+        emitNativelyStatus(streamId, "error", String(message.error));
+        if (terminalNativelyErrors.has(message.error)) {
+          const active = nativelyStreams.get(streamId);
+          if (active) active.terminal = true;
+          stopNativelyStream(streamId);
+        }
+        return;
+      }
+      if (message?.language_detected) {
+        emitNativelyStatus(streamId, "language", `Detected ${message.language_detected}`);
+      }
+      if (typeof message?.text === "string" && message.text.trim()) {
+        const payload = {
+          streamId,
+          text: message.text.trim(),
+          isFinal: Boolean(message.is_final),
+          confidence: typeof message.confidence === "number" ? message.confidence : 1,
+        };
+        appendTraceEvent("natively_transcript", {
+          streamId,
+          isFinal: payload.isFinal,
+          confidence: payload.confidence,
+          text: textSummary(payload.text, 120),
+        });
+        writeActiveSessionTrace("active");
+        mainWindow?.webContents.send("natively:transcript", payload);
+      }
+    } catch {
+      emitNativelyStatus(streamId, "message", raw.slice(0, 200));
+    }
+  });
+  ws.addEventListener("error", () => {
+    emitNativelyStatus(streamId, "error", "Natively WebSocket error");
+  });
+  ws.addEventListener("close", () => {
+    const active = nativelyStreams.get(streamId);
+    if (!active || active.ws !== ws) return;
+    active.connected = false;
+    active.closed = true;
+    emitNativelyStatus(streamId, "closed", "Natively stream closed");
+  });
+  return stream;
+};
+
+const reconnectNativelyStream = (streamId, stream, audioBuffer) => {
+  if (!stream?.config || stream.terminal) return { ok: false, error: "natively_stream_not_started" };
+  if (stream.reconnects >= 3) return { ok: false, error: "natively_stream_reconnect_limit" };
+  const nextQueue = [...(stream.queue || []), audioBuffer].slice(-500);
+  const reconnects = stream.reconnects + 1;
+  appendTraceEvent("natively_stream_reconnecting", {
+    streamId,
+    channel: stream.config.channel,
+    reconnects,
+    queuedFrames: nextQueue.length,
+  });
+  writeActiveSessionTrace("active");
+  try {
+    stream.ws?.close();
+  } catch {}
+  openNativelyStreamSocket(streamId, stream.config, { queue: nextQueue, reconnects });
+  emitNativelyStatus(streamId, "reconnecting", `Natively ${stream.config.channel} stream reconnecting`);
+  return { ok: true, reconnected: true };
 };
 
 const extractOpenAIResponseText = (response) => {
@@ -742,24 +853,48 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
     return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_api_key` };
   }
   try {
-    const response = await fetchWithRetry(provider.chatUrl(), {
+    const structuredOutput = Boolean(input?.structuredOutput);
+    const structuredSystemSuffix = structuredOutput
+      ? "\nReturn only one valid JSON object that matches the structured answer contract in output_format. Do not wrap it in markdown, do not add prose before or after the JSON, and keep all required keys present."
+      : "";
+    const buildBody = (includeResponseFormat) => JSON.stringify({
+      model: modelName,
+      stream: false,
+      ...(maxTokens ? { max_tokens: maxTokens } : {}),
+      ...(includeResponseFormat ? { response_format: { type: "json_object" } } : {}),
+      messages: [
+        { role: "system", content: `${String(prompt?.system ?? "")}${structuredSystemSuffix}` },
+        { role: "user", content: String(prompt?.user ?? "") },
+      ],
+    });
+    let response = await fetchWithRetry(provider.chatUrl(), {
       method: "POST",
       signal,
       headers: {
         "Content-Type": "application/json",
         ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
       },
-      body: JSON.stringify({
-        model: modelName,
-        stream: false,
-        ...(maxTokens ? { max_tokens: maxTokens } : {}),
-        messages: [
-          { role: "system", content: String(prompt?.system ?? "") },
-          { role: "user", content: String(prompt?.user ?? "") },
-        ],
-      }),
+      body: buildBody(structuredOutput),
     }, { requestId, provider: provider.id });
-    const payload = await response.json().catch(() => ({}));
+    let payload = await response.json().catch(() => ({}));
+    if (!response.ok && structuredOutput && [400, 422].includes(response.status)) {
+      appendTraceEvent("provider_structured_response_format_fallback", {
+        requestId,
+        provider: provider.id,
+        status: response.status,
+        error: payload?.error?.message ?? payload?.error,
+      });
+      response = await fetchWithRetry(provider.chatUrl(), {
+        method: "POST",
+        signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
+        },
+        body: buildBody(false),
+      }, { requestId, provider: provider.id, maxAttempts: 1 });
+      payload = await response.json().catch(() => ({}));
+    }
     if (!response.ok) {
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? payload?.error ?? `${provider.id}_http_${response.status}` };
     }
@@ -922,6 +1057,43 @@ const cleanOcrText = (text) => String(text || "")
   .join("\n")
   .trim();
 
+const normalizeCodeLikeOcrText = (text) => String(text || "")
+  .split("\n")
+  .map((line) => line
+    .replace(/\bdef\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)+)\s*\(/g, (_match, name) => `def ${String(name).trim().replace(/\s+/g, "_")}(`)
+    .replace(/\b([a-zA-Z]+)\s+([a-zA-Z]+)\s*=/g, (_match, left, right) => `${left}_${right} =`)
+    .replace(/\b([a-zA-Z]+)\s+([a-zA-Z]+)\s+for\b/g, (_match, left, right) => `${left}_${right} for`)
+  )
+  .join("\n")
+  .trim();
+
+const removeNonTechnicalOcrNoise = (text) => String(text || "")
+  .split("\n")
+  .map((line) => line
+    .replace(/\s*#\S*standup\b.*$/i, "")
+    .replace(/\s*\bMartina:.*$/i, "")
+    .replace(/\s*\bPR de ayer\b.*$/i, "")
+  )
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .join("\n")
+  .trim();
+
+const hasVisibleCodeLikeText = (text) =>
+  String(text || "")
+    .split("\n")
+    .some((line) => /^\s*(?:def|class|return|import|from|function|const|let|var|public|private)\b/i.test(line));
+
+const stripInventedCodeWhenNoVisibleCode = (analysisText, visibleText) => {
+  if (hasVisibleCodeLikeText(visibleText)) return analysisText;
+  return String(analysisText || "")
+    .replace(/\*\*Code\*\*[\s\S]*?(?=\n\n\*\*|Visible OCR text:|$)/gi, "")
+    .replace(/\bCode:\s*[\s\S]*?(?=\n\n|Visible OCR text:|$)/gi, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/\bHere is (?:the )?(?:code|solution)[\s\S]*?(?=\n\n|Visible OCR text:|$)/gi, "No visible code is present in the screenshot; provide approach only.")
+    .trim();
+};
+
 const getOcrWorker = async (language) => {
   const normalizedLanguage = normalizeOcrLanguage(language);
   if (!ocrWorkers.has(normalizedLanguage)) {
@@ -963,6 +1135,38 @@ const recognizeImageText = async ({ imagePath, language }) => {
       path: imagePath,
       error: error instanceof Error ? error.message : "ocr_failed",
     };
+  }
+};
+
+const recognizeImageTextBestEffort = async ({ imagePath, language }) => {
+  const direct = await recognizeImageText({ imagePath, language });
+  if (direct.ok && Number(direct.confidence ?? 0) >= 70) return direct;
+
+  let upscaledPath = "";
+  try {
+    const image = nativeImage.createFromPath(imagePath);
+    const size = image.getSize();
+    if (!size.width || !size.height) return direct;
+    const scale = size.width < 1000 ? 4 : 2;
+    const upscaled = image.resize({
+      width: size.width * scale,
+      height: size.height * scale,
+      quality: "best",
+    });
+    const screenshotDir = path.join(userDataPath(), "screenshots");
+    fs.mkdirSync(screenshotDir, { recursive: true });
+    upscaledPath = path.join(screenshotDir, `ocr-upscaled-${Date.now()}.png`);
+    fs.writeFileSync(upscaledPath, upscaled.toPNG());
+    const retry = await recognizeImageText({ imagePath: upscaledPath, language });
+    const directScore = Number(direct.confidence ?? 0) + String(direct.text || "").length / 20;
+    const retryScore = Number(retry.confidence ?? 0) + String(retry.text || "").length / 20;
+    return retry.ok && retryScore > directScore
+      ? { ...retry, sourcePath: imagePath, preprocessing: `upscaled_${scale}x` }
+      : direct;
+  } catch {
+    return direct;
+  } finally {
+    if (upscaledPath) fs.rmSync(upscaledPath, { force: true });
   }
 };
 
@@ -1479,86 +1683,11 @@ ipcMain.handle("natively:start", async (_event, input) => {
     durationMs: Date.now() - startedAt,
   });
   writeActiveSessionTrace("active");
-  const ws = new WebSocketCtor(nativelyTranscriptionUrl());
-  nativelyStreams.set(streamId, {
-    ws,
-    queue: [],
-    connected: false,
-    closed: false,
-  });
-
-  ws.binaryType = "arraybuffer";
-  ws.addEventListener("open", () => {
-    const stream = nativelyStreams.get(streamId);
-    if (!stream) return;
-    stream.connected = true;
-    ws.send(JSON.stringify({
-      key: apiKey,
-      sample_rate: sampleRate,
-      audio_channels: 1,
-      language: language.language,
-      language_alternates: language.alternates,
-      channel,
-    }));
-    for (const chunk of stream.queue.splice(0)) ws.send(chunk);
-    emitNativelyStatus(streamId, "connected", `Natively ${channel} stream connected`);
-  });
-  ws.addEventListener("message", async (event) => {
-    let raw = "";
-    if (typeof event.data === "string") raw = event.data;
-    else if (event.data instanceof ArrayBuffer) raw = Buffer.from(event.data).toString("utf8");
-    else if (event.data && typeof event.data.text === "function") raw = await event.data.text().catch(() => "");
-    if (!raw) return;
-    try {
-      const message = JSON.parse(raw);
-      if (message?.error) {
-        emitNativelyStatus(streamId, "error", String(message.error));
-        if (["auth_timeout", "invalid_key_format", "trial_expired", "transcription_quota_exceeded"].includes(message.error)) {
-          stopNativelyStream(streamId);
-        }
-        return;
-      }
-      if (message?.language_detected) {
-        emitNativelyStatus(streamId, "language", `Detected ${message.language_detected}`);
-      }
-      if (typeof message?.text === "string" && message.text.trim()) {
-        const payload = {
-          streamId,
-          text: message.text.trim(),
-          isFinal: Boolean(message.is_final),
-          confidence: typeof message.confidence === "number" ? message.confidence : 1,
-        };
-        appendTraceEvent("natively_transcript", {
-          streamId,
-          isFinal: payload.isFinal,
-          confidence: payload.confidence,
-          text: textSummary(payload.text, 120),
-        });
-        writeActiveSessionTrace("active");
-        mainWindow?.webContents.send("natively:transcript", payload);
-      }
-    } catch {
-      emitNativelyStatus(streamId, "message", raw.slice(0, 200));
-    }
-  });
-  ws.addEventListener("error", () => {
-    emitNativelyStatus(streamId, "error", "Natively WebSocket error");
-  });
-  ws.addEventListener("close", () => {
-    const stream = nativelyStreams.get(streamId);
-    if (stream) stream.closed = true;
-    emitNativelyStatus(streamId, "closed", "Natively stream closed");
-  });
+  openNativelyStreamSocket(streamId, { apiKey, sampleRate, channel, language });
   return { ok: true, streamId };
 });
 ipcMain.handle("natively:audio", (_event, input) => {
   const streamId = typeof input?.streamId === "string" ? input.streamId : "";
-  const stream = nativelyStreams.get(streamId);
-  if (!stream || stream.closed) {
-    appendTraceEvent("natively_audio_rejected", { streamId, error: "natively_stream_not_started" });
-    writeActiveSessionTrace("active");
-    return { ok: false, error: "natively_stream_not_started" };
-  }
   const rawAudio = input?.arrayBuffer;
   const audioBuffer = rawAudio instanceof ArrayBuffer
     ? Buffer.from(rawAudio)
@@ -1569,6 +1698,15 @@ ipcMain.handle("natively:audio", (_event, input) => {
     appendTraceEvent("natively_audio_rejected", { streamId, error: "empty_audio_chunk" });
     writeActiveSessionTrace("active");
     return { ok: false, error: "empty_audio_chunk" };
+  }
+  const stream = nativelyStreams.get(streamId);
+  if (!stream) {
+    appendTraceEvent("natively_audio_rejected", { streamId, error: "natively_stream_not_started" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "natively_stream_not_started" };
+  }
+  if (stream.closed) {
+    return reconnectNativelyStream(streamId, stream, audioBuffer);
   }
   const queuedBefore = stream.queue.length;
   if (stream.connected && stream.ws?.readyState === globalThis.WebSocket.OPEN) {
@@ -1700,6 +1838,7 @@ ipcMain.handle("model:generate", async (_event, input) => {
   const requestedTimeout = Number(input?.timeoutMs);
   const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
     ? Math.max(1000, Math.min(180000, Math.round(requestedTimeout)))
+    : input?.structuredOutput ? 60000
     : Number(input?.maxTokens) > 500 ? 120000 : 25000;
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -1888,7 +2027,7 @@ ipcMain.handle("screen:capture", async () => {
 });
 ipcMain.handle("screen:ocr", async (_event, input) => {
   const startedAt = Date.now();
-  const result = await recognizeImageText({
+  const result = await recognizeImageTextBestEffort({
     imagePath: typeof input?.path === "string" ? input.path : "",
     language: input?.language,
   });
@@ -1955,13 +2094,23 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
 
   try {
     const imageDataUrl = `data:image/png;base64,${fs.readFileSync(imagePath, "base64")}`;
+    const ocr = await recognizeImageTextBestEffort({ imagePath, language: input?.language || "eng" }).catch((error) => ({
+      ok: false,
+      text: "",
+      error: error instanceof Error ? error.message : "ocr_failed",
+    }));
+    const visibleOcrText = removeNonTechnicalOcrNoise(ocr?.text);
     const prompt = [
       "Analyze this screenshot for a live coding interview assistant.",
       "Use the screenshot image, not OCR text, as the source of truth.",
-      "Return JSON with problemTitle, functionSignature, language, examples, constraints, and solution.",
-      "The solution must follow these sections: Problem detected, Approach, Solution, Complexity, Edge cases, What to say out loud.",
+      visibleOcrText ? `Local OCR visible text, for exact transcription support:\n${visibleOcrText}` : "",
+      "Return only JSON. Include visibleTextExact as short verbatim snippets of important text that is actually visible in the screenshot.",
+      "Do not invent code, errors, test results, or text that is not visible.",
+      "Do not write an implementation or code block unless code is visibly present in the screenshot. For problem-statement-only screenshots, describe the approach without code.",
+      "If unrelated chat, Slack, calendar, or notification content is visible, do not transcribe or treat that message as part of the technical problem.",
+      "If the screenshot shows only a problem statement and no code editor content, leave solution.code empty and summarize the approach without presenting code as visible.",
       "If the screenshot is not a coding problem or code editor, return empty coding fields and a concise summary.",
-    ].join(" ");
+    ].filter(Boolean).join(" ");
     if (provider === "nvidia") {
       const response = await fetchWithRetry(providerPresets.nvidia.chatUrl(), {
         method: "POST",
@@ -1980,7 +2129,7 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
               role: "user",
               content: [
                 { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: imageDataUrl, detail: "low" } },
+                { type: "image_url", image_url: { url: imageDataUrl, detail: "high" } },
               ],
             },
           ],
@@ -1990,8 +2139,24 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
       if (!response.ok) {
         return finishScreenAnalysisTrace({ ok: false, text: "", error: payload?.error?.message ?? payload?.error ?? `nvidia_vision_http_${response.status}` });
       }
-      const text = extractOpenAICompatibleChatText(payload);
-      return finishScreenAnalysisTrace({ ok: Boolean(text), text, provider, modelName, error: text ? undefined : "empty_nvidia_vision_response" });
+      const text = stripInventedCodeWhenNoVisibleCode(extractOpenAICompatibleChatText(payload), visibleOcrText);
+      const codeOcrText = normalizeCodeLikeOcrText(visibleOcrText);
+      const enrichedText = [
+        text,
+        visibleOcrText ? `Visible OCR text:\n${visibleOcrText}` : "",
+        codeOcrText && codeOcrText !== visibleOcrText ? `Code-normalized OCR text:\n${codeOcrText}` : "",
+      ].filter(Boolean).join("\n\n");
+      return finishScreenAnalysisTrace({
+        ok: Boolean(enrichedText),
+        text: enrichedText,
+        provider,
+        modelName,
+        ocrText: visibleOcrText || "",
+        rawOcrText: ocr?.text || "",
+        codeOcrText,
+        ocrConfidence: ocr?.confidence,
+        error: enrichedText ? undefined : "empty_nvidia_vision_response",
+      });
     }
 
     const response = await fetch(`${openAIBaseUrl()}/v1/responses`, {
@@ -2021,8 +2186,24 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
     if (!response.ok) {
       return finishScreenAnalysisTrace({ ok: false, text: "", error: payload?.error?.message ?? `openai_http_${response.status}` });
     }
-    const text = extractOpenAIResponseText(payload);
-    return finishScreenAnalysisTrace({ ok: Boolean(text), text, provider, modelName, error: text ? undefined : "empty_openai_response" });
+    const text = stripInventedCodeWhenNoVisibleCode(extractOpenAIResponseText(payload), visibleOcrText);
+    const codeOcrText = normalizeCodeLikeOcrText(visibleOcrText);
+    const enrichedText = [
+      text,
+      visibleOcrText ? `Visible OCR text:\n${visibleOcrText}` : "",
+      codeOcrText && codeOcrText !== visibleOcrText ? `Code-normalized OCR text:\n${codeOcrText}` : "",
+    ].filter(Boolean).join("\n\n");
+    return finishScreenAnalysisTrace({
+      ok: Boolean(enrichedText),
+      text: enrichedText,
+      provider,
+      modelName,
+      ocrText: visibleOcrText || "",
+      rawOcrText: ocr?.text || "",
+      codeOcrText,
+      ocrConfidence: ocr?.confidence,
+      error: enrichedText ? undefined : "empty_openai_response",
+    });
   } catch (error) {
     return finishScreenAnalysisTrace({ ok: false, text: "", error: error instanceof Error ? error.message : "screen_analysis_failed" });
   }

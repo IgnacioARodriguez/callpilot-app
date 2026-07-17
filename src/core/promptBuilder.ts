@@ -93,11 +93,11 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
   const omittedSections: Array<{ section: string; reason: string }> = [];
   const structuredContract = context.activeMode === "live_coding"
     ? [
-      "Return raw JSON only when possible; do not wrap it in markdown fences:",
+      "Return raw JSON only. Do not wrap it in markdown fences. The readable format labels above describe content, but the actual output must be this JSON object:",
       '{"kind":"coding","payload":{"version":"1","answerNeeded":true,"intent":null,"responseType":"initial_solution|explanation|follow_up_change|debug_fix|clarification","spokenAnswer":"","keyPoints":[],"correction":{"needed":false,"transition":null,"correctedClaim":null},"assumptions":[],"evidenceRefs":[],"followUpHint":null,"problem":{"title":"","summary":"","language":"Python","functionSignature":null,"constraints":[]},"solution":{"approachSteps":[],"code":"","complexity":{"time":"","space":"","rationale":""},"edgeCases":[],"invariants":[]},"narration":{"spokenAnswer":"","currentStep":""},"tests":[],"patch":{"kind":"none","code":null}}}',
     ].join("\n")
     : [
-      "Return raw JSON only when possible; do not wrap it in markdown fences:",
+      "Return raw JSON only. Do not wrap it in markdown fences. The readable format labels above describe content, but the actual output must be this JSON object:",
       '{"kind":"interview","payload":{"version":"1","answerNeeded":true,"intent":"technical_qa|behavioral|system_design|clarification|no_answer","responseType":null,"spokenAnswer":"","keyPoints":[],"correction":{"needed":false,"transition":null,"correctedClaim":null},"assumptions":[],"evidenceRefs":[],"followUpHint":null,"problem":{"title":"","summary":"","language":"","functionSignature":null,"constraints":[]},"solution":{"approachSteps":[],"code":"","complexity":{"time":"","space":"","rationale":""},"edgeCases":[],"invariants":[]},"narration":{"spokenAnswer":"","currentStep":""},"tests":[],"patch":{"kind":"none","code":null}}}',
     ].join("\n");
   const sections = [
@@ -175,7 +175,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     "Tailor wording to the company and role only when company_name, role_title, or job_description are present and the current question asks for candidate-specific or company-fit context.",
     "Keep answers concise, practical, and interview-ready.",
     "Avoid filler, apologies, meta commentary, and broad tutorials. If the user pressed Answer, return the most useful next thing to say, not an analysis of why an answer may or may not be needed.",
-    "When the provider supports reliable JSON, prefer the structured JSON contract in output_format. Do not include chain-of-thought. If you cannot follow JSON reliably, return the same content as compact readable text.",
+    "The output_format section contains a structured JSON contract. Return that raw JSON object only, with no markdown fences, no prose before or after it, no chain-of-thought, and all required keys present.",
     "For conversational modes, produce a natural spoken headline first: it should sound easy to say aloud, not like written prose. Keep keywords short and memorable.",
     mode.systemPromptFragment,
   ].join("\n");

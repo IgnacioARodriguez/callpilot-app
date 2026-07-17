@@ -77,6 +77,17 @@ export {
   type LiveTranscriptionSettings,
 } from "./liveTranscription.ts";
 export {
+  appendSegmentChunk,
+  consumeSegmentChunks,
+  shouldDrainTranscriptionQueue,
+  shouldSendNativelyFrame,
+} from "./liveAudioSegments.ts";
+export {
+  hasTranscriptProgress,
+  isDuplicateTranscript,
+  transcriptDelta,
+} from "./overlayTranscript.ts";
+export {
   DEFAULT_TRANSCRIPTION_MODEL,
   DEFAULT_NVIDIA_VISION_MODEL,
   DEFAULT_OLLAMA_BASE_URL,

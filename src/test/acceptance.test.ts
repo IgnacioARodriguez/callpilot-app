@@ -122,6 +122,8 @@ test("acceptance: answer providers are routed through a registry", () => {
   assert.match(main, /generateWithOpenAICompatibleChat/);
   assert.match(main, /structuredAnswerPayloadJsonSchema/);
   assert.match(main, /input\?\.structuredOutput/);
+  assert.match(main, /response_format:\s*\{\s*type:\s*"json_object"\s*\}/);
+  assert.match(main, /provider_structured_response_format_fallback/);
   assert.match(app, /structuredOutput:\s*true/);
   assert.doesNotMatch(modelClient, /answerSchema/);
   assert.doesNotMatch(`${main}\n${modelClient}`, /structured_interview_answer/);
@@ -146,6 +148,40 @@ test("acceptance: live STT chunks are queued instead of dropped while busy", () 
   assert.match(app, /localSttQueueByIdRef/);
   assert.match(app, /liveChunkQueueByIdRef/);
   assert.doesNotMatch(app, /channels\.slice\(1\).*stop/s);
+});
+
+test("acceptance: stopping live recording preserves pending final audio chunks", () => {
+  const app = read("src/main.tsx");
+  const stopStart = app.indexOf("const stopLiveRecording = () => {");
+  const stopEnd = app.indexOf("React.useEffect", stopStart);
+  const stopBody = app.slice(stopStart, stopEnd);
+
+  assert.ok(stopStart > 0, "stopLiveRecording must exist");
+  assert.match(stopBody, /recorder\.stop\(\)/);
+  assert.doesNotMatch(stopBody, /localSegmentChunksByIdRef\.current\.clear\(\)/);
+  assert.doesNotMatch(stopBody, /localSttQueueByIdRef\.current\.clear\(\)/);
+  assert.doesNotMatch(stopBody, /liveChunkQueueByIdRef\.current\.clear\(\)/);
+  assert.match(app, /consumeSegmentChunks\(localSegmentChunksByIdRef\.current, channelId\)/);
+  assert.match(app, /shouldDrainTranscriptionQueue\(liveContinueRef\.current/);
+});
+
+test("acceptance: Natively keeps low-volume system audio while filtering mic noise", () => {
+  const app = read("src/main.tsx");
+
+  assert.match(app, /const nativelySpeaker = channel\.speaker === "candidate" \? "candidate" : "interviewer"/);
+  assert.match(app, /shouldSendNativelyFrame\(nativelySpeaker, energy\)/);
+  assert.doesNotMatch(app, /if \(energy\.rms < 0\.0018 && energy\.peak < 0\.018\) return/);
+});
+
+test("acceptance: Natively stream close is recoverable while audio is still flowing", () => {
+  const main = read("electron/main.cjs");
+
+  assert.match(main, /openNativelyStreamSocket/);
+  assert.match(main, /reconnectNativelyStream/);
+  assert.match(main, /natively_stream_reconnecting/);
+  assert.match(main, /stream\.closed/);
+  assert.match(main, /reconnects >= 3/);
+  assert.doesNotMatch(main, /if \(!stream \|\| stream\.closed\)[\s\S]{0,220}natively_stream_not_started/);
 });
 
 test("acceptance: Natively partial auto-answer waits for turn stability", () => {

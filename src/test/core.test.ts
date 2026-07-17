@@ -12,6 +12,7 @@ import {
   assessPlainInterviewAnswerGrounding,
   assembleTurn,
   buildOllamaChatRequest,
+  appendSegmentChunk,
   buildRealtimeTranscriptionSessionUpdate,
   buildOpenAIImageAnalysisRequest,
   buildOpenAICompatibleChatRequest,
@@ -19,12 +20,14 @@ import {
   buildOpenAIResponsesRequest,
   buildPrompt,
   classifyScreenText,
+  consumeSegmentChunks,
   createLatencyMetricRun,
   createSessionSnapshot,
   createGlobalContext,
   defaultStealthState,
   createTurnAssemblerState,
   detectQuestionIntent,
+  hasTranscriptProgress,
   cleanOcrText,
   extractOllamaModels,
   extractOllamaResponseText,
@@ -56,8 +59,11 @@ import {
   serializeSession,
   shouldAutoAnswer,
   shouldDropCandidateEcho,
+  shouldDrainTranscriptionQueue,
+  shouldSendNativelyFrame,
   speechSimilarity,
   STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA,
+  transcriptDelta,
   upsertSession,
   validateAudioTranscriptionInput,
   withNoAnswerForUngroundedDrift,
@@ -135,6 +141,27 @@ test("withRetry does not retry cancelled requests", async () => {
     ),
     /cancelled/i,
   );
+});
+
+test("live audio segment buffers survive stop until recorder onstop consumes them", () => {
+  const chunks = new Map<string, string[]>();
+  appendSegmentChunk(chunks, "mic-0", "hello");
+  appendSegmentChunk(chunks, "mic-0", "tail");
+
+  assert.deepEqual(chunks.get("mic-0"), ["hello", "tail"]);
+  assert.equal(shouldDrainTranscriptionQueue(false, 2), true);
+  assert.equal(shouldDrainTranscriptionQueue(false, 0), false);
+  assert.deepEqual(consumeSegmentChunks(chunks, "mic-0"), ["hello", "tail"]);
+  assert.equal(chunks.has("mic-0"), false);
+});
+
+test("Natively frame gate filters mic noise but keeps low system audio", () => {
+  const lowEnergy = { rms: 0.0002, peak: 0.003 };
+  const speechEnergy = { rms: 0.004, peak: 0.04 };
+
+  assert.equal(shouldSendNativelyFrame("candidate", lowEnergy), false);
+  assert.equal(shouldSendNativelyFrame("candidate", speechEnergy), true);
+  assert.equal(shouldSendNativelyFrame("interviewer", lowEnergy), true);
 });
 
 test("SSE parser handles split JSON events and missing done", () => {
@@ -901,6 +928,26 @@ test("live conversation ignores earlier partial questions when a later concrete 
   assert.equal(extractLatestQuestionFocus(text), "How would you debug a latency spike in an API?");
 });
 
+test("live conversation treats interview directives as the latest actionable prompt", () => {
+  const redisText = [
+    "Suppose the write succeeds but invalidation fails. What retry strategy and idempotency key would you use?",
+    "Switch topics. In Postgres, when does an index help, and when can it hurt write throughput?",
+    "Bring it back to the original Redis cache design and summarize the trade off",
+  ].join(" ");
+  const noisyText = [
+    "Let me reformulate. Compare a queue with direct API retry for an email delivery workflow.",
+    "Ignore the earlier payment example. For the latest question, focus only on queues, retries, dead letters, and idempotency",
+  ].join(" ");
+
+  assert.equal(
+    extractLatestQuestionFocus(redisText),
+    "Bring it back to the original Redis cache design and summarize the trade off",
+  );
+  assert.match(extractLatestQuestionFocus(noisyText), /focus only on queues, retries, dead letters, and idempotency/i);
+  assert.equal(detectQuestionIntent(redisText, "english").shouldDispatch, true);
+  assert.equal(detectQuestionIntent(noisyText, "english").shouldDispatch, true);
+});
+
 test("live conversation resolves bare usage follow-ups from prior technical context", () => {
   const text = [
     "interviewer: A list, because I think a list is ordered. It's a collection of items, and a dictionary would lose the ordering.",
@@ -1140,6 +1187,45 @@ test("turn assembler applies overlapping final fragments that complete partial w
   assert.equal(folded.action === "fold_final" ? folded.draftText : "", "And I think what could make sense here is having the ID correspond to the book object.");
   assert.equal(next.action, "publish_live");
   assert.equal(next.action === "publish_live" ? next.text : "", "And I think what could make sense here is having the ID correspond to the book object. Yep.");
+});
+
+test("overlay transcript helpers suppress duplicate live bubbles and expose only new deltas", () => {
+  const committed = "Can you explain idempotency in a payment worker?";
+  assert.equal(hasTranscriptProgress(committed, committed), false);
+  assert.equal(hasTranscriptProgress(committed, "Can you explain idempotency in a payment worker"), false);
+  assert.equal(
+    hasTranscriptProgress(committed, "Can you explain idempotency in a payment worker? And how would you test it?"),
+    true,
+  );
+  assert.equal(
+    transcriptDelta(committed, "Can you explain idempotency in a payment worker? And how would you test it?"),
+    "And how would you test it?",
+  );
+  assert.equal(transcriptDelta("", "What is Redis?"), "What is Redis?");
+});
+
+test("turn assembler preserves only accumulated new speech across partial and final STT sequences", () => {
+  const state = createTurnAssemblerState();
+  const sequence = [
+    { text: "What is Redis", isFinal: false },
+    { text: "What is Redis?", isFinal: true },
+    { text: "What is Redis? And when would you use it", isFinal: false },
+    { text: "And when would you use it?", isFinal: true },
+    { text: "What is Redis? And when would you use it? Follow-up: what are the tradeoffs?", isFinal: false },
+  ];
+  const decisions = sequence.map((item, index) => assembleTurn(state, {
+    speaker: "interviewer",
+    text: item.text,
+    isFinal: item.isFinal,
+    timestamp: 1_000 + index,
+  }));
+
+  assert.equal(decisions[1].action, "commit");
+  assert.equal(decisions[1].action === "commit" ? decisions[1].text : "", "What is Redis?");
+  assert.equal(decisions[3].action, "commit");
+  assert.equal(decisions[3].action === "commit" ? decisions[3].text : "", "And when would you use it?");
+  assert.equal(decisions[4].action, "publish_live");
+  assert.equal(decisions[4].action === "publish_live" ? decisions[4].text : "", "Follow-up: what are the tradeoffs?");
 });
 
 test("answer grounding guard blocks unsupported topic drift", () => {
@@ -1817,11 +1903,11 @@ test("OpenAI image analysis request uses Responses image content", () => {
   assert.equal(request.store, false);
   const promptText = request.input[0]?.content[0].text ?? "";
   assert.match(promptText, /functionSignature/);
-  assert.match(promptText, /What to say out loud/);
+  assert.match(promptText, /visibleTextExact/);
   assert.deepEqual(request.input[0]?.content[1], {
     type: "input_image",
     image_url: "data:image/png;base64,abc",
-    detail: "low",
+    detail: "high",
   });
 });
 
@@ -1833,7 +1919,7 @@ test("OpenAI-compatible image analysis request uses chat multimodal content", ()
   assert.match(request.messages[0]?.content[0].text ?? "", /functionSignature/);
   assert.deepEqual(request.messages[0]?.content[1], {
     type: "image_url",
-    image_url: { url: "data:image/png;base64,abc", detail: "low" },
+    image_url: { url: "data:image/png;base64,abc", detail: "high" },
   });
 });
 

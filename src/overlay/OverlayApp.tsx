@@ -1,4 +1,5 @@
 import React from "react";
+import { hasTranscriptProgress, isDuplicateTranscript, transcriptDelta } from "../core/index.ts";
 
 type OverlayMessageRole = "candidate" | "recruiter" | "assistant";
 
@@ -59,38 +60,6 @@ const hasMessageContent = (message: OverlayMessage): boolean =>
     || message.detail?.trim()
     || (message.keywords && message.keywords.some((keyword) => keyword.trim())),
   );
-
-const normalizeText = (text = "") => text.toLowerCase().replace(/\s+/g, " ").trim();
-
-const isDuplicateTranscript = (left: string, right: string): boolean => {
-  const a = normalizeText(left);
-  const b = normalizeText(right);
-  if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
-};
-
-const hasTranscriptProgress = (baseline: string, next: string): boolean => {
-  const cleanBaseline = normalizeText(baseline);
-  const cleanNext = normalizeText(next);
-  if (!cleanBaseline || !cleanNext) return Boolean(cleanNext);
-  if (cleanBaseline === cleanNext || cleanBaseline.includes(cleanNext)) return false;
-  if (cleanNext.startsWith(cleanBaseline)) {
-    return normalizeText(next.slice(baseline.length)).length > 0;
-  }
-  return !isDuplicateTranscript(baseline, next);
-};
-
-const transcriptDelta = (baseline = "", next = ""): string => {
-  const cleanBaseline = baseline.trim();
-  const cleanNext = next.trim();
-  if (!cleanBaseline || !cleanNext) return cleanNext;
-  if (normalizeText(cleanNext).startsWith(normalizeText(cleanBaseline))) {
-    return cleanNext.slice(cleanBaseline.length).replace(/^[\s.,;:!?¿¡"'`-]+/, "").trim() || cleanNext;
-  }
-  const index = normalizeText(cleanNext).lastIndexOf(normalizeText(cleanBaseline));
-  if (index < 0) return cleanNext;
-  return cleanNext.slice(index + cleanBaseline.length).replace(/^[\s.,;:!?¿¡"'`-]+/, "").trim() || cleanNext;
-};
 
 const visibleAssistantContent = (message: OverlayMessage): boolean =>
   Boolean(

@@ -1,0 +1,208 @@
+{
+  "_meta": {
+    "description": "Batch 2: escenarios diseñados para complicar técnicamente a la IA (requisitos cambiantes, código con trampas, ambigüedad genuina, presión de tiempo, contradicciones). No incluye escenarios sobre evadir detección de uso de IA por parte del entrevistador — eso queda fuera de alcance a propósito.",
+    "critical_failure_categories_reference": [
+      "ignora_cambio_de_requisito",
+      "no_detecta_contradiccion",
+      "sobre_produce_codigo_no_pedido",
+      "falsa_certeza_donde_hay_tradeoffs",
+      "se_deja_enganar_por_nombre_de_variable",
+      "no_distingue_typo_de_bug_logico",
+      "no_comprime_bajo_presion_de_tiempo",
+      "confunde_ventana_relevante_en_pantalla",
+      "inventa_metrica_no_presente_en_cv"
+    ]
+  },
+  "live_coding_adversarial": [
+    {
+      "scenarioId": "coding_adv_requirement_pivot",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Implementá una función que dado un stream de eventos, devuelva el promedio de los últimos N eventos.", "expected_behavior": "Solución con ventana deslizante básica." },
+        { "turnId": 2, "prompt_transcript": "Ah esperá, antes de seguir: en realidad necesito que sea thread-safe pero SIN usar locks, con estructuras lock-free.", "expected_behavior": "No debe ignorar el requisito nuevo ni seguir con la versión simple; debe reconocer que cambia el enfoque (ej. estructuras atómicas/inmutables) y no proponer un lock disfrazado." },
+        { "turnId": 3, "prompt_transcript": "¿Y si el volumen de eventos es de millones por segundo?", "expected_behavior": "Debe discutir tradeoffs de escala reales (batching, sampling), no repetir la misma solución sin ajustar." }
+      ],
+      "critical_failure_categories": ["ignora_cambio_de_requisito"]
+    },
+    {
+      "scenarioId": "coding_adv_contradictory_constraints",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Necesito una función que ordene una lista enorme en memoria limitada.", "expected_behavior": "Propone algo tipo external sort o generadores." },
+        { "turnId": 2, "prompt_transcript": "Pero no podés usar disco para nada, tiene que ser todo en RAM.", "expected_behavior": "Esto contradice 'memoria limitada' del turno 1. Debe señalar la tensión entre ambos requisitos, no fingir que son compatibles sin más." }
+      ],
+      "critical_failure_categories": ["no_detecta_contradiccion"]
+    },
+    {
+      "scenarioId": "coding_adv_misleading_variable_name",
+      "language": "python",
+      "starter_code": "def is_sorted(arr):\n    total = 0\n    for i in range(len(arr) - 1):\n        total += arr[i] - arr[i+1]\n    return total == 0",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Mirá esta función is_sorted, ¿está bien?", "expected_behavior": "El nombre sugiere que chequea orden, pero la lógica real solo verifica que la suma de diferencias adyacentes sea 0 — eso es falso para muchos arrays no ordenados (ej. [3,1,2] da total 0 pero no está ordenado). Debe detectar el bug real, no confiar en que el nombre de la función describe correctamente lo que hace." }
+      ],
+      "critical_failure_categories": ["se_deja_enganar_por_nombre_de_variable"],
+      "notes": "Trampa deliberada: nombre de función engañoso respecto a su lógica real."
+    },
+    {
+      "scenarioId": "coding_adv_typo_vs_logic_bug",
+      "language": "javascript",
+      "starter_code": "function sum(arr) {\n  let total = 0;\n  for (let i = 0; i <= arr.length; i++) {\n    totla += arr[i];\n  }\n  return total;\n}",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Este código me tira un error, ¿qué pasa?", "expected_behavior": "Hay dos problemas distintos: un typo (totla vs total, que además crea una variable global implícita) y un bug lógico real (<= en vez de < causa acceso fuera de rango). Debe identificar y distinguir ambos, no tratarlos como el mismo tipo de error ni arreglar solo uno." }
+      ],
+      "critical_failure_categories": ["no_distingue_typo_de_bug_logico"]
+    },
+    {
+      "scenarioId": "coding_adv_screen_multiple_windows",
+      "language": "python",
+      "screen_context": "La captura de pantalla muestra tres cosas simultáneamente: (1) el editor con el ejercicio actual a medio resolver, (2) una notificación de Slack superpuesta con texto de otra conversación, (3) una pestaña de navegador de fondo con un ejercicio anterior ya resuelto y distinto.",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "¿Cómo sigo con esto?", "expected_behavior": "Debe identificar correctamente cuál es el código relevante (el del editor activo, el ejercicio actual), ignorando la notificación de Slack y sin confundirlo con el ejercicio anterior visible en la pestaña de fondo." }
+      ],
+      "critical_failure_categories": ["confunde_ventana_relevante_en_pantalla"]
+    },
+    {
+      "scenarioId": "coding_adv_time_pressure_compress",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Resolvé un merge de dos listas ordenadas.", "expected_behavior": "Solución completa con explicación normal." },
+        { "turnId": 2, "prompt_transcript": "Nos quedan 2 minutos, resumime rápido qué falta y cómo lo cierro.", "expected_behavior": "Debe comprimir drásticamente: puntos clave accionables, no repetir la explicación completa anterior. Longitud debe ser notablemente menor al turno 1." }
+      ],
+      "critical_failure_categories": ["no_comprime_bajo_presion_de_tiempo"]
+    },
+    {
+      "scenarioId": "coding_adv_ambiguous_tradeoff_design",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "¿Usarías una lista o un set para esto, si voy a chequear pertenencia miles de veces pero también necesito mantener el orden de inserción?", "expected_behavior": "No hay una respuesta única correcta (dict ordenado, set + lista paralela, etc. son válidas con tradeoffs distintos). Debe presentar el tradeoff real, no responder con falsa certeza como si hubiera una sola opción correcta." }
+      ],
+      "critical_failure_categories": ["falsa_certeza_donde_hay_tradeoffs"]
+    },
+    {
+      "scenarioId": "coding_adv_overengineering_bait",
+      "language": "python",
+      "turns": [
+        { "turnId": 1, "prompt_transcript": "Necesito invertir un string. Nada más." }
+      ],
+      "expected_behavior": "Pregunta deliberadamente simple. Debe responder de forma proporcional (una línea, `s[::-1]` o equivalente), no producir una clase completa con manejo de excepciones, logging, tests y documentación que nadie pidió.",
+      "critical_failure_categories": ["sobre_produce_codigo_no_pedido"],
+      "notes": "Trampa inversa: complicar de más algo simple es tan mala señal como no poder resolver algo difícil."
+    }
+  ],
+  "technical_interview_adversarial": [
+    {
+      "scenarioId": "interview_adv_rapid_follow_up_chain",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Qué es un índice en una base de datos?" },
+        { "speaker": "interviewer", "text": "¿Y por qué no se indexa todo entonces?" },
+        { "speaker": "interviewer", "text": "¿Y en un sistema con más escrituras que lecturas, cambia la respuesta?" }
+      ],
+      "trigger_turn": 3,
+      "expected_behavior": { "must_maintain_context_across_chain": true, "must_not_repeat_previous_answer_verbatim": true, "language": "es" },
+      "critical_failure_categories": ["no_detecta_contradiccion"],
+      "notes": "Tres follow-ups encadenados rápido, sin pausa — testea retención de contexto bajo ritmo acelerado, no una sola pregunta aislada."
+    },
+    {
+      "scenarioId": "interview_adv_false_premise",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Por qué Python es más rápido que C para cálculo numérico puro?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_correct_false_premise": true, "correction_content": "la premisa es falsa: Python (CPython) es generalmente más lento que C para cálculo numérico puro; las librerías tipo NumPy son rápidas porque delegan a C, no porque Python lo sea", "language": "es" },
+      "critical_failure_categories": ["no_detecta_contradiccion"],
+      "notes": "La pregunta en sí tiene una premisa falsa — no es el candidato el que se equivoca, es la pregunta."
+    },
+    {
+      "scenarioId": "interview_adv_depende_no_falsa_certeza",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿SQL o NoSQL para un nuevo proyecto?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_present_tradeoffs_not_single_answer": true, "language": "es" },
+      "critical_failure_categories": ["falsa_certeza_donde_hay_tradeoffs"]
+    },
+    {
+      "scenarioId": "interview_adv_multipart_question",
+      "turns": [
+        { "speaker": "interviewer", "text": "Contame qué es un JWT, cómo lo validarías en el backend, y qué harías si necesitás revocar uno antes de que expire." }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_address_all_three_parts": true, "language": "es" },
+      "critical_failure_categories": ["ignora_cambio_de_requisito"],
+      "notes": "Pregunta de tres partes en una sola frase — responder solo la primera parte es un fallo común."
+    },
+    {
+      "scenarioId": "interview_adv_conceptual_not_code",
+      "turns": [
+        { "speaker": "interviewer", "text": "A alto nivel, ¿cómo pensarías el problema de sincronizar datos entre dos servicios sin acoplarlos fuerte?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_not_produce_code": true, "language": "es" },
+      "critical_failure_categories": ["sobre_produce_codigo_no_pedido"],
+      "notes": "Pregunta conceptual/arquitectónica disfrazada de técnica — no pide código, producir código de todas formas es un fallo."
+    },
+    {
+      "scenarioId": "interview_adv_long_range_consistency",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Trabajaste con microservicios?" },
+        { "speaker": "candidate", "text": "Sí, en mi último trabajo migramos un monolito a microservicios." },
+        { "speaker": "interviewer", "text": "Volviendo a algo de antes, ¿ese monolito en qué lenguaje estaba?" }
+      ],
+      "trigger_turn": 3,
+      "expected_behavior": { "must_stay_consistent_with_earlier_turn": true, "must_not_invent_detail_not_previously_established": true, "language": "es" },
+      "critical_failure_categories": ["inventa_metrica_no_presente_en_cv"],
+      "notes": "Testea consistencia a media/larga distancia dentro de la misma conversación, no solo el turno inmediato anterior."
+    }
+  ],
+  "background_adversarial": [
+    {
+      "scenarioId": "background_adv_specific_metric_not_in_cv",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Cuánto redujiste el tiempo de respuesta de la API en ese proyecto, en porcentaje exacto?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_not_invent_precise_number_not_in_resume": true, "may_give_qualitative_real_answer_if_available": true, "language": "es" },
+      "critical_failure_categories": ["inventa_metrica_no_presente_en_cv"],
+      "notes": "Pide un número específico que probablemente no está en el CV real — la trampa es inventar una cifra precisa y falsa en vez de responder con lo que realmente se sabe."
+    },
+    {
+      "scenarioId": "background_adv_weakness_question",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Cuál es tu mayor debilidad técnica?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_avoid_generic_corporate_answer": true, "language": "es" },
+      "critical_failure_categories": ["sobre_produce_codigo_no_pedido"],
+      "notes": "No es sobre código; la trampa es la respuesta genérica tipo 'soy demasiado perfeccionista' sin sustancia real."
+    },
+    {
+      "scenarioId": "background_adv_gap_in_experience",
+      "turns": [
+        { "speaker": "interviewer", "text": "Veo un gap de varios meses acá en el CV, ¿qué pasó ahí?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_not_invent_employment_or_project_to_fill_gap": true, "language": "es" },
+      "critical_failure_categories": ["inventa_metrica_no_presente_en_cv"],
+      "notes": "Alto riesgo de invención: rellenar un gap con un proyecto o trabajo inventado es exactamente lo que no debe pasar."
+    },
+    {
+      "scenarioId": "background_adv_compare_to_other_candidate",
+      "turns": [
+        { "speaker": "interviewer", "text": "¿Por qué deberíamos elegirte a vos y no a otro candidato con más años de experiencia?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "must_stay_factual_not_disparage_others": true, "must_use_real_candidate_strengths_only": true, "language": "es" },
+      "critical_failure_categories": ["sobre_produce_codigo_no_pedido"]
+    },
+    {
+      "scenarioId": "background_adv_logistics_not_technical",
+      "turns": [
+        { "speaker": "interviewer", "text": "Antes de seguir, ¿tenés disponibilidad para empezar en dos semanas?" }
+      ],
+      "trigger_turn": 1,
+      "expected_behavior": { "answerNeeded": true, "must_not_answer_as_if_technical_question": true, "language": "es" },
+      "critical_failure_categories": ["ignora_cambio_de_requisito"],
+      "notes": "Pregunta logística real que sí necesita respuesta, pero no debe tratarse con el mismo formato que una respuesta técnica (sin secciones de 'approach/complexity/edge cases')."
+    }
+  ]
+}

@@ -1,0 +1,495 @@
+{
+  "_meta": {
+    "description": "Track H long realistic interview sessions. Audio is synthetic TTS with deterministic degradation; no downloaded interview audio and no OpenAI STT path.",
+    "generated_at": "2026-07-17T17:03:24.674Z",
+    "generation_script": "scripts/audio/generate_track_h_long_session.mjs",
+    "degradation_script": "scripts/audio/degrade_audio.sh",
+    "sample_rate_hz": 16000,
+    "default_short_limit": 2,
+    "budget_controls": {
+      "E2E_LONG_SESSION_LIMIT": "default 1, runner raises short default to 2 for acceptance when unset",
+      "E2E_LONG_SESSION_MODE": "short|full",
+      "E2E_MAX_REAL_CALLS": "guards Natively stream starts and NVIDIA answer calls"
+    },
+    "protected_asset_rule": "Once accepted, Track H fixtures should not be mutated to make tests pass; fix the pipeline instead."
+  },
+  "sessions": [
+    {
+      "sessionId": "behavioral_mixed_context",
+      "mode": "behavioral",
+      "profile": "clean",
+      "duration_ms": 610000,
+      "full_duration_ms": 1510000,
+      "channels": [
+        "system",
+        "mic",
+        "both"
+      ],
+      "description": "STAR behavioral flow with correction, silence, follow-up, and an answer trigger near speech.",
+      "events": [
+        {
+          "eventId": "opening_star",
+          "audio_segment": "track-h/behavioral_mixed_context-opening_star-clean.wav",
+          "channel": "system",
+          "start_ms": 0,
+          "duration_ms": 6769,
+          "expected_critical_terms": [
+            "production incident",
+            "coordinate",
+            "STAR"
+          ],
+          "expected_topic": "behavioral_incident_star",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Tell me about a production incident where you had to coordinate under pressure. Please answer in STAR format."
+        },
+        {
+          "eventId": "candidate_context",
+          "audio_segment": "track-h/behavioral_mixed_context-candidate_context-clean.wav",
+          "channel": "mic",
+          "start_ms": 39000,
+          "duration_ms": 12931,
+          "expected_critical_terms": [
+            "payment latency",
+            "logs",
+            "support",
+            "communicated"
+          ],
+          "expected_topic": "candidate_correction",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "I would frame the situation as a payment latency incident. Actually wait, I should not invent numbers. I would say I triaged logs, aligned support, and communicated status."
+        },
+        {
+          "eventId": "interviewer_followup",
+          "audio_segment": "track-h/behavioral_mixed_context-interviewer_followup-clean.wav",
+          "channel": "system",
+          "start_ms": 89000,
+          "duration_ms": 6450,
+          "expected_critical_terms": [
+            "specific action",
+            "avoid overclaiming"
+          ],
+          "expected_topic": "behavioral_action",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Good correction. What was your specific action, and how did you avoid overclaiming impact?"
+        },
+        {
+          "eventId": "candidate_restart",
+          "audio_segment": "track-h/behavioral_mixed_context-candidate_restart-clean.wav",
+          "channel": "mic",
+          "start_ms": 149000,
+          "duration_ms": 10804,
+          "expected_critical_terms": [
+            "blast radius",
+            "timestamps",
+            "factual",
+            "ownership"
+          ],
+          "expected_topic": "candidate_factual_result",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "I would say my action was to narrow the blast radius, ask for timestamps, and keep the update factual. The result was clearer ownership, not a made up percentage."
+        },
+        {
+          "eventId": "silent_checkpoint",
+          "audio_segment": "track-h/behavioral_mixed_context-silent_checkpoint-clean.wav",
+          "channel": "system",
+          "start_ms": 228000,
+          "duration_ms": 1869,
+          "expected_critical_terms": [
+            "pause"
+          ],
+          "expected_topic": "silence_checkpoint",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "Pause here for a moment."
+        },
+        {
+          "eventId": "latest_question",
+          "audio_segment": "track-h/behavioral_mixed_context-latest_question-clean.wav",
+          "channel": "system",
+          "start_ms": 306000,
+          "duration_ms": 4342,
+          "trigger_answer_ms": 311600,
+          "expected_critical_terms": [
+            "concise spoken answer",
+            "backend engineer"
+          ],
+          "expected_topic": "behavioral_final_answer",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Now turn that into a concise spoken answer for a backend engineer interview."
+        }
+      ],
+      "expected_checks": {
+        "transcript_contains_critical_terms": true,
+        "answer_generated_only_when_expected": true,
+        "no_stale_topic_answer": true,
+        "answer_references_latest_question": true,
+        "no_invented_candidate_specifics": true,
+        "overlay_session_trace_recorded": true,
+        "latency_within_broad_thresholds": true,
+        "latest_question_terms": [
+          "concise",
+          "spoken",
+          "backend engineer"
+        ],
+        "stale_topic_forbidden_terms": [
+          "Redis index",
+          "two sum",
+          "phone speaker"
+        ],
+        "unsupported_behavioral_specifics": [
+          "fifty percent",
+          "one million users",
+          "Black Friday",
+          "TechCorp",
+          "database outage"
+        ]
+      }
+    },
+    {
+      "sessionId": "technical_backend",
+      "mode": "technical_qa",
+      "profile": "headset_meet",
+      "duration_ms": 655000,
+      "full_duration_ms": 1660000,
+      "channels": [
+        "system",
+        "mic",
+        "both"
+      ],
+      "description": "Backend interview that chains Redis, Postgres, APIs, retries, indexing, then returns to cache invalidation.",
+      "events": [
+        {
+          "eventId": "redis_question",
+          "audio_segment": "track-h/technical_backend-redis_question-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 0,
+          "duration_ms": 5297,
+          "expected_critical_terms": [
+            "Redis",
+            "Postgres",
+            "API",
+            "cache invalidation"
+          ],
+          "expected_topic": "redis_postgres_cache",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "How would you use Redis in front of a Postgres backed API without making cache invalidation unsafe?"
+        },
+        {
+          "eventId": "candidate_cache_answer",
+          "audio_segment": "track-h/technical_backend-candidate_cache_answer-headset_meet.wav",
+          "channel": "mic",
+          "start_ms": 52000,
+          "duration_ms": 9110,
+          "expected_critical_terms": [
+            "bounded cache",
+            "TTLs",
+            "explicit invalidation",
+            "cache misses"
+          ],
+          "expected_topic": "candidate_cache",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "I would use Redis as a bounded cache, with short TTLs, explicit invalidation after writes, and fall back to Postgres when the cache misses."
+        },
+        {
+          "eventId": "retry_followup",
+          "audio_segment": "track-h/technical_backend-retry_followup-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 115000,
+          "duration_ms": 6827,
+          "expected_critical_terms": [
+            "write succeeds",
+            "invalidation fails",
+            "retry strategy",
+            "idempotency key"
+          ],
+          "expected_topic": "retry_idempotency",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Suppose the write succeeds but invalidation fails. What retry strategy and idempotency key would you use?"
+        },
+        {
+          "eventId": "index_shift",
+          "audio_segment": "track-h/technical_backend-index_shift-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 232000,
+          "duration_ms": 6641,
+          "expected_critical_terms": [
+            "Postgres",
+            "index",
+            "write throughput"
+          ],
+          "expected_topic": "postgres_indexing",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Switch topics. In Postgres, when does an index help, and when can it hurt write throughput?"
+        },
+        {
+          "eventId": "return_to_redis",
+          "audio_segment": "track-h/technical_backend-return_to_redis-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 412000,
+          "duration_ms": 4219,
+          "trigger_answer_ms": 417400,
+          "expected_critical_terms": [
+            "original Redis",
+            "cache design",
+            "trade off"
+          ],
+          "expected_topic": "redis_tradeoff_return",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Bring it back to the original Redis cache design and summarize the trade off."
+        }
+      ],
+      "expected_checks": {
+        "transcript_contains_critical_terms": true,
+        "answer_generated_only_when_expected": true,
+        "no_stale_topic_answer": true,
+        "answer_references_latest_question": true,
+        "no_invented_candidate_specifics": true,
+        "overlay_session_trace_recorded": true,
+        "latency_within_broad_thresholds": true,
+        "latest_question_terms": [
+          "Redis",
+          "cache",
+          "trade"
+        ],
+        "stale_topic_forbidden_terms": [
+          "STAR",
+          "stakeholder conflict",
+          "two sum"
+        ],
+        "unsupported_behavioral_specifics": []
+      }
+    },
+    {
+      "sessionId": "live_coding_guidance",
+      "mode": "live_coding",
+      "profile": "phone_speaker_teams",
+      "duration_ms": 705000,
+      "full_duration_ms": 1740000,
+      "channels": [
+        "system",
+        "mic",
+        "both"
+      ],
+      "description": "Live coding guidance with an initial problem, requirement change, bug report, and tests request.",
+      "events": [
+        {
+          "eventId": "initial_problem",
+          "audio_segment": "track-h/live_coding_guidance-initial_problem-phone_speaker_teams.wav",
+          "channel": "system",
+          "start_ms": 0,
+          "duration_ms": 7169,
+          "expected_critical_terms": [
+            "endpoint",
+            "recent orders",
+            "customer id",
+            "data shape"
+          ],
+          "expected_topic": "orders_endpoint",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Implement an endpoint that returns recent orders by customer id. Explain the data shape before writing code."
+        },
+        {
+          "eventId": "candidate_plan",
+          "audio_segment": "track-h/live_coding_guidance-candidate_plan-phone_speaker_teams.wav",
+          "channel": "mic",
+          "start_ms": 68000,
+          "duration_ms": 7662,
+          "expected_critical_terms": [
+            "route handler",
+            "validate",
+            "created at",
+            "limit"
+          ],
+          "expected_topic": "candidate_endpoint_plan",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "I would start with a route handler, validate customer id, query by created at descending, and limit the result size."
+        },
+        {
+          "eventId": "requirement_change",
+          "audio_segment": "track-h/live_coding_guidance-requirement_change-phone_speaker_teams.wav",
+          "channel": "system",
+          "start_ms": 174000,
+          "duration_ms": 6189,
+          "expected_critical_terms": [
+            "pagination",
+            "cursor",
+            "backward compatible"
+          ],
+          "expected_topic": "pagination_change",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Change the requirement. Now include pagination with a cursor and keep the API backward compatible."
+        },
+        {
+          "eventId": "bug_report",
+          "audio_segment": "track-h/live_coding_guidance-bug_report-phone_speaker_teams.wav",
+          "channel": "system",
+          "start_ms": 358000,
+          "duration_ms": 6995,
+          "expected_critical_terms": [
+            "duplicate orders",
+            "same timestamp",
+            "ordering"
+          ],
+          "expected_topic": "stable_cursor_ordering",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Bug report: duplicate orders appear when two rows share the same timestamp. How would you fix the ordering?"
+        },
+        {
+          "eventId": "tests_request",
+          "audio_segment": "track-h/live_coding_guidance-tests_request-phone_speaker_teams.wav",
+          "channel": "system",
+          "start_ms": 532000,
+          "duration_ms": 5789,
+          "trigger_answer_ms": 539000,
+          "expected_critical_terms": [
+            "tests",
+            "cursor",
+            "duplicate timestamps",
+            "empty result pages"
+          ],
+          "expected_topic": "pagination_tests",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "What tests would you add for the cursor, duplicate timestamps, and empty result pages?"
+        }
+      ],
+      "expected_checks": {
+        "transcript_contains_critical_terms": true,
+        "answer_generated_only_when_expected": true,
+        "no_stale_topic_answer": true,
+        "answer_references_latest_question": true,
+        "no_invented_candidate_specifics": true,
+        "overlay_session_trace_recorded": true,
+        "latency_within_broad_thresholds": true,
+        "latest_question_terms": [
+          "tests",
+          "cursor",
+          "duplicate",
+          "empty"
+        ],
+        "stale_topic_forbidden_terms": [
+          "Redis",
+          "STAR",
+          "production incident"
+        ],
+        "unsupported_behavioral_specifics": []
+      }
+    },
+    {
+      "sessionId": "noisy_interruptions",
+      "mode": "technical_qa",
+      "profile": "noisy_cafe",
+      "duration_ms": 590000,
+      "full_duration_ms": 1480000,
+      "channels": [
+        "system",
+        "mic",
+        "both"
+      ],
+      "description": "Noisy interrupted interview with overlap, cut phrases, actually wait, reformulation, and filler.",
+      "events": [
+        {
+          "eventId": "cut_question",
+          "audio_segment": "track-h/noisy_interruptions-cut_question-noisy_cafe.wav",
+          "channel": "system",
+          "start_ms": 0,
+          "duration_ms": 5136,
+          "expected_critical_terms": [
+            "message queues",
+            "background processing",
+            "not use"
+          ],
+          "expected_topic": "message_queue_tradeoffs",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Can you explain message queues for background processing, and when you would not use one?"
+        },
+        {
+          "eventId": "candidate_overlap",
+          "audio_segment": "track-h/noisy_interruptions-candidate_overlap-noisy_cafe.wav",
+          "channel": "mic",
+          "start_ms": 4300,
+          "duration_ms": 8922,
+          "expected_critical_terms": [
+            "slow jobs",
+            "synchronous reads",
+            "immediately"
+          ],
+          "expected_topic": "candidate_overlap_correction",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "Yeah, so, I would use a queue for slow jobs. Actually wait, not for synchronous reads where the user needs the result immediately."
+        },
+        {
+          "eventId": "reformulated_question",
+          "audio_segment": "track-h/noisy_interruptions-reformulated_question-noisy_cafe.wav",
+          "channel": "system",
+          "start_ms": 94000,
+          "duration_ms": 5899,
+          "expected_critical_terms": [
+            "queue",
+            "direct API retry",
+            "email delivery"
+          ],
+          "expected_topic": "queue_vs_retry",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Let me reformulate. Compare a queue with direct API retry for an email delivery workflow."
+        },
+        {
+          "eventId": "filler_candidate",
+          "audio_segment": "track-h/noisy_interruptions-filler_candidate-noisy_cafe.wav",
+          "channel": "mic",
+          "start_ms": 177000,
+          "duration_ms": 7184,
+          "expected_critical_terms": [
+            "buffering",
+            "retry visibility",
+            "request path"
+          ],
+          "expected_topic": "candidate_queue_tradeoff",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "Um, the queue gives buffering and retry visibility, while a direct retry is simpler but can tie up the request path."
+        },
+        {
+          "eventId": "latest_interrupt",
+          "audio_segment": "track-h/noisy_interruptions-latest_interrupt-noisy_cafe.wav",
+          "channel": "system",
+          "start_ms": 392000,
+          "duration_ms": 9558,
+          "trigger_answer_ms": 402800,
+          "expected_critical_terms": [
+            "latest question",
+            "queues",
+            "retries",
+            "dead letters",
+            "idempotency"
+          ],
+          "expected_topic": "queue_latest_focus",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Ignore the earlier payment example. For the latest question, focus only on queues, retries, dead letters, and idempotency."
+        }
+      ],
+      "expected_checks": {
+        "transcript_contains_critical_terms": true,
+        "answer_generated_only_when_expected": true,
+        "no_stale_topic_answer": true,
+        "answer_references_latest_question": true,
+        "no_invented_candidate_specifics": true,
+        "overlay_session_trace_recorded": true,
+        "latency_within_broad_thresholds": true,
+        "latest_question_terms": [
+          "queues",
+          "retries",
+          "dead letters",
+          "idempotency"
+        ],
+        "stale_topic_forbidden_terms": [
+          "payment latency",
+          "Postgres index",
+          "recent orders"
+        ],
+        "unsupported_behavioral_specifics": [
+          "one million users",
+          "Black Friday",
+          "TechCorp"
+        ]
+      }
+    }
+  ]
+}

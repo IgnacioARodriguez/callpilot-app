@@ -42,6 +42,7 @@ const englishPatterns = [
   /\b(can|could|would|will|do|does|did|are|is|was|were|have|has|had)\s+(you|we|i|it|this|that|they)\b/i,
   /\b(what|why|how|when|where|which|who)\b/i,
   /\b(tell me|walk me through|explain|describe|elaborate|clarify)\b/i,
+  /\b(summarize|compare|focus on|focus only|bring it back|ignore (?:the )?earlier|implement|change the requirement|include|fix|add tests?|what tests?)\b/i,
 ];
 
 const spanishPatterns = [
@@ -58,8 +59,8 @@ const incompleteUsageQuestion = /\b(para que sirve|what is it used for|what is u
 const bareUsageQuestion = /^(?:interviewer(?:_partial)?\s*:\s*)?(?:[\p{L}\p{N}]+\.\s*)?(para que sirve|what is it used for|what is used for)\s*\??$/iu;
 const casualEntertainmentQuestion = /\b(gta|videojuego|videojuegos|juego|juegos|fisico|digital|reservas?)\b/iu;
 
-const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/i;
-const questionStarterGlobal = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/gi;
+const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|tell me|walk me through|explain|describe|elaborate|clarify|summarize|compare|focus on|focus only|bring it back|ignore (?:the )?earlier|implement|change the requirement|include|fix|add tests?|what tests?|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/i;
+const questionStarterGlobal = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|tell me|walk me through|explain|describe|elaborate|clarify|summarize|compare|focus on|focus only|bring it back|ignore (?:the )?earlier|implement|change the requirement|include|fix|add tests?|what tests?|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/gi;
 
 const roleLinePattern = /^(interviewer|interviewer_partial|candidate|assistant)\s*:\s*(.+)$/i;
 
@@ -144,6 +145,10 @@ export const extractLatestQuestionFocus = (text: string): string => {
     : lastCandidate;
   if (!latest) return normalized;
   const cleanedLatest = stripSpeakerPrefix(latest);
+  const preserveDirectiveContext = /^\s*(bring it back|ignore (?:the )?earlier)\b/i.test(cleanedLatest);
+  if (preserveDirectiveContext) {
+    return resolveEllipticalQuestionFocus(normalized, cleanedLatest);
+  }
   const starterMatches = [...cleanedLatest.matchAll(questionStarterGlobal)];
   const starterFocusMatches = starterMatches.filter((match, index) => {
     const previous = starterMatches[index - 1];
