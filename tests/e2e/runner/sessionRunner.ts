@@ -1249,7 +1249,7 @@ const runRealNativelyInterview = async (): Promise<RunResult[]> => {
     throw new Error("dist/index.html is missing. Run npm run build before --track=real-natively-interview.");
   }
 
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
   const useDefaultUserData = process.env.E2E_USE_DEFAULT_USER_DATA === "1" && !process.env.NATIVELY_API_KEY;
   const userDataDir = path.join(tmpDir, `user-data-natively-${Date.now()}`);
   if (!useDefaultUserData) fs.mkdirSync(userDataDir, { recursive: true });
@@ -1740,7 +1740,7 @@ const runRealTextInterviewScenario = async (
   latencyLabel: string,
 ): Promise<RunResult> => {
   checkBudget(1);
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
   const userDataDir = path.join(tmpDir, `user-data-text-${Date.now()}`);
   fs.mkdirSync(userDataDir, { recursive: true });
 
@@ -1934,7 +1934,7 @@ const runRealCoding = async (): Promise<RunResult[]> => {
   if (!scenario) throw new Error("coding_evol_two_sum scenario not found in text batch fixtures");
   const assertions = executablePythonAssertions(scenario.turns);
 
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
   const userDataDir = path.join(tmpDir, `user-data-coding-${Date.now()}`);
   fs.mkdirSync(userDataDir, { recursive: true });
 
@@ -2065,7 +2065,7 @@ const runRealCodingTurn = async (
   assistantAnswers: string[],
   trackName: string,
 ): Promise<{ result: RunResult; answerText: string; code: string }> => {
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
   const userDataDir = path.join(tmpDir, `user-data-coding-${Date.now()}-${turnCount}`);
   fs.mkdirSync(userDataDir, { recursive: true });
 
@@ -2568,7 +2568,7 @@ const runRealLongSession = async (): Promise<RunResult[]> => {
   checkBudget(plannedNativelyStarts + plannedAnswers);
 
   const useDefaultUserData = process.env.E2E_USE_DEFAULT_USER_DATA === "1" && !process.env.NATIVELY_API_KEY;
-  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1";
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
   const results: RunResult[] = [];
 
   for (const session of sessions) {

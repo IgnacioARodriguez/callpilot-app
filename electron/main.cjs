@@ -75,7 +75,7 @@ const stealthState = {
   shortcutLayerActive: true,
 };
 
-const defaultNvidiaAnswerModel = () => (process.env.CALLPILOT_NVIDIA_MODEL || "nvidia/llama-3.3-nemotron-super-49b-v1").trim();
+const defaultNvidiaAnswerModel = () => (process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct").trim();
 
 const settingsDefaults = {
   modelProvider: "nvidia",
@@ -164,6 +164,33 @@ const promptSummary = (prompt) => ({
     userInput: textSummary(extractPromptSection(prompt.user, "user_input"), 320),
   } : null,
 });
+
+const liveSpokenPromptInstructions = [
+  "Live spoken response mode.",
+  "Return concise natural text that the candidate can say aloud immediately.",
+  "Do not return JSON, markdown fences, schema fields, or headings.",
+  "Start with the answer itself.",
+  "Keep interview answers under 120 words unless code is explicitly requested.",
+  "For live coding, include code only when the latest prompt asks for code or tests.",
+].join("\n");
+
+const buildLiveSpokenPrompt = (prompt) => {
+  const system = String(prompt?.system ?? "")
+    .split("\n")
+    .filter((line) => !/output_format|raw JSON|JSON contract|required keys|markdown fences/i.test(line))
+    .join("\n")
+    .trim();
+  const user = String(prompt?.user ?? "").replace(
+    /<output_format>[\s\S]*?<\/output_format>/,
+    `<output_format>\n${liveSpokenPromptInstructions}\n</output_format>`,
+  );
+  return {
+    ...prompt,
+    system: `${system}\n${liveSpokenPromptInstructions}`.trim(),
+    user,
+  };
+};
+
 const resultSummary = (result) => ({
   ok: Boolean(result?.ok),
   provider: result?.provider,
@@ -679,6 +706,26 @@ const structuredAnswerPayloadJsonSchema = {
   },
 };
 
+const extractProviderStreamDelta = (streamEvent) => {
+  if (streamEvent?.type === "response.output_text.delta" && typeof streamEvent.delta === "string") {
+    return streamEvent.delta;
+  }
+  if (!Array.isArray(streamEvent?.choices)) return "";
+  return streamEvent.choices
+    .map((choice) => {
+      if (typeof choice?.delta?.content === "string") return choice.delta.content;
+      if (Array.isArray(choice?.delta?.content)) {
+        return choice.delta.content
+          .map((part) => typeof part?.text === "string" ? part.text : "")
+          .join("");
+      }
+      if (typeof choice?.text === "string") return choice.text;
+      if (typeof choice?.message?.content === "string") return choice.message.content;
+      return "";
+    })
+    .join("");
+};
+
 const readOpenAISseStream = async (response, onEvent, signal) => {
   if (!response.body) return "";
   const decoder = new TextDecoder();
@@ -697,9 +744,7 @@ const readOpenAISseStream = async (response, onEvent, signal) => {
       if (line === "[DONE]") continue;
       try {
         const streamEvent = JSON.parse(line);
-        if (streamEvent.type === "response.output_text.delta" && typeof streamEvent.delta === "string") {
-          fullText += streamEvent.delta;
-        }
+        fullText += extractProviderStreamDelta(streamEvent);
         onEvent?.(streamEvent);
       } catch (error) {
         malformedCount += 1;
@@ -845,7 +890,7 @@ const generateWithOllamaChat = async ({ provider, input, prompt, modelName, sign
   }
 };
 
-const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, modelName, signal }) => {
+const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, modelName, event, signal }) => {
   const apiKey = provider.apiKey?.(input) ?? "";
   const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
   const requestId = input.requestId;
@@ -854,19 +899,64 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
   }
   try {
     const structuredOutput = Boolean(input?.structuredOutput);
+    const liveSpokenOutput = Boolean(input?.liveSpokenOutput) && !structuredOutput;
+    const requestPrompt = liveSpokenOutput ? buildLiveSpokenPrompt(prompt) : prompt;
     const structuredSystemSuffix = structuredOutput
       ? "\nReturn only one valid JSON object that matches the structured answer contract in output_format. Do not wrap it in markdown, do not add prose before or after the JSON, and keep all required keys present."
       : "";
-    const buildBody = (includeResponseFormat) => JSON.stringify({
+    const liveSpokenSystemSuffix = liveSpokenOutput
+      ? "\nLive interview response mode: ignore any output_format or JSON contract above. Return concise spoken text only, with no markdown, no JSON, no headings, no code block unless code is explicitly requested. Start with the answer immediately. Keep it interview-ready and under 120 words unless the user specifically asked for code."
+      : "";
+    const buildBody = (includeResponseFormat, stream = false) => JSON.stringify({
       model: modelName,
-      stream: false,
+      stream,
       ...(maxTokens ? { max_tokens: maxTokens } : {}),
       ...(includeResponseFormat ? { response_format: { type: "json_object" } } : {}),
       messages: [
-        { role: "system", content: `${String(prompt?.system ?? "")}${structuredSystemSuffix}` },
-        { role: "user", content: String(prompt?.user ?? "") },
+        { role: "system", content: `${String(requestPrompt?.system ?? "")}${structuredSystemSuffix}${liveSpokenSystemSuffix}` },
+        { role: "user", content: String(requestPrompt?.user ?? "") },
       ],
     });
+    if (liveSpokenOutput) {
+      let detailSequence = 0;
+      let firstChunkSent = false;
+      const sendDetailChunk = (chunk) => {
+        if (signal?.aborted || !chunk) return;
+        detailSequence += 1;
+        if (!firstChunkSent) {
+          firstChunkSent = true;
+          appendTraceEvent("provider_stream_first_chunk", { requestId, provider: provider.id });
+          writeActiveSessionTrace("active");
+        }
+        const payload = { requestId, sequence: detailSequence, text: chunk, done: false };
+        event?.sender?.send("answer:detail-chunk", payload);
+        sendToOverlay("answer:detail-chunk", payload);
+      };
+      const streamResponse = await fetchWithRetry(provider.chatUrl(), {
+        method: "POST",
+        signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
+        },
+        body: buildBody(false, true),
+      }, { requestId, provider: provider.id });
+      if (streamResponse.ok) {
+        const text = await readOpenAISseStream(streamResponse, (streamEvent) => {
+          sendDetailChunk(extractProviderStreamDelta(streamEvent));
+        }, signal);
+        const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
+        event?.sender?.send("answer:detail-chunk", completedPayload);
+        sendToOverlay("answer:detail-chunk", completedPayload);
+        return { ok: Boolean(text), text, provider: provider.id, modelName, requestId, error: text ? undefined : `empty_${provider.id}_response` };
+      }
+      if (![400, 404, 405, 422, 501].includes(Number(streamResponse.status))) {
+        const payload = await streamResponse.json().catch(() => ({}));
+        return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? payload?.error ?? `${provider.id}_http_${streamResponse.status}` };
+      }
+      appendTraceEvent("provider_stream_fallback_to_nonstream", { requestId, provider: provider.id, status: streamResponse.status });
+      writeActiveSessionTrace("active");
+    }
     let response = await fetchWithRetry(provider.chatUrl(), {
       method: "POST",
       signal,
@@ -912,11 +1002,16 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
   if (!modelName) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_model` };
 
   try {
+    const liveSpokenOutput = Boolean(input?.liveSpokenOutput) && !input?.structuredOutput;
+    const requestPrompt = liveSpokenOutput ? buildLiveSpokenPrompt(prompt) : prompt;
+    const liveSpokenSystemSuffix = liveSpokenOutput
+      ? "\nLive interview response mode: ignore any output_format or JSON contract above. Return concise spoken text only, with no markdown, no JSON, no headings, no code block unless code is explicitly requested. Start with the answer immediately. Keep it interview-ready and under 120 words unless the user specifically asked for code."
+      : "";
     const requestBase = {
       model: modelName,
-      instructions: String(prompt?.system ?? ""),
-      input: String(prompt?.user ?? ""),
-      prompt_cache_key: createPromptCacheKey(prompt),
+      instructions: `${String(requestPrompt?.system ?? "")}${liveSpokenSystemSuffix}`,
+      input: String(requestPrompt?.user ?? ""),
+      prompt_cache_key: createPromptCacheKey(requestPrompt),
       store: false,
     };
     if (input?.structuredOutput) {
@@ -949,7 +1044,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
 
     let detailSequence = 0;
     const sendDetailChunk = (chunk) => {
-      if (signal?.aborted) return;
+      if (signal?.aborted || !chunk) return;
       detailSequence += 1;
       const payload = { requestId, sequence: detailSequence, text: chunk, done: false };
       event.sender.send("answer:detail-chunk", payload);
@@ -974,9 +1069,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
     }
 
     const text = await readOpenAISseStream(detailResponse, (streamEvent) => {
-      if (streamEvent.type === "response.output_text.delta" && typeof streamEvent.delta === "string") {
-        sendDetailChunk(streamEvent.delta);
-      }
+      sendDetailChunk(extractProviderStreamDelta(streamEvent));
     }, signal);
     if (signal?.aborted) throw Object.assign(new Error("Request cancelled"), { name: "AbortError" });
     const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
@@ -1852,6 +1945,7 @@ ipcMain.handle("model:generate", async (_event, input) => {
     protocol: provider.protocol,
     modelName,
     structuredOutput: Boolean(input?.structuredOutput),
+    liveSpokenOutput: Boolean(input?.liveSpokenOutput),
     maxTokens: input?.maxTokens,
     timeoutMs,
     prompt: promptSummary(prompt),
@@ -1865,7 +1959,7 @@ ipcMain.handle("model:generate", async (_event, input) => {
     } else if (provider.protocol === "ollama_chat") {
       result = await generateWithOllamaChat({ provider, input: normalizedInput, prompt, modelName, signal: controller.signal });
     } else if (provider.protocol === "openai_chat") {
-      result = await generateWithOpenAICompatibleChat({ provider, input: normalizedInput, prompt, modelName, signal: controller.signal });
+      result = await generateWithOpenAICompatibleChat({ provider, input: normalizedInput, prompt, modelName, event: _event, signal: controller.signal });
     } else if (provider.protocol === "openai_responses") {
       result = await generateWithOpenAIResponses({ provider, input: normalizedInput, prompt, modelName, event: _event, signal: controller.signal });
     } else {

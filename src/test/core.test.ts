@@ -1742,7 +1742,7 @@ test("settings and sessions accept Natively as an answer provider", () => {
 });
 
 test("settings and sessions accept NVIDIA as an OpenAI-compatible answer provider", () => {
-  const settings = mergeAppSettings({ modelProvider: "nvidia", modelName: "nvidia/llama-3.3-nemotron-super-49b-v1" });
+  const settings = mergeAppSettings({ modelProvider: "nvidia", modelName: "meta/llama-3.1-8b-instruct" });
   const session = createSessionSnapshot({
     activeMode: "technical_qa",
     transcript: new TranscriptBuffer().snapshot(),
@@ -1754,14 +1754,14 @@ test("settings and sessions accept NVIDIA as an OpenAI-compatible answer provide
     codingLanguage: "Python",
     answerVerbosity: "short",
     modelProvider: "nvidia",
-    modelName: "nvidia/llama-3.3-nemotron-super-49b-v1",
+    modelName: "meta/llama-3.1-8b-instruct",
     question: "",
     answer: "",
   });
   const parsed = parseSessionJson(serializeSession(session));
 
   assert.equal(settings.modelProvider, "nvidia");
-  assert.equal(settings.modelName, "nvidia/llama-3.3-nemotron-super-49b-v1");
+  assert.equal(settings.modelName, "meta/llama-3.1-8b-instruct");
   assert.equal(parsed?.modelProvider, "nvidia");
 });
 

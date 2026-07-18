@@ -99,10 +99,10 @@ const INTERVIEW_SETUPS: Array<{
 ];
 
 const NVIDIA_MODEL_PRESETS = [
-  "nvidia/llama-3.3-nemotron-super-49b-v1",
-  "nvidia/nemotron-mini-4b-instruct",
   "meta/llama-3.1-8b-instruct",
   "nvidia/llama-3.1-nemotron-nano-8b-v1",
+  "nvidia/llama-3.3-nemotron-super-49b-v1",
+  "nvidia/nemotron-mini-4b-instruct",
   "meta/llama-3.3-70b-instruct",
   "meta/llama-3.1-70b-instruct",
 ];
@@ -684,18 +684,23 @@ function App() {
         return;
       }
 
+      const liveSpokenOutput = modelProvider === "openai" || modelProvider === "nvidia";
+      const liveMaxTokens = context.activeMode === "live_coding" ? 450 : 320;
+      const liveTimeoutMs = context.activeMode === "live_coding" ? 45000 : 35000;
+      if (liveSpokenOutput) setAnswer("");
       const result = await window.callpilotDesktop.generateAnswer({
         provider: modelProvider,
         modelName,
         requestId,
-        structuredOutput: true,
+        structuredOutput: !liveSpokenOutput,
+        liveSpokenOutput,
         prompt: builtPrompt,
         apiKey: sessionApiKey,
         nativelyApiKey,
         nvidiaApiKey,
         ollamaBaseUrl,
-        maxTokens: context.activeMode === "live_coding" ? 1200 : 700,
-        timeoutMs: context.activeMode === "live_coding" ? 120000 : 90000,
+        maxTokens: liveSpokenOutput ? liveMaxTokens : context.activeMode === "live_coding" ? 1200 : 700,
+        timeoutMs: liveSpokenOutput ? liveTimeoutMs : context.activeMode === "live_coding" ? 120000 : 90000,
       });
       void window.callpilotDesktop?.publishAnswerStatus?.({
         requestId,

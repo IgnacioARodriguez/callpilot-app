@@ -79,7 +79,7 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   assert.match(main, /requestId/);
   assert.match(main, /sequence/);
   assert.doesNotMatch(main, /pendingDetailChunks/);
-  assert.match(main, /sendDetailChunk\(streamEvent\.delta\)/);
+  assert.match(main, /sendDetailChunk\(extractProviderStreamDelta\(streamEvent\)\)/);
   assert.match(main, /sendToSessionWindows\("answer:structured"/);
   assert.match(main, /sendToSessionWindows\("answer:status"/);
   assert.match(app, /publishStructuredAnswer/);
@@ -124,7 +124,10 @@ test("acceptance: answer providers are routed through a registry", () => {
   assert.match(main, /input\?\.structuredOutput/);
   assert.match(main, /response_format:\s*\{\s*type:\s*"json_object"\s*\}/);
   assert.match(main, /provider_structured_response_format_fallback/);
-  assert.match(app, /structuredOutput:\s*true/);
+  assert.match(main, /provider_stream_first_chunk/);
+  assert.match(main, /choices/);
+  assert.match(app, /liveSpokenOutput/);
+  assert.match(app, /structuredOutput:\s*!liveSpokenOutput/);
   assert.doesNotMatch(modelClient, /answerSchema/);
   assert.doesNotMatch(`${main}\n${modelClient}`, /structured_interview_answer/);
   assert.match(main, /nvidia/);

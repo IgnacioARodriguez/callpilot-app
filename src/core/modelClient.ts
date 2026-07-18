@@ -26,6 +26,7 @@ export interface GenerateAnswerInput {
   prompt: BuiltPrompt;
   requestId?: string;
   structuredOutput?: boolean;
+  liveSpokenOutput?: boolean;
   apiKey?: string;
   nativelyApiKey?: string;
   nvidiaApiKey?: string;
