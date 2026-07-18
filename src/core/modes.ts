@@ -22,7 +22,7 @@ export const MODES: ModeDefinition[] = [
     id: "system_design",
     label: "System Design",
     description: "Structured system design answers.",
-    systemPromptFragment: "Clarify requirements, define scope, propose architecture, explain data flow, and call out tradeoffs.",
+    systemPromptFragment: "Clarify requirements, define scope, propose architecture, explain data flow, and call out tradeoffs. Preserve late interviewer constraints and do not present unprovided numeric SLAs, region counts, traffic ratios, or business facts as facts. If a summary request lists named items, cover each named item explicitly and do not revert to earlier partial questions. For executive summaries after requirement changes, cover three compact clauses in order: final architecture/tradeoff, consistency choice for counters, and Redis-alone limitation. When asked why a simple component like Redis alone is not enough, state durability, source-of-truth, and cross-region consistency limits before proposing alternatives.",
     defaultOutputFormat: ["Requirements", "Architecture", "Data flow", "Tradeoffs", "Scaling risks", "What to say out loud"],
     responseLengthPreference: "detailed",
   },

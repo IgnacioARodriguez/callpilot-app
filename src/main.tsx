@@ -40,6 +40,7 @@ import {
   parseStructuredAnswerPayload,
   pruneRecentSpeech,
   reduceStealthState,
+  repairSystemDesignAnswerCoverage,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
   shouldSendNativelyFrame,
@@ -790,6 +791,9 @@ function App() {
           mode: context.activeMode === "live_coding" ? "coding" : "interview",
         })
         : `Generation failed: ${result.error ?? "unknown error"}`;
+      if (result.ok) {
+        text = repairSystemDesignAnswerCoverage(text, effectiveQuestion, context.activeMode);
+      }
       if (result.ok && !parsedStructured && context.activeMode === "behavioral") {
         const plainGrounding = assessPlainInterviewAnswerGrounding(context, effectiveQuestion, text);
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {

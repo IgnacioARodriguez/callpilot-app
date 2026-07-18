@@ -130,7 +130,7 @@ interface AudioTrackHEvent {
 
 interface AudioTrackHSession {
   sessionId: string;
-  mode: "technical_qa" | "behavioral" | "live_coding";
+  mode: "technical_qa" | "behavioral" | "live_coding" | "system_design";
   profile: "clean" | "laptop_mic_zoom" | "headset_meet" | "phone_speaker_teams" | "noisy_cafe";
   duration_ms: number;
   full_duration_ms?: number;
@@ -1134,7 +1134,7 @@ const makeCodingSession = (
   };
 };
 
-const makeEmptyInterviewSession = (provider: "openai" | "nvidia", modelName: string, activeMode: "technical_qa" | "behavioral" | "live_coding") => {
+const makeEmptyInterviewSession = (provider: "openai" | "nvidia", modelName: string, activeMode: "technical_qa" | "behavioral" | "live_coding" | "system_design") => {
   const now = Date.now();
   return {
     id: `e2e-natively-${now}`,
@@ -2366,16 +2366,37 @@ const containsTerm = (text: string, term: string): boolean => {
   return words.some((word) => word.length >= 4 && normalizedText.includes(word));
 };
 
+const containsForbiddenTerm = (text: string, term: string): boolean => {
+  const normalizedText = normalizeForChecks(text);
+  const normalizedTerm = normalizeForChecks(term);
+  if (!normalizedTerm.trim()) return true;
+  const textWords = new Set(normalizedText.match(/[a-z0-9]+/g) ?? []);
+  const termWords = normalizedTerm.match(/[a-z0-9]+/g) ?? [];
+  if (termWords.length === 0) return true;
+  const hasWord = (word: string) =>
+    textWords.has(word)
+    || (word.length > 3 && word.endsWith("s") && textWords.has(word.slice(0, -1)))
+    || (word.length > 3 && !word.endsWith("s") && textWords.has(`${word}s`));
+  if (termWords.length === 1) return hasWord(termWords[0]);
+  const requiredWords = termWords.filter((word) => word.length >= 3 || /\d/.test(word));
+  const wordsToMatch = requiredWords.length > 0 ? requiredWords : termWords;
+  return wordsToMatch.every((word) => hasWord(word));
+};
+
 const missingCriticalTerms = (transcript: string, session: AudioTrackHSession): string[] =>
   session.events
     .flatMap((event) => event.expected_critical_terms)
     .filter((term) => !containsTerm(transcript, term));
 
 const forbiddenTermsPresent = (text: string, terms: string[]): string[] =>
-  terms.filter((term) => containsTerm(text, term));
+  terms.filter((term) => containsForbiddenTerm(text, term));
 
-const answerReferencesLatestQuestion = (answerText: string, terms: string[]): boolean =>
-  terms.length === 0 || terms.some((term) => containsTerm(answerText, term));
+const answerReferencesLatestQuestion = (answerText: string, terms: string[], strict = false): boolean => {
+  if (terms.length === 0) return true;
+  if (!strict) return terms.some((term) => containsTerm(answerText, term));
+  const matchingTerms = terms.filter((term) => containsForbiddenTerm(answerText, term));
+  return matchingTerms.length >= Math.min(3, terms.length);
+};
 
 const isGroundedClarificationOrNoAnswer = (answerText: string): boolean => {
   const normalized = normalizeForChecks(answerText);
@@ -2822,7 +2843,11 @@ const runRealLongSession = async (): Promise<RunResult[]> => {
         answerRequestAccepted: triggerEvents.length > 0 && answerResults.some((answer) => answer.requestResult.ok),
         answerCompleted: answerResults.some((answer) => answer.completed && !answer.failed),
         answerNonEmpty: answerResults.some((answer) => answer.answerText.trim().length > 40),
-        latestQuestionAnswered: answerReferencesLatestQuestion(latestAnswer || answerTexts, session.expected_checks.latest_question_terms)
+        latestQuestionAnswered: answerReferencesLatestQuestion(
+          latestAnswer || answerTexts,
+          session.expected_checks.latest_question_terms,
+          session.mode === "system_design",
+        )
           || (session.mode === "behavioral" && isGroundedClarificationOrNoAnswer(latestAnswer || answerTexts)),
         noStaleTopicAnswer: staleTerms.length === 0,
         noUnsupportedBehavioralSpecifics: unsupportedSpecifics.length === 0,

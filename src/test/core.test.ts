@@ -55,6 +55,7 @@ import {
   parseSessionJson,
   parseStructuredAnswerPayload,
   reduceStealthState,
+  repairSystemDesignAnswerCoverage,
   resetStealthState,
   serializeSession,
   shouldAutoAnswer,
@@ -336,6 +337,19 @@ test("mode contracts include expected sections", () => {
   assert.ok(liveCoding?.defaultOutputFormat.includes("Complexity"));
   assert.ok(systemDesign?.defaultOutputFormat.includes("Data flow"));
   assert.ok(behavioral?.defaultOutputFormat.includes("STAR version"));
+});
+
+test("system design mode preserves late constraints and rejects Redis-only shortcuts", () => {
+  const systemDesign = MODES.find((mode) => mode.id === "system_design");
+
+  assert.ok(systemDesign);
+  assert.match(systemDesign.systemPromptFragment, /late interviewer constraints/i);
+  assert.match(systemDesign.systemPromptFragment, /unprovided numeric SLAs/i);
+  assert.match(systemDesign.systemPromptFragment, /cover each named item/i);
+  assert.match(systemDesign.systemPromptFragment, /final architecture\/tradeoff/i);
+  assert.match(systemDesign.systemPromptFragment, /consistency choice for counters/i);
+  assert.match(systemDesign.systemPromptFragment, /Redis alone is not enough/i);
+  assert.match(systemDesign.systemPromptFragment, /cross-region consistency/i);
 });
 
 test("transcript pause excludes new lines", () => {
@@ -859,6 +873,71 @@ test("interview display renderer removes placeholders and stray foreign glyphs",
   assert.doesNotMatch(rendered, /京|Nombre de la Empresa|Shakespeare/i);
 });
 
+test("system design repair covers explicit Redis-alone requests when model omits them", () => {
+  const repaired = repairSystemDesignAnswerCoverage(
+    "**Respuesta:** Final link shortener design uses multi-region routing and strongly consistent click counters.",
+    "Give me a concise executive summary including why Redis alone is not enough.",
+    "system_design",
+  );
+  const unchangedTechnical = repairSystemDesignAnswerCoverage(
+    "Use a cache for reads.",
+    "Explain why Redis alone is not enough.",
+    "technical_qa",
+  );
+
+  assert.match(repaired, /Redis alone is not enough/i);
+  assert.match(repaired, /durable source of truth/i);
+  assert.equal(unchangedTechnical, "Use a cache for reads.");
+});
+
+test("system design repair rewrites Redis central-store shortcuts", () => {
+  const repaired = repairSystemDesignAnswerCoverage(
+    "**Respuesta:** We'll use Redis as a central store for click counters across regions.",
+    "Give me a concise executive summary including why Redis alone is not enough.",
+    "system_design",
+  );
+
+  assert.match(repaired, /durable source of truth for click counters/i);
+  assert.match(repaired, /Redis only as a cache or fast path/i);
+  assert.doesNotMatch(repaired, /Redis as a central store/i);
+});
+
+test("system design repair rewrites Redis strongly-consistent counter shortcuts", () => {
+  const repaired = repairSystemDesignAnswerCoverage(
+    "**Respuesta:** We use Redis as a strongly consistent click counter across regions.",
+    "Give me a concise executive summary including why Redis alone is not enough.",
+    "system_design",
+  );
+
+  assert.match(repaired, /durable counter store for strong consistency/i);
+  assert.match(repaired, /Redis only as a cache or fast path/i);
+  assert.doesNotMatch(repaired, /Redis as a strongly consistent click counter/i);
+});
+
+test("system design repair rewrites Redis plus distributed-locking counter shortcuts", () => {
+  const repaired = repairSystemDesignAnswerCoverage(
+    "**Respuesta:** We use a combination of Redis and a distributed locking system like ZooKeeper to handle strongly consistent click counters across regions.",
+    "Give me a concise executive summary including why Redis alone is not enough.",
+    "system_design",
+  );
+
+  assert.match(repaired, /durable counter store for strong consistency/i);
+  assert.match(repaired, /Redis only as a cache or fast path/i);
+  assert.doesNotMatch(repaired, /combination of Redis and a distributed locking system/i);
+});
+
+test("system design repair rewrites Redis primary-store shortcuts", () => {
+  const repaired = repairSystemDesignAnswerCoverage(
+    "**Respuesta:** We'd use leader-follower replication with Redis as the primary store.",
+    "Give me a concise executive summary including why Redis alone is not enough.",
+    "system_design",
+  );
+
+  assert.match(repaired, /durable counter store as the source of truth/i);
+  assert.match(repaired, /Redis only as a cache or fast path/i);
+  assert.doesNotMatch(repaired, /Redis as the primary store/i);
+});
+
 test("structured answer json schema requires every payload property for strict providers", () => {
   const payloadSchema = STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA.schema.properties.payload;
   const propertyNames = Object.keys(payloadSchema.properties);
@@ -946,6 +1025,38 @@ test("live conversation treats interview directives as the latest actionable pro
   assert.match(extractLatestQuestionFocus(noisyText), /focus only on queues, retries, dead letters, and idempotency/i);
   assert.equal(detectQuestionIntent(redisText, "english").shouldDispatch, true);
   assert.equal(detectQuestionIntent(noisyText, "english").shouldDispatch, true);
+});
+
+test("live conversation does not let guardrails replace system design directives", () => {
+  const text = [
+    "Why not simply use an atomic counter in Redis and call it done? Push back if that is too simplistic.",
+    "Final change: make it multi-region with low redirect latency. Do not invent an SLA or a number of regions.",
+  ].join(" ");
+  const focus = extractLatestQuestionFocus(text);
+
+  assert.match(focus, /make it multi-region/i);
+  assert.match(focus, /Do not invent an SLA/i);
+  assert.equal(detectQuestionIntent(text, "english").shouldDispatch, true);
+});
+
+test("live conversation focuses final system design summary after scope changes", () => {
+  const text = [
+    "Design a URL shortener for ten million requests per day. Start by stating assumptions, read write ratio, and the main components.",
+    "Now change the scale to five hundred million requests per day. Which part of the previous design stops holding up first?",
+    "Why not simply use an atomic counter in Redis and call it done? Push back if that is too simplistic.",
+    "Final change: make it multi-region with low redirect latency. Do not invent an SLA or a number of regions.",
+    "Give me a concise executive summary of the final design, including the multi-region tradeoff, click counter consistency, and why Redis alone is not enough.",
+  ].join(" ");
+  const focus = extractLatestQuestionFocus(text);
+
+  assert.match(focus, /^Give me a concise executive summary/i);
+  assert.match(focus, /executive summary/i);
+  assert.match(focus, /Final change: make it multi-region/i);
+  assert.match(focus, /multi-region tradeoff/i);
+  assert.match(focus, /click counter consistency/i);
+  assert.match(focus, /Redis alone/i);
+  assert.doesNotMatch(focus, /^Do not invent/i);
+  assert.equal(detectQuestionIntent(text, "english").shouldDispatch, true);
 });
 
 test("live conversation resolves bare usage follow-ups from prior technical context", () => {

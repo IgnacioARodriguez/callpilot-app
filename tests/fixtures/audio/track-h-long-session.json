@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Track H long realistic interview sessions. Audio is synthetic TTS with deterministic degradation; no downloaded interview audio and no OpenAI STT path.",
-    "generated_at": "2026-07-17T17:03:24.674Z",
+    "generated_at": "2026-07-18T12:40:54.816Z",
     "generation_script": "scripts/audio/generate_track_h_long_session.mjs",
     "degradation_script": "scripts/audio/degrade_audio.sh",
     "sample_rate_hz": 16000,
@@ -488,6 +488,184 @@
           "one million users",
           "Black Friday",
           "TechCorp"
+        ]
+      }
+    },
+    {
+      "sessionId": "system_design_url_shortener",
+      "mode": "system_design",
+      "profile": "headset_meet",
+      "duration_ms": 720000,
+      "full_duration_ms": 1800000,
+      "channels": [
+        "system",
+        "mic",
+        "both"
+      ],
+      "description": "System design interview with scale changes, consistency tension, Redis pushback, multi-region scope, and final executive summary.",
+      "events": [
+        {
+          "eventId": "initial_design",
+          "audio_segment": "track-h/system_design_url_shortener-initial_design-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 0,
+          "duration_ms": 9150,
+          "expected_critical_terms": [
+            "link shortener",
+            "ten million",
+            "assumptions",
+            "components"
+          ],
+          "expected_topic": "url_shortener_initial_design",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Design a link shortener for ten million requests per day. Start by stating assumptions, read write ratio, and the main components."
+        },
+        {
+          "eventId": "candidate_baseline",
+          "audio_segment": "track-h/system_design_url_shortener-candidate_baseline-headset_meet.wav",
+          "channel": "mic",
+          "start_ms": 64000,
+          "duration_ms": 9099,
+          "expected_critical_terms": [
+            "reads dominate",
+            "base sixty two",
+            "durable storage",
+            "cache"
+          ],
+          "expected_topic": "candidate_initial_tradeoff",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "I would assume reads dominate writes, use an API service, base sixty two short codes, durable storage, and a cache in front of redirects."
+        },
+        {
+          "eventId": "scale_change",
+          "audio_segment": "track-h/system_design_url_shortener-scale_change-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 142000,
+          "duration_ms": 7217,
+          "expected_critical_terms": [
+            "five hundred million",
+            "previous design",
+            "stops holding up"
+          ],
+          "expected_topic": "scale_change_bottleneck",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Now change the scale to five hundred million requests per day. Which part of the previous design stops holding up first?"
+        },
+        {
+          "eventId": "consistency_constraint",
+          "audio_segment": "track-h/system_design_url_shortener-consistency_constraint-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 251000,
+          "duration_ms": 7753,
+          "expected_critical_terms": [
+            "strongly consistent",
+            "click counters",
+            "eventual analytics"
+          ],
+          "expected_topic": "consistency_tension",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "New constraint: product wants strongly consistent click counters, even though earlier we were leaning toward eventual analytics."
+        },
+        {
+          "eventId": "candidate_acknowledges_tension",
+          "audio_segment": "track-h/system_design_url_shortener-candidate_acknowledges_tension-headset_meet.wav",
+          "channel": "mic",
+          "start_ms": 336000,
+          "duration_ms": 8983,
+          "expected_critical_terms": [
+            "tension",
+            "strong counters",
+            "across regions",
+            "eventual analytics"
+          ],
+          "expected_topic": "candidate_tradeoff_memory",
+          "expected_no_answer": true,
+          "ground_truth_transcript": "That creates a tension. Strong counters are slower and harder across regions, while eventual analytics scales better for dashboards."
+        },
+        {
+          "eventId": "redis_pushback",
+          "audio_segment": "track-h/system_design_url_shortener-redis_pushback-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 421000,
+          "duration_ms": 6848,
+          "expected_critical_terms": [
+            "atomic counter",
+            "Redis",
+            "push back",
+            "simplistic"
+          ],
+          "expected_topic": "redis_counter_pushback",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Why not simply use an atomic counter in Redis and call it done? Push back if that is too simplistic."
+        },
+        {
+          "eventId": "multi_region_change",
+          "audio_segment": "track-h/system_design_url_shortener-multi_region_change-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 532000,
+          "duration_ms": 7476,
+          "expected_critical_terms": [
+            "multi-region",
+            "low redirect latency",
+            "do not invent",
+            "number of regions"
+          ],
+          "expected_topic": "multi_region_scope_change",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Final change: make it multi-region with low redirect latency. Do not invent an SLA or a number of regions."
+        },
+        {
+          "eventId": "executive_summary",
+          "audio_segment": "track-h/system_design_url_shortener-executive_summary-headset_meet.wav",
+          "channel": "system",
+          "start_ms": 646000,
+          "duration_ms": 10629,
+          "trigger_answer_ms": 658500,
+          "expected_critical_terms": [
+            "executive summary",
+            "link shortener",
+            "multi-region tradeoff",
+            "click counter consistency",
+            "Redis alone"
+          ],
+          "expected_topic": "final_design_summary",
+          "expected_no_answer": false,
+          "ground_truth_transcript": "Give me a concise executive summary of the final link shortener design, including the multi-region tradeoff, click counter consistency, and why Redis alone is not enough."
+        }
+      ],
+      "expected_checks": {
+        "transcript_contains_critical_terms": true,
+        "answer_generated_only_when_expected": true,
+        "no_stale_topic_answer": true,
+        "answer_references_latest_question": true,
+        "no_invented_candidate_specifics": true,
+        "overlay_session_trace_recorded": true,
+        "latency_within_broad_thresholds": true,
+        "latest_question_terms": [
+          "link",
+          "multi-region",
+          "click counters",
+          "Redis alone",
+          "cross-region consistency"
+        ],
+        "stale_topic_forbidden_terms": [
+          "Two Sum",
+          "STAR",
+          "Postgres index",
+          "recent orders",
+          "payment latency"
+        ],
+        "unsupported_behavioral_specifics": [
+          "one million users",
+          "Black Friday",
+          "TechCorp",
+          "exactly three regions",
+          "99.999",
+          "10:1",
+          "ten to one",
+          "Redis central hub",
+          "Redis central store",
+          "Redis primary store"
         ]
       }
     }

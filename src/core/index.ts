@@ -31,6 +31,7 @@ export {
   withNoAnswerForUngroundedDrift,
   type AnswerGroundingAssessment,
 } from "./answerGrounding.ts";
+export { repairSystemDesignAnswerCoverage } from "./answerRepair.ts";
 export { classifyScreenText, createEmptyScreenContext, type ScreenContext, type ScreenKind } from "./screenContext.ts";
 export {
   cleanOcrText,

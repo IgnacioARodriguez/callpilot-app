@@ -42,7 +42,7 @@ const englishPatterns = [
   /\b(can|could|would|will|do|does|did|are|is|was|were|have|has|had)\s+(you|we|i|it|this|that|they)\b/i,
   /\b(what|why|how|when|where|which|who)\b/i,
   /\b(tell me|walk me through|explain|describe|elaborate|clarify)\b/i,
-  /\b(summarize|compare|focus on|focus only|bring it back|ignore (?:the )?earlier|implement|change the requirement|include|fix|add tests?|what tests?)\b/i,
+  /\b(summarize|compare|focus on|focus only|bring it back|ignore (?:the )?earlier|implement|design|give me|start by|make it|push back|change the requirement|change the scale|include|fix|add tests?|what tests?)\b/i,
 ];
 
 const spanishPatterns = [
@@ -59,7 +59,7 @@ const incompleteUsageQuestion = /\b(para que sirve|what is it used for|what is u
 const bareUsageQuestion = /^(?:interviewer(?:_partial)?\s*:\s*)?(?:[\p{L}\p{N}]+\.\s*)?(para que sirve|what is it used for|what is used for)\s*\??$/iu;
 const casualEntertainmentQuestion = /\b(gta|videojuego|videojuegos|juego|juegos|fisico|digital|reservas?)\b/iu;
 
-const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|tell me|walk me through|explain|describe|elaborate|clarify|summarize|compare|focus on|focus only|bring it back|ignore (?:the )?earlier|implement|change the requirement|include|fix|add tests?|what tests?|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/i;
+const questionStarter = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|tell me|walk me through|explain|describe|elaborate|clarify|summarize|compare|focus on|focus only|bring it back|ignore (?:the )?earlier|implement|design|give me|start by|make it|push back|change the requirement|change the scale|include|fix|add tests?|what tests?|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/i;
 const questionStarterGlobal = /\b(what|why|how|when|where|which|who|can|could|would|will|do|does|did|are|is|was|were|have|has|had|tell me|walk me through|explain|describe|elaborate|clarify|summarize|compare|focus on|focus only|bring it back|ignore (?:the )?earlier|implement|change the requirement|include|fix|add tests?|what tests?|que|por que|como|cuando|donde|cual|quien|puedes|podrias|para que|explica|explicame|describe|describeme)\b/gi;
 
 const roleLinePattern = /^(interviewer|interviewer_partial|candidate|assistant)\s*:\s*(.+)$/i;
@@ -74,6 +74,31 @@ const normalizeQuestionPrefix = (text: string): string =>
 
 const isCompleteQuestionCandidate = (text: string): boolean =>
   /[?]\s*$/.test(stripSpeakerPrefix(text));
+
+const isGuardrailOnlyDirective = (text: string): boolean =>
+  /^(?:do not|don't|avoid|no inventes|no inventar|sin inventar)\b/i.test(stripSpeakerPrefix(text));
+
+const shouldPreserveWholeDirective = (text: string): boolean =>
+  /^(?:final change:\s*)?(?:design|give me|start by|make it|push back|change the scale)\b/i.test(stripSpeakerPrefix(text));
+
+const needsRecentDesignContext = (text: string): boolean =>
+  /\b(executive summary|final (?:[\w -]+\s+)?design|final summary)\b/i.test(stripSpeakerPrefix(text));
+
+const recentActionableContext = (text: string, endIndex: number): string => {
+  const prefix = text.slice(0, endIndex).trim();
+  if (!prefix) return "";
+  const withRoleBreaks = prefix.replace(/\b(interviewer|candidate|interviewer_partial):/gi, "\n$1:");
+  const parts = withRoleBreaks
+    .split(/(?<=[?Â¿.!])\s+|(?:\s+[â€”â€“-]\s+)|(?:\s{2,})|\n+/u)
+    .map((segment) => stripSpeakerPrefix(segment.trim()))
+    .filter(Boolean)
+    .filter((segment) =>
+      questionStarter.test(normalizeForPatterns(segment))
+      || /\b(constraint|final change|do not|don't|redis|multi-region|scale|consistency|counter)\b/i.test(segment),
+    )
+    .slice(-5);
+  return parts.join(" ").trim();
+};
 
 const isDanglingRepeatOfCompleteQuestion = (partial: string, complete: string): boolean => {
   const cleanPartial = stripSpeakerPrefix(partial);
@@ -140,16 +165,29 @@ export const extractLatestQuestionFocus = (text: string): string => {
     .slice(0, -1)
     .reverse()
     .find((candidate) => isCompleteQuestionCandidate(candidate));
-  const latest = lastCandidate && previousComplete && isDanglingRepeatOfCompleteQuestion(lastCandidate, previousComplete)
+  let latest = lastCandidate && previousComplete && isDanglingRepeatOfCompleteQuestion(lastCandidate, previousComplete)
     ? previousComplete
     : lastCandidate;
+  let latestIncludesGuardrailContext = false;
+  if (latest && isGuardrailOnlyDirective(latest)) {
+    const priorActionable = candidates
+      .slice(0, -1)
+      .reverse()
+      .find((candidate) => !isGuardrailOnlyDirective(candidate));
+    if (priorActionable) {
+      latest = `${stripSpeakerPrefix(priorActionable)} ${stripSpeakerPrefix(latest)}`;
+      latestIncludesGuardrailContext = true;
+    }
+  }
   if (!latest) return normalized;
   const cleanedLatest = stripSpeakerPrefix(latest);
   const preserveDirectiveContext = /^\s*(bring it back|ignore (?:the )?earlier)\b/i.test(cleanedLatest);
   if (preserveDirectiveContext) {
     return resolveEllipticalQuestionFocus(normalized, cleanedLatest);
   }
-  const starterMatches = [...cleanedLatest.matchAll(questionStarterGlobal)];
+  const starterMatches = latestIncludesGuardrailContext || shouldPreserveWholeDirective(cleanedLatest)
+    ? []
+    : [...cleanedLatest.matchAll(questionStarterGlobal)];
   const starterFocusMatches = starterMatches.filter((match, index) => {
     const previous = starterMatches[index - 1];
     if (!previous) return true;
@@ -166,6 +204,14 @@ export const extractLatestQuestionFocus = (text: string): string => {
   const index = normalized.toLowerCase().lastIndexOf(focusedLatest.toLowerCase());
   if (index <= 0) return resolveEllipticalQuestionFocus(normalized, focusedLatest);
   const prefix = normalized.slice(Math.max(0, index - 90), index).trim();
+  if (needsRecentDesignContext(focusedLatest)) {
+    const designContext = recentActionableContext(normalized, index);
+    const contextualizedFocus = [focusedLatest, designContext ? `(recent context: ${designContext})` : ""]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    return resolveEllipticalQuestionFocus(normalized, contextualizedFocus);
+  }
   const usefulPrefix = /\b(entrevistador|you asked|me pregunt|follow.?up)\b/i.test(prefix) ? prefix : "";
   return resolveEllipticalQuestionFocus(normalized, [usefulPrefix, focusedLatest].filter(Boolean).join(" ").trim());
 };
