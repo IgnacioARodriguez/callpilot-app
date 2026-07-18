@@ -205,6 +205,7 @@ const safeTraceStringKeys = new Set([
   "modelName",
   "provider",
   "protocol",
+  "reason",
   "requestId",
   "stage",
   "status",

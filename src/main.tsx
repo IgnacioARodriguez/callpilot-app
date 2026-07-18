@@ -153,6 +153,15 @@ function App() {
     detail: string;
     updatedAt: number;
   };
+
+  type EvidenceEmbedderWarmupStatus = {
+    status: "idle" | "warming" | "ready" | "failed";
+    reason?: "startup";
+    startedAt?: number;
+    completedAt?: number;
+    durationMs?: number;
+    error?: string;
+  };
   const [sessionIdentity, setSessionIdentity] = React.useState(() => ({
     id: savedSession.id,
     title: savedSession.title,
@@ -265,6 +274,7 @@ function App() {
   const localSttPipelineRef = React.useRef<Promise<unknown> | null>(null);
   const evidenceEmbedderRef = React.useRef<Promise<EvidenceEmbedder> | null>(null);
   const evidenceEmbeddingCacheRef = React.useRef(new Map<string, EvidenceEmbedding>());
+  const evidenceEmbedderWarmupRef = React.useRef<EvidenceEmbedderWarmupStatus>({ status: "idle" });
   const activeLatencyRunIdRef = React.useRef<string | null>(null);
   const activeAnswerRequestIdRef = React.useRef<string | null>(null);
   const firstDetailChunkSeenRef = React.useRef(false);
@@ -1432,7 +1442,7 @@ function App() {
     return localSttPipelineRef.current;
   };
 
-  const getEvidenceEmbedder = async (): Promise<EvidenceEmbedder> => {
+  const getEvidenceEmbedder = React.useCallback(async (): Promise<EvidenceEmbedder> => {
     if (!evidenceEmbedderRef.current) {
       setDesktopStatus("Loading local evidence embeddings...");
       evidenceEmbedderRef.current = import("@huggingface/transformers").then(async ({ env, pipeline }) => {
@@ -1472,7 +1482,57 @@ function App() {
       });
     }
     return evidenceEmbedderRef.current;
-  };
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const startedAt = Date.now();
+    evidenceEmbedderWarmupRef.current = {
+      status: "warming",
+      reason: "startup",
+      startedAt,
+    };
+    const timer = window.setTimeout(() => {
+      void getEvidenceEmbedder()
+        .then(async (embedder) => {
+          await embedder(["callpilot startup evidence warmup"]);
+          if (cancelled) return;
+          evidenceEmbedderWarmupRef.current = {
+            status: "ready",
+            reason: "startup",
+            startedAt,
+            completedAt: Date.now(),
+            durationMs: Date.now() - startedAt,
+          };
+          void window.callpilotDesktop?.recordSessionEvent?.("evidence_embedder_warmup_completed", {
+            reason: "startup",
+            durationMs: evidenceEmbedderWarmupRef.current.durationMs,
+          });
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          const message = error instanceof Error ? error.message : "evidence_embedder_warmup_failed";
+          evidenceEmbedderRef.current = null;
+          evidenceEmbedderWarmupRef.current = {
+            status: "failed",
+            reason: "startup",
+            startedAt,
+            completedAt: Date.now(),
+            durationMs: Date.now() - startedAt,
+            error: message,
+          };
+          void window.callpilotDesktop?.recordSessionEvent?.("evidence_embedder_warmup_failed", {
+            reason: "startup",
+            durationMs: evidenceEmbedderWarmupRef.current.durationMs,
+            error: message,
+          });
+        });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [getEvidenceEmbedder]);
 
   const testLocalWhisper = async () => {
     setLocalSttStatus("Loading Local Whisper test...");
@@ -1877,6 +1937,7 @@ function App() {
     await toggleDictation(true);
     const result = await window.callpilotDesktop.startSession({ mode: selectedSetup === "live_coding" ? "live_coding" : "technical_qa" });
     if (result.ok) {
+      await window.callpilotDesktop.recordSessionEvent?.("evidence_embedder_warmup_state", evidenceEmbedderWarmupRef.current).catch(() => undefined);
       const traceStatus = await window.callpilotDesktop.getSessionTraceStatus?.();
       setDesktopStatus(traceStatus?.path
         ? `Overlay session started. Metrics trace: ${traceStatus.path}`

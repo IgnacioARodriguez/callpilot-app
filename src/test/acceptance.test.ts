@@ -237,6 +237,19 @@ test("acceptance: app startup warms the selected remote answer model", () => {
   assert.match(app, /nvidiaApiKey/);
 });
 
+test("acceptance: app startup warms local evidence embeddings before session start", () => {
+  const app = read("src/main.tsx");
+  const warmIndex = app.indexOf("callpilot startup evidence warmup");
+  const startIndex = app.indexOf("const startSession");
+  const startSessionBody = app.slice(startIndex, app.indexOf("const stopMicRecording", startIndex));
+
+  assert.ok(warmIndex > 0, "evidence embedder startup warmup must be wired");
+  assert.ok(warmIndex < startIndex, "evidence warmup should not wait for session start");
+  assert.match(app, /evidence_embedder_warmup_state/);
+  assert.match(app, /evidence_embedder_warmup_completed/);
+  assert.doesNotMatch(startSessionBody, /getEvidenceEmbedder\(\)/);
+});
+
 test("acceptance: Natively final fragments do not pollute live transcript drafts", () => {
   const state = createTurnAssemblerState();
   const partial = assembleTurn(state, {
