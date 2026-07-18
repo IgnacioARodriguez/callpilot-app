@@ -123,6 +123,7 @@ Login de sesión, cambio de modo, respuesta duplicada, API key ausente, timeout,
 - Corrección de código (Track F/E): ejecución real, sin juez.
 - Calidad conversacional (Track A/B/D/G): LLM-juez, modelo distinto al evaluado, rubric con categorías críticas explícitas (ver Track A arriba).
 - Umbrales de latencia por modo, no un número único.
+- Addendum 2026-07-18: antes de afirmar robustez real-world en system design, usar la auditoría de `docs/testing/robustness-audit-2026-07-18.md` y la rúbrica draft `docs/testing/system-design-semantic-rubric-v1.json`. Esta rúbrica vive en docs hasta que haya aprobación humana explícita para moverla a `tests/rubrics/`.
 
 **Checkpoint 2:** calibrar el juez contra ~10 casos revisados a mano por vos, priorizando los que el juez marcó límite.
 
