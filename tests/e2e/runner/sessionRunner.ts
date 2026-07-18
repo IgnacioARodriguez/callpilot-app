@@ -2385,6 +2385,85 @@ const isGroundedClarificationOrNoAnswer = (answerText: string): boolean => {
 const traceHasEvent = (trace: any, type: string): boolean =>
   Array.isArray(trace?.events) && trace.events.some((event: any) => event?.type === type);
 
+const traceString = (value: any): string => {
+  if (typeof value === "string") return value;
+  if (typeof value?.preview === "string") return value.preview;
+  return "";
+};
+
+const traceNumber = (value: any): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const answerLatencyBreakdowns = (trace: any) => {
+  const events = Array.isArray(trace?.events) ? trace.events : [];
+  const requestIds = Array.from(new Set<string>(events
+    .map((event: any) => traceString(event?.requestId))
+    .filter((requestId: string) => requestId.startsWith("answer-"))));
+
+  return requestIds.map((requestId) => {
+    const requestEvents = events.filter((event: any) => traceString(event?.requestId) === requestId);
+    const timingEvents = requestEvents
+      .filter((event: any) => event?.type === "answer_timing")
+      .map((event: any) => ({
+        stage: traceString(event.stage),
+        elapsedMs: traceNumber(event.elapsedMs),
+      }))
+      .filter((event: any) => event.stage && event.elapsedMs !== null);
+    const elapsedAt = (stage: string): number | null => timingEvents.find((event: any) => event.stage === stage)?.elapsedMs ?? null;
+    const delta = (from: string, to: string): number | null => {
+      const start = elapsedAt(from);
+      const end = elapsedAt(to);
+      return start === null || end === null ? null : Math.max(0, end - start);
+    };
+    const lastOfType = (type: string) => [...requestEvents].reverse().find((event: any) => event?.type === type);
+    const firstOfType = (type: string) => requestEvents.find((event: any) => event?.type === type);
+    const modelCompleted = lastOfType("model_generate_completed");
+    const firstChunk = firstOfType("provider_stream_first_chunk");
+    const streamCompleted = lastOfType("provider_stream_completed");
+    const bodyParsed = lastOfType("provider_response_body_parsed");
+    const providerHeaders = firstOfType("provider_response_headers");
+    const modelCallMs = delta("model_call_started", "model_call_completed");
+    const localPreModelMs = delta("request_received", "model_call_started");
+    const localPostModelMs = delta("model_call_completed", "request_completed");
+    const providerTotalMs = traceNumber(streamCompleted?.durationMs)
+      ?? traceNumber(bodyParsed?.totalDurationMs)
+      ?? traceNumber(bodyParsed?.durationMs)
+      ?? traceNumber(modelCompleted?.durationMs);
+    const localMax = Math.max(localPreModelMs ?? 0, localPostModelMs ?? 0);
+    const bottleneck = providerTotalMs !== null && providerTotalMs > Math.max(1000, localMax * 2)
+      ? "provider_llm_or_network"
+      : (localPreModelMs ?? 0) > Math.max(1000, (modelCallMs ?? 0), (localPostModelMs ?? 0))
+        ? "local_prompt_or_evidence"
+        : (localPostModelMs ?? 0) > Math.max(1000, (modelCallMs ?? 0), (localPreModelMs ?? 0))
+          ? "local_parse_format_publish"
+          : "mixed_or_small";
+
+    return {
+      requestId,
+      provider: traceString(firstOfType("provider_request_started")?.provider) || traceString(modelCompleted?.result?.provider),
+      modelName: traceString(firstOfType("provider_request_started")?.modelName) || traceString(modelCompleted?.result?.modelName),
+      bottleneck,
+      renderer_ms: {
+        pre_model: localPreModelMs,
+        evidence_lookup: delta("evidence_lookup_started", "evidence_lookup_completed"),
+        model_call: modelCallMs,
+        post_model: localPostModelMs,
+        parse_format: delta("format_started", "format_completed"),
+        total: elapsedAt("request_completed"),
+      },
+      provider_ms: {
+        headers: traceNumber(providerHeaders?.durationMs),
+        first_chunk: traceNumber(firstChunk?.durationMs),
+        stream_complete: traceNumber(streamCompleted?.durationMs),
+        body_parsed: traceNumber(bodyParsed?.durationMs),
+        total: providerTotalMs,
+        chunks: traceNumber(streamCompleted?.chunks),
+      },
+      stages: timingEvents,
+    };
+  });
+};
+
 const startTrackHListeners = async (mainClient: CdpClient, overlayClient: CdpClient) => {
   await evaluate(mainClient, `(() => {
     window.__callpilotTrackHNativelyEvents = [];
@@ -2794,6 +2873,7 @@ const runRealLongSession = async (): Promise<RunResult[]> => {
           latencySummary: {
             total_ms: totalLatency,
             answer_ms: answerResults.map((answer) => answer.latency_ms),
+            answer_breakdown: answerLatencyBreakdowns(trace),
           },
           nativelyEventSummary: {
             statusCount: nativelyEvents.filter((event) => event.type === "status").length,

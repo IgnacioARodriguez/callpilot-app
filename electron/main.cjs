@@ -199,6 +199,17 @@ const resultSummary = (result) => ({
   error: result?.error,
   text: textSummary(result?.text, 160),
 });
+const safeTraceStringKeys = new Set([
+  "activeMode",
+  "evidenceStrategy",
+  "modelName",
+  "provider",
+  "protocol",
+  "requestId",
+  "stage",
+  "status",
+  "structuredKind",
+]);
 const sanitizeTracePayload = (value, depth = 0) => {
   if (depth > 4) return "[max_depth]";
   if (value === null || value === undefined) return value;
@@ -210,6 +221,8 @@ const sanitizeTracePayload = (value, depth = 0) => {
     for (const [key, nested] of Object.entries(value)) {
       if (/api.?key|token|secret|audio|arrayBuffer/i.test(key)) {
         output[key] = "[redacted]";
+      } else if (safeTraceStringKeys.has(key) && typeof nested === "string") {
+        output[key] = nested.slice(0, 160);
       } else if (/text|prompt|draft|normalized/i.test(key) && typeof nested === "string") {
         output[key] = textSummary(nested, 140);
       } else {
@@ -864,7 +877,18 @@ const generateWithOllamaChat = async ({ provider, input, prompt, modelName, sign
   const baseUrl = normalizeOllamaBaseUrl(input?.ollamaBaseUrl || provider.baseUrl?.());
   const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
   const requestId = input.requestId;
+  const providerStartedAt = Date.now();
   try {
+    appendTraceEvent("provider_request_started", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      protocol: provider.protocol,
+      stream: false,
+      structuredOutput: false,
+      maxTokens,
+    });
+    writeActiveSessionTrace("active");
     const response = await fetchWithRetry(`${baseUrl}/api/chat`, {
       method: "POST",
       signal,
@@ -879,11 +903,37 @@ const generateWithOllamaChat = async ({ provider, input, prompt, modelName, sign
         ],
       }),
     }, { requestId, provider: provider.id });
+    appendTraceEvent("provider_response_headers", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      status: response.status,
+      ok: response.ok,
+      durationMs: Date.now() - providerStartedAt,
+    });
+    writeActiveSessionTrace("active");
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
+      appendTraceEvent("provider_response_body_parsed", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        ok: false,
+        durationMs: Date.now() - providerStartedAt,
+      });
+      writeActiveSessionTrace("active");
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error ?? `ollama_http_${response.status}` };
     }
     const text = extractOllamaResponseText(payload);
+    appendTraceEvent("provider_response_body_parsed", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      ok: Boolean(text),
+      durationMs: Date.now() - providerStartedAt,
+      text: textSummary(text, 120),
+    });
+    writeActiveSessionTrace("active");
     return { ok: Boolean(text), text, provider: provider.id, modelName, requestId, error: text ? undefined : "empty_ollama_response" };
   } catch (error) {
     return { ok: false, text: "", provider: provider.id, modelName, requestId, error: error instanceof Error ? `ollama_unavailable: ${error.message}` : "ollama_unavailable" };
@@ -894,6 +944,7 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
   const apiKey = provider.apiKey?.(input) ?? "";
   const maxTokens = Number.isFinite(Number(input?.maxTokens)) ? Math.max(64, Math.min(2048, Math.round(Number(input.maxTokens)))) : undefined;
   const requestId = input.requestId;
+  const providerStartedAt = Date.now();
   if (provider.auth === "bearer" && !apiKey) {
     return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_api_key` };
   }
@@ -925,13 +976,30 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
         detailSequence += 1;
         if (!firstChunkSent) {
           firstChunkSent = true;
-          appendTraceEvent("provider_stream_first_chunk", { requestId, provider: provider.id });
+          appendTraceEvent("provider_stream_first_chunk", {
+            requestId,
+            provider: provider.id,
+            modelName,
+            durationMs: Date.now() - providerStartedAt,
+            sequence: detailSequence,
+          });
           writeActiveSessionTrace("active");
         }
         const payload = { requestId, sequence: detailSequence, text: chunk, done: false };
         event?.sender?.send("answer:detail-chunk", payload);
         sendToOverlay("answer:detail-chunk", payload);
       };
+      appendTraceEvent("provider_request_started", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        protocol: provider.protocol,
+        stream: true,
+        structuredOutput: false,
+        liveSpokenOutput,
+        maxTokens,
+      });
+      writeActiveSessionTrace("active");
       const streamResponse = await fetchWithRetry(provider.chatUrl(), {
         method: "POST",
         signal,
@@ -941,6 +1009,16 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
         },
         body: buildBody(false, true),
       }, { requestId, provider: provider.id });
+      appendTraceEvent("provider_response_headers", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        stream: true,
+        status: streamResponse.status,
+        ok: streamResponse.ok,
+        durationMs: Date.now() - providerStartedAt,
+      });
+      writeActiveSessionTrace("active");
       if (streamResponse.ok) {
         const text = await readOpenAISseStream(streamResponse, (streamEvent) => {
           sendDetailChunk(extractProviderStreamDelta(streamEvent));
@@ -948,15 +1026,46 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
         const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
         event?.sender?.send("answer:detail-chunk", completedPayload);
         sendToOverlay("answer:detail-chunk", completedPayload);
+        appendTraceEvent("provider_stream_completed", {
+          requestId,
+          provider: provider.id,
+          modelName,
+          ok: Boolean(text),
+          durationMs: Date.now() - providerStartedAt,
+          chunks: detailSequence,
+          text: textSummary(text, 120),
+        });
+        writeActiveSessionTrace("active");
         return { ok: Boolean(text), text, provider: provider.id, modelName, requestId, error: text ? undefined : `empty_${provider.id}_response` };
       }
       if (![400, 404, 405, 422, 501].includes(Number(streamResponse.status))) {
         const payload = await streamResponse.json().catch(() => ({}));
+        appendTraceEvent("provider_response_body_parsed", {
+          requestId,
+          provider: provider.id,
+          modelName,
+          stream: true,
+          ok: false,
+          durationMs: Date.now() - providerStartedAt,
+        });
+        writeActiveSessionTrace("active");
         return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? payload?.error ?? `${provider.id}_http_${streamResponse.status}` };
       }
       appendTraceEvent("provider_stream_fallback_to_nonstream", { requestId, provider: provider.id, status: streamResponse.status });
       writeActiveSessionTrace("active");
     }
+    const nonStreamStartedAt = Date.now();
+    appendTraceEvent("provider_request_started", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      protocol: provider.protocol,
+      stream: false,
+      structuredOutput,
+      liveSpokenOutput,
+      maxTokens,
+    });
+    writeActiveSessionTrace("active");
     let response = await fetchWithRetry(provider.chatUrl(), {
       method: "POST",
       signal,
@@ -966,6 +1075,17 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
       },
       body: buildBody(structuredOutput),
     }, { requestId, provider: provider.id });
+    appendTraceEvent("provider_response_headers", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      stream: false,
+      status: response.status,
+      ok: response.ok,
+      durationMs: Date.now() - nonStreamStartedAt,
+      totalDurationMs: Date.now() - providerStartedAt,
+    });
+    writeActiveSessionTrace("active");
     let payload = await response.json().catch(() => ({}));
     if (!response.ok && structuredOutput && [400, 422].includes(response.status)) {
       appendTraceEvent("provider_structured_response_format_fallback", {
@@ -983,12 +1103,45 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
         },
         body: buildBody(false),
       }, { requestId, provider: provider.id, maxAttempts: 1 });
+      appendTraceEvent("provider_response_headers", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        stream: false,
+        fallback: "without_response_format",
+        status: response.status,
+        ok: response.ok,
+        durationMs: Date.now() - nonStreamStartedAt,
+        totalDurationMs: Date.now() - providerStartedAt,
+      });
+      writeActiveSessionTrace("active");
       payload = await response.json().catch(() => ({}));
     }
     if (!response.ok) {
+      appendTraceEvent("provider_response_body_parsed", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        stream: false,
+        ok: false,
+        durationMs: Date.now() - nonStreamStartedAt,
+        totalDurationMs: Date.now() - providerStartedAt,
+      });
+      writeActiveSessionTrace("active");
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? payload?.error ?? `${provider.id}_http_${response.status}` };
     }
     const text = extractOpenAICompatibleChatText(payload);
+    appendTraceEvent("provider_response_body_parsed", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      stream: false,
+      ok: Boolean(text),
+      durationMs: Date.now() - nonStreamStartedAt,
+      totalDurationMs: Date.now() - providerStartedAt,
+      text: textSummary(text, 120),
+    });
+    writeActiveSessionTrace("active");
     return { ok: Boolean(text), text, provider: provider.id, modelName, requestId, error: text ? undefined : `empty_${provider.id}_response` };
   } catch (error) {
     return { ok: false, text: "", provider: provider.id, modelName, requestId, error: error instanceof Error ? `${provider.id}_unavailable: ${error.message}` : `${provider.id}_unavailable` };
@@ -998,6 +1151,7 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
 const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName, event, signal }) => {
   const apiKey = provider.apiKey?.(input) ?? "";
   const requestId = input.requestId;
+  const providerStartedAt = Date.now();
   if (!apiKey) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_api_key` };
   if (!modelName) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_model` };
 
@@ -1015,6 +1169,16 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
       store: false,
     };
     if (input?.structuredOutput) {
+      appendTraceEvent("provider_request_started", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        protocol: provider.protocol,
+        stream: false,
+        structuredOutput: true,
+        liveSpokenOutput,
+      });
+      writeActiveSessionTrace("active");
       const structuredResponse = await fetchWithRetry(`${provider.baseUrl()}/v1/responses`, {
         method: "POST",
         signal,
@@ -1034,23 +1198,74 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
           },
         }),
       }, { requestId, provider: provider.id });
+      appendTraceEvent("provider_response_headers", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        stream: false,
+        status: structuredResponse.status,
+        ok: structuredResponse.ok,
+        durationMs: Date.now() - providerStartedAt,
+      });
+      writeActiveSessionTrace("active");
       const payload = await structuredResponse.json().catch(() => ({}));
       if (!structuredResponse.ok) {
+        appendTraceEvent("provider_response_body_parsed", {
+          requestId,
+          provider: provider.id,
+          modelName,
+          stream: false,
+          ok: false,
+          durationMs: Date.now() - providerStartedAt,
+        });
+        writeActiveSessionTrace("active");
         return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? `${provider.id}_structured_http_${structuredResponse.status}` };
       }
       const text = extractOpenAIResponseText(payload);
+      appendTraceEvent("provider_response_body_parsed", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        stream: false,
+        ok: Boolean(text),
+        durationMs: Date.now() - providerStartedAt,
+        text: textSummary(text, 120),
+      });
+      writeActiveSessionTrace("active");
       return { ok: Boolean(text), text, provider: provider.id, modelName, requestId, error: text ? undefined : `empty_${provider.id}_structured_response` };
     }
 
     let detailSequence = 0;
+    let firstChunkSent = false;
     const sendDetailChunk = (chunk) => {
       if (signal?.aborted || !chunk) return;
       detailSequence += 1;
+      if (!firstChunkSent) {
+        firstChunkSent = true;
+        appendTraceEvent("provider_stream_first_chunk", {
+          requestId,
+          provider: provider.id,
+          modelName,
+          durationMs: Date.now() - providerStartedAt,
+          sequence: detailSequence,
+        });
+        writeActiveSessionTrace("active");
+      }
       const payload = { requestId, sequence: detailSequence, text: chunk, done: false };
-      event.sender.send("answer:detail-chunk", payload);
+      event?.sender?.send("answer:detail-chunk", payload);
       sendToOverlay("answer:detail-chunk", payload);
     };
 
+    appendTraceEvent("provider_request_started", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      protocol: provider.protocol,
+      stream: true,
+      structuredOutput: false,
+      liveSpokenOutput,
+    });
+    writeActiveSessionTrace("active");
     const detailResponse = await fetchWithRetry(`${provider.baseUrl()}/v1/responses`, {
       method: "POST",
       signal,
@@ -1063,8 +1278,27 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
         stream: true,
       }),
     }, { requestId, provider: provider.id });
+    appendTraceEvent("provider_response_headers", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      stream: true,
+      status: detailResponse.status,
+      ok: detailResponse.ok,
+      durationMs: Date.now() - providerStartedAt,
+    });
+    writeActiveSessionTrace("active");
     if (!detailResponse.ok) {
       const payload = await detailResponse.json().catch(() => ({}));
+      appendTraceEvent("provider_response_body_parsed", {
+        requestId,
+        provider: provider.id,
+        modelName,
+        stream: true,
+        ok: false,
+        durationMs: Date.now() - providerStartedAt,
+      });
+      writeActiveSessionTrace("active");
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: payload?.error?.message ?? `${provider.id}_http_${detailResponse.status}` };
     }
 
@@ -1073,8 +1307,18 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
     }, signal);
     if (signal?.aborted) throw Object.assign(new Error("Request cancelled"), { name: "AbortError" });
     const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
-    event.sender.send("answer:detail-chunk", completedPayload);
+    event?.sender?.send("answer:detail-chunk", completedPayload);
     sendToOverlay("answer:detail-chunk", completedPayload);
+    appendTraceEvent("provider_stream_completed", {
+      requestId,
+      provider: provider.id,
+      modelName,
+      ok: Boolean(text),
+      durationMs: Date.now() - providerStartedAt,
+      chunks: detailSequence,
+      text: textSummary(text, 120),
+    });
+    writeActiveSessionTrace("active");
     return {
       ok: Boolean(text),
       text,
@@ -1086,12 +1330,12 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
   } catch (error) {
     if (isAbortError(error)) {
       const cancelledPayload = { requestId, sequence: 0, text: "", done: true, cancelled: true };
-      event.sender.send("answer:detail-chunk", cancelledPayload);
+      event?.sender?.send("answer:detail-chunk", cancelledPayload);
       sendToOverlay("answer:detail-chunk", cancelledPayload);
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: "cancelled", cancelled: true };
     }
     const failedPayload = { requestId, sequence: 0, text: "", done: true, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
-    event.sender.send("answer:detail-chunk", failedPayload);
+    event?.sender?.send("answer:detail-chunk", failedPayload);
     sendToOverlay("answer:detail-chunk", failedPayload);
     return { ok: false, text: "", provider: provider.id, modelName, requestId, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
   }

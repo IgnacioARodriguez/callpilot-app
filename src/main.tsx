@@ -616,17 +616,41 @@ function App() {
     }
     const effectiveQuestion = questionOverride ?? question;
     const requestId = `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestStartedAt = Date.now();
+    const emitAnswerTiming = (stage: string, payload: Record<string, unknown> = {}) => {
+      void window.callpilotDesktop?.recordSessionEvent?.("answer_timing", {
+        requestId,
+        stage,
+        elapsedMs: Date.now() - requestStartedAt,
+        ...payload,
+      });
+    };
     activeAnswerRequestIdRef.current = requestId;
     if (questionOverride !== undefined) setQuestion(questionOverride);
     setIsGenerating(true);
     isGeneratingRef.current = true;
+    const latencyRun = createLatencyMetricRun("answer", requestStartedAt);
+    activeLatencyRunIdRef.current = latencyRun.id;
+    firstDetailChunkSeenRef.current = false;
+    setLatencyRuns((current) => [...current, latencyRun].slice(-12));
+    emitAnswerTiming("request_received", {
+      provider: modelProvider,
+      modelName,
+      activeMode: context.activeMode,
+      questionChars: effectiveQuestion.length,
+    });
     void window.callpilotDesktop?.publishAnswerStatus?.({
       requestId,
       status: "busy",
       text: "Preparing interview context",
       timestamp: Date.now(),
     });
+    emitAnswerTiming("context_snapshot_started");
     let builtPrompt = buildPrompt(context, effectiveQuestion);
+    emitAnswerTiming("context_snapshot_completed", {
+      promptChars: builtPrompt.debug.approximateChars,
+      includedSections: builtPrompt.debug.includedSections.length,
+    });
     try {
       void window.callpilotDesktop?.publishAnswerStatus?.({
         requestId,
@@ -634,20 +658,29 @@ function App() {
         text: "Retrieving relevant background",
         timestamp: Date.now(),
       });
+      emitAnswerTiming("evidence_lookup_started");
       const embedder = await getEvidenceEmbedder();
       const evidence = await pickEvidenceWithEmbeddings(context, effectiveQuestion, embedder, 4);
       builtPrompt = buildPromptWithEvidence(context, effectiveQuestion, evidence);
+      emitAnswerTiming("evidence_lookup_completed", {
+        selectedEvidenceCount: evidence.items.length,
+        evidenceStrategy: evidence.debug.strategy,
+        promptChars: builtPrompt.debug.approximateChars,
+      });
     } catch {
+      emitAnswerTiming("evidence_lookup_failed");
       builtPrompt = buildPrompt(context, effectiveQuestion);
     }
     setLastPrompt(builtPrompt);
     if (builtPrompt.debug.answerContextTrace) {
       void window.callpilotDesktop?.recordSessionEvent?.("answer_context_built", { ...builtPrompt.debug.answerContextTrace });
     }
-    const latencyRun = markLatencyStage(createLatencyMetricRun("answer"), "model_call_start");
-    activeLatencyRunIdRef.current = latencyRun.id;
-    firstDetailChunkSeenRef.current = false;
-    setLatencyRuns((current) => [...current, latencyRun].slice(-12));
+    const liveSpokenOutput = modelProvider === "openai" || modelProvider === "nvidia";
+    emitAnswerTiming("prompt_ready", {
+      promptChars: builtPrompt.debug.approximateChars,
+      liveSpokenOutput,
+      structuredOutput: !liveSpokenOutput,
+    });
 
     try {
       setLiveAssistStatus(`Answering with ${providerLabel}`);
@@ -658,6 +691,7 @@ function App() {
         timestamp: Date.now(),
       });
       if (modelProvider === "mock") {
+        emitAnswerTiming("mock_answer_started");
         const text = formatMockAnswer(context, effectiveQuestion);
         setAnswer(text);
         void window.callpilotDesktop?.publishAnswerStatus?.({
@@ -667,10 +701,12 @@ function App() {
           timestamp: Date.now(),
         });
         appendAssistantTranscriptLine(text, { publish: false });
+        emitAnswerTiming("request_completed", { ok: true, mocked: true, textChars: text.length });
         return;
       }
 
       if (!window.callpilotDesktop?.generateAnswer) {
+        emitAnswerTiming("model_call_skipped", { reason: "desktop_generation_unavailable" });
         const text = "Desktop generation requires the desktop app so provider calls stay outside the browser sandbox.";
         setAnswer(text);
         void window.callpilotDesktop?.publishAnswerStatus?.({
@@ -684,10 +720,16 @@ function App() {
         return;
       }
 
-      const liveSpokenOutput = modelProvider === "openai" || modelProvider === "nvidia";
       const liveMaxTokens = context.activeMode === "live_coding" ? 450 : 320;
       const liveTimeoutMs = context.activeMode === "live_coding" ? 45000 : 35000;
       if (liveSpokenOutput) setAnswer("");
+      setLatencyRuns((current) => current.map((run) =>
+        run.id === latencyRun.id ? markLatencyStage(run, "model_call_start") : run,
+      ));
+      emitAnswerTiming("model_call_started", {
+        maxTokens: liveSpokenOutput ? liveMaxTokens : context.activeMode === "live_coding" ? 1200 : 700,
+        timeoutMs: liveSpokenOutput ? liveTimeoutMs : context.activeMode === "live_coding" ? 120000 : 90000,
+      });
       const result = await window.callpilotDesktop.generateAnswer({
         provider: modelProvider,
         modelName,
@@ -702,13 +744,24 @@ function App() {
         maxTokens: liveSpokenOutput ? liveMaxTokens : context.activeMode === "live_coding" ? 1200 : 700,
         timeoutMs: liveSpokenOutput ? liveTimeoutMs : context.activeMode === "live_coding" ? 120000 : 90000,
       });
+      emitAnswerTiming("model_call_completed", {
+        ok: result.ok,
+        cancelled: Boolean(result.cancelled),
+        error: result.error,
+        textChars: result.text.length,
+      });
       void window.callpilotDesktop?.publishAnswerStatus?.({
         requestId,
         status: "busy",
         text: "Formatting answer",
         timestamp: Date.now(),
       });
+      emitAnswerTiming("format_started");
       const parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
+      emitAnswerTiming("parse_completed", {
+        parsedStructured: Boolean(parsedStructured),
+        structuredKind: parsedStructured?.kind,
+      });
       const grounding = parsedStructured ? assessAnswerGrounding(context, effectiveQuestion, parsedStructured) : null;
       if (grounding) {
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
@@ -755,6 +808,14 @@ function App() {
           text = formatAnswerForDisplay(text, structured, { mode: "interview" });
         }
       }
+      emitAnswerTiming("grounding_completed", {
+        checked: Boolean(grounding) || (result.ok && !parsedStructured && context.activeMode === "behavioral"),
+        structured: Boolean(structured),
+      });
+      emitAnswerTiming("format_completed", {
+        ok: result.ok,
+        textChars: text.length,
+      });
       if (activeAnswerRequestIdRef.current === requestId) {
         setAnswer(text);
         if (result.ok && structured) {
@@ -780,10 +841,15 @@ function App() {
           });
         }
         if (result.ok) appendAssistantTranscriptLine(text, { publish: false });
+        emitAnswerTiming("publish_completed", {
+          status: result.cancelled ? "cancelled" : result.ok ? "completed" : "failed",
+          textChars: text.length,
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "answer_generation_failed";
       const text = `Generation failed: ${message}`;
+      emitAnswerTiming("request_failed", { error: message });
       if (activeAnswerRequestIdRef.current === requestId) {
         setAnswer(text);
         void window.callpilotDesktop?.recordSessionEvent?.("answer_render_failed", {
@@ -799,6 +865,9 @@ function App() {
         });
       }
     } finally {
+      emitAnswerTiming("request_completed", {
+        activeRequest: activeAnswerRequestIdRef.current === requestId,
+      });
       const activeRunId = activeLatencyRunIdRef.current;
       if (activeRunId) {
         setLatencyRuns((current) => current.map((run) =>
