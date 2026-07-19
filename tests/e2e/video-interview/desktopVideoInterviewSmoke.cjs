@@ -379,6 +379,7 @@ const connectPlayer = async () => {
 const playerPlay = (client) => evaluate(client, `window.__callpilotVideoControls.play()`);
 const playerPause = (client) => evaluate(client, `window.__callpilotVideoControls.pause()`);
 const playerSeek = (client, targetSeconds) => evaluate(client, `window.__callpilotVideoControls.seek(${JSON.stringify(targetSeconds)})`);
+const playerStatus = (client) => evaluate(client, `window.__callpilotVideoControls.status()`);
 const waitForPlayerTime = async (client, targetSeconds, timeoutMs) => evaluate(client, `new Promise((resolve) => {
   const target = ${JSON.stringify(targetSeconds)};
   const started = Date.now();
@@ -763,7 +764,8 @@ const writeBlockedReport = (manifestPath, manifest, checkpoints, reason) => {
   process.stdout.write(`${JSON.stringify({ reportPath, markdownPath, blocked: true, reason }, null, 2)}\n`);
 };
 
-const playbackStartFor = (checkpoint, isFirst) => {
+const playbackStartFor = (checkpoint, isFirst, initialPlaybackStartMs = 0) => {
+  if (!isFirst && !seekBetweenCheckpoints) return initialPlaybackStartMs;
   if (isFirst && startFromBeginning) return 0;
   return Math.max(0, Number(checkpoint.timestamp_ms || 0) - warmupMs);
 };
@@ -834,7 +836,7 @@ const main = async () => {
     },
     video: manifest.video,
     cost_guard: { max_real_calls: maxRealCalls, planned_real_calls: requiredCalls, real_calls: 0 },
-    checkpoints: selectedCheckpoints.map((checkpoint, index) => makeCheckpointReport(checkpoint, playbackStartFor(checkpoint, index === 0))),
+    checkpoints: selectedCheckpoints.map((checkpoint, index) => makeCheckpointReport(checkpoint, playbackStartFor(checkpoint, index === 0, firstPlaybackStartMs))),
     checkpoint: null,
     summary: {},
     diagnostics: {},
@@ -932,8 +934,12 @@ const main = async () => {
       }
 
       const targetSeconds = Number(checkpoint.timestamp_ms || 0) / 1000;
-      const waitMs = Math.max(5000, (Number(checkpoint.timestamp_ms || 0) - playbackStartMs) + 15000);
+      const currentStatus = await playerStatus(playerClient).catch(() => ({ currentTime: playbackStartMs / 1000 }));
+      checkpointReport.player_status_before_wait = currentStatus;
+      const currentVideoMs = Math.max(0, Number(currentStatus?.currentTime || 0) * 1000);
+      const waitMs = Math.max(5000, (Number(checkpoint.timestamp_ms || 0) - currentVideoMs) + 15000);
       const reached = await waitForPlayerTime(playerClient, targetSeconds, waitMs);
+      checkpointReport.player_status_at_checkpoint = reached;
       if (!reached.reached) checkpointReport.errors.push(`player_checkpoint_not_reached:${reached.currentTime}`);
       await playerPause(playerClient);
       await sleep(sttDrainMs);
