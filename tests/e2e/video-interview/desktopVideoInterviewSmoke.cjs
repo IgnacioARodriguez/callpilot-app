@@ -48,6 +48,7 @@ const skipVision = argValue("--skip-vision", process.env.E2E_DESKTOP_VIDEO_SKIP_
 const skipAnswer = argValue("--skip-answer", process.env.E2E_DESKTOP_VIDEO_SKIP_ANSWER || "") === "1";
 const debugPort = Number(process.env.CALLPILOT_E2E_DEBUG_PORT || "9379");
 const playerDebugPort = Number(process.env.CALLPILOT_DESKTOP_VIDEO_PLAYER_DEBUG_PORT || "9380");
+const expectedScreenCaptureTitle = "CallPilot E2E Video Player";
 
 let realCalls = 0;
 const plannedRealCalls = (checkpointCount = 1) => {
@@ -517,6 +518,7 @@ const topicMatches = (text, topic) => {
   const aliases = [
     [/linked list|singly linked|lista enlazada/, "linked list"],
     [/odd.*even|even.*odd|two pointers?/, "odd/even linked list"],
+    [/two pointers?|odd pointer|even pointer|odd tail|even tail/, "two pointers"],
     [/relative order|preserve.*order|same order/, "preserve relative order"],
     [/o\(n\)|linear time|one pass/, "O(n) time"],
     [/o\(1\)|constant extra space|constant space|in place/, "O(1) extra space"],
@@ -528,6 +530,8 @@ const topicMatches = (text, topic) => {
     [/recurs(?:ion|ive|ively)|helper function/, "recursion"],
     [/right child|right subtree|node dot right|node\.right/, "right child"],
     [/left subtree|left child/, "left subtree"],
+    [/left (?:child|subtree).*less|less.*left (?:child|subtree)|left .*within.*range/, "left subtree less than node"],
+    [/right (?:child|subtree).*greater|greater.*right (?:child|subtree)|right .*within.*range/, "right subtree greater than node"],
     [/o\(h\)|recursion space|call stack|tree height/, "O(h) recursion space"],
     [/manual test|test reasoning|walk through|dry run/, "manual test reasoning"],
   ];
@@ -550,7 +554,7 @@ const evaluateCheckpoint = (checkpoint, checkpointReport) => {
   const answerWords = answerText.split(/\s+/).filter(Boolean).length;
   const tooLongForLiveInterview = answerWords > maxLiveAnswerWords;
   const answerGenerated = Boolean(answerText.trim()) && !/^Generation failed:/i.test(answerText);
-  const onExpectedTopic = expectedTopics.length === 0 ? staleTopicFlags.length === 0 : presentInAnswer.length > 0 && staleTopicFlags.length === 0;
+  const onExpectedTopic = expectedTopics.length === 0 ? staleTopicFlags.length === 0 : missingFromAnswer.length === 0 && staleTopicFlags.length === 0;
   return {
     transcription: {
       ok: Boolean(transcript),
@@ -561,11 +565,14 @@ const evaluateCheckpoint = (checkpoint, checkpointReport) => {
       notes: [],
     },
     vision: {
-      ok: Boolean(checkpointReport.callpilot_screen_analysis?.ok && screenText),
+      ok: Boolean(checkpointReport.screen_capture_matches_expected_window && checkpointReport.callpilot_screen_analysis?.ok && screenText),
       visible_text_chars: screenText.length,
       source_frame_path: checkpoint.source_frame_path || null,
       player_screenshot_path: checkpointReport.player_screenshot_path,
       screen_capture_path: checkpointReport.screen_capture_path,
+      screen_capture_display_name: checkpointReport.screen_capture_display_name,
+      expected_screen_capture_title: expectedScreenCaptureTitle,
+      screen_capture_matches_expected_window: checkpointReport.screen_capture_matches_expected_window,
       expected_visual_topics: checkpoint.visual_context_expected || [],
       expected_topics_detected: expectedTopics.filter((term) => topicMatches(screenText, term)),
       expected_topics_omitted: expectedTopics.filter((term) => !topicMatches(screenText, term)),
@@ -672,6 +679,8 @@ const writeMarkdownReport = (reportPath, report) => {
     `- Playback start: ${checkpoint.playback_start_ms ?? ""} ms`,
     `- Reason: ${checkpoint.reason_for_answer || ""}`,
     `- Transcript source: ${checkpoint.transcript_source || "none"}`,
+    `- Screen capture: ${checkpoint.screen_capture_display_name || "none"}`,
+    `- Screen capture expected window: ${Boolean(checkpoint.screen_capture_matches_expected_window)}`,
     `- Answer status: ${checkpoint.answer_completion_status || ""}`,
     `- Complete latency: ${checkpoint.latency_ms?.trigger_to_complete ?? "n/a"} ms`,
     `- Technical rubric ok: ${Boolean(checkpoint.evaluation?.technical_answer?.ok)}`,
@@ -778,6 +787,8 @@ const makeCheckpointReport = (checkpoint, playbackStartMs) => ({
   player_screenshot_path: null,
   screen_capture_path: null,
   screen_capture_display_name: null,
+  screen_capture_source_names: [],
+  screen_capture_matches_expected_window: false,
   transcript_before_answer: "",
   transcript_source: "none",
   callpilot_screen_analysis: null,
@@ -957,10 +968,15 @@ const main = async () => {
 
       await playerBringToFront(playerClient);
       await sleep(500);
-      const screenCapture = await evaluate(mainClient, `window.callpilotDesktop.captureScreenshot({ preferWindowTitle: "CallPilot E2E Video Player" })`);
+      const screenCapture = await evaluate(mainClient, `window.callpilotDesktop.captureScreenshot({ preferWindowTitle: ${JSON.stringify(expectedScreenCaptureTitle)}, strictWindowTitle: true })`);
+      checkpointReport.screen_capture_source_names = Array.isArray(screenCapture?.sourceNames) ? screenCapture.sourceNames : [];
       if (screenCapture?.ok && screenCapture.path) {
         checkpointReport.screen_capture_path = screenCapture.path;
         checkpointReport.screen_capture_display_name = screenCapture.displayName || null;
+        checkpointReport.screen_capture_matches_expected_window = String(screenCapture.displayName || "").toLowerCase().includes(expectedScreenCaptureTitle.toLowerCase());
+        if (!checkpointReport.screen_capture_matches_expected_window) {
+          checkpointReport.errors.push(`screen_capture_wrong_source:${screenCapture.displayName || "unknown"}`);
+        }
         report.summary.screen_captured = true;
         try {
           checkpointReport.callpilot_screen_analysis = await analyzeScreen(mainClient, screenCapture.path);
@@ -976,7 +992,10 @@ const main = async () => {
         }
       } else {
         report.summary.screen_captured = false;
-        checkpointReport.errors.push(`screen_capture:${screenCapture?.error || "failed"}`);
+        const sourceHint = Array.isArray(screenCapture?.sourceNames) && screenCapture.sourceNames.length
+          ? ` sources=${screenCapture.sourceNames.join(" | ")}`
+          : "";
+        checkpointReport.errors.push(`screen_capture:${screenCapture?.error || "failed"}${sourceHint}`);
       }
 
       const mainEventsBeforeAnswer = await evaluate(mainClient, `window.__callpilotDesktopVideoEvents || []`);

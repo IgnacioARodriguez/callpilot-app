@@ -170,8 +170,11 @@ const liveSpokenPromptInstructions = [
   "Return concise natural text that the candidate can say aloud immediately.",
   "Do not return JSON, markdown fences, schema fields, or headings.",
   "Start with the answer itself.",
-  "Keep interview answers under 120 words unless code is explicitly requested.",
-  "For live coding, include code only when the latest prompt asks for code or tests.",
+  "Target 60-100 words and stay under 120 words unless code is explicitly requested.",
+  "For live coding, answer the coding problem or follow-up directly; do not describe screenshot UI, buttons, players, or page chrome.",
+  "For live coding, use the standard optimal approach when it is visible or strongly implied, including in-place pointer updates, bounds, invariants, or data structures as applicable.",
+  "For live coding, include the key invariant or approach and time/space complexity first.",
+  "For live coding, include code only when the latest prompt explicitly asks to write code, fix code, or add tests.",
 ].join("\n");
 
 const buildLiveSpokenPrompt = (prompt) => {
@@ -2334,10 +2337,26 @@ ipcMain.handle("screen:capture", async (_event, input) => {
   const startedAt = Date.now();
   try {
     const preferWindowTitle = typeof input?.preferWindowTitle === "string" ? input.preferWindowTitle.trim().toLowerCase() : "";
+    const strictWindowTitle = Boolean(input?.strictWindowTitle);
     const sourceTypes = preferWindowTitle ? ["window", "screen"] : ["screen"];
     const sources = await desktopCapturer.getSources({ types: sourceTypes, thumbnailSize: { width: 1600, height: 1000 } });
+    const sourceNames = sources.map((item) => item.name).filter(Boolean).slice(0, 40);
+    const preferredWindowSource = preferWindowTitle
+      ? sources.find((item) => item.id?.startsWith("window:") && String(item.name || "").toLowerCase().includes(preferWindowTitle))
+      : null;
+    if (preferWindowTitle && strictWindowTitle && !preferredWindowSource) {
+      appendTraceEvent("screen_capture_completed", {
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        error: "preferred_window_not_found",
+        preferredWindowTitle: preferWindowTitle,
+        sourceNames,
+      });
+      writeActiveSessionTrace("active");
+      return { ok: false, error: "preferred_window_not_found", preferredWindowTitle: preferWindowTitle, sourceNames };
+    }
     const source = preferWindowTitle
-      ? sources.find((item) => String(item.name || "").toLowerCase().includes(preferWindowTitle)) || sources.find((item) => item.id?.startsWith("screen:")) || sources[0]
+      ? preferredWindowSource || sources.find((item) => item.id?.startsWith("screen:")) || sources[0]
       : sources[0];
     if (!source) {
       appendTraceEvent("screen_capture_completed", { ok: false, durationMs: Date.now() - startedAt, error: "no_screen_source" });

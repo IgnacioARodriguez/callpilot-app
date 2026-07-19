@@ -28,6 +28,8 @@ export interface ScreenshotResult {
   ok: boolean;
   path?: string;
   displayName?: string;
+  preferredWindowTitle?: string;
+  sourceNames?: string[];
   error?: string;
 }
 
@@ -118,7 +120,7 @@ declare global {
       applyShareSafe: () => Promise<StealthState>;
       resetPrivacy: () => Promise<StealthState>;
       runPrivacyCheck: () => Promise<PrivacyCheckResult>;
-      captureScreenshot: (input?: { preferWindowTitle?: string }) => Promise<ScreenshotResult>;
+      captureScreenshot: (input?: { preferWindowTitle?: string; strictWindowTitle?: boolean }) => Promise<ScreenshotResult>;
       recognizeScreenText: (input: { path: string; language?: OcrLanguage | "auto" | "english" | "spanish" }) => Promise<OcrResult>;
       analyzeScreenshot: (input: { path: string; modelName: string; provider?: "openai" | "nvidia"; apiKey?: string; nvidiaApiKey?: string }) => Promise<ScreenAnalysisResult>;
       startSession: (options?: { mode?: AssistantModeId }) => Promise<{ ok: boolean; error?: string }>;

@@ -145,6 +145,58 @@ const formatMockAnswer = (context: GlobalContext, userInput: string): string => 
   ].join("\n");
 };
 
+const countWords = (value: string): number => value.trim().split(/\s+/).filter(Boolean).length;
+
+const explicitlyRequestsCode = (value: string): boolean =>
+  /\b(write|implement|add|fix)\s+(?:the\s+|a\s+|an\s+|some\s+)?(?:code|function|method|tests?|test cases?|implementation)\b/i.test(value)
+  || /\b(show|provide)\s+(?:me\s+)?(?:the\s+|a\s+|an\s+)?(?:code|implementation|function|method|tests?|test cases?)\b/i.test(value)
+  || /\b(code this|write tests?|add tests?|fix the code|implement it)\b/i.test(value);
+
+const compactLiveSpokenAnswer = (
+  value: string,
+  options: { mode: AssistantModeId; userInput: string },
+): { text: string; compacted: boolean; originalWords: number; finalWords: number } => {
+  const originalWords = countWords(value);
+  const maxWords = options.mode === "live_coding" ? 120 : 100;
+  let text = value
+    .replace(/\*{0,2}to say:\*{0,2}\s*/gi, "")
+    .replace(/\*{0,2}respuesta:\*{0,2}\s*/gi, "")
+    .replace(/^to say:\s*/i, "")
+    .replace(/^respuesta:\s*/i, "")
+    .trim();
+
+  if (options.mode === "live_coding" && !explicitlyRequestsCode(options.userInput)) {
+    text = text
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/^\s*(here(?:'s| is)?|below is|this is)\b.*\b(code|snippet|implementation)\b.*:?$/gim, "")
+      .replace(/^\s*[-*]\s*/gm, "")
+      .replace(/^#{1,6}\s*/gm, "")
+      .trim();
+  }
+  if (!text) text = value.trim();
+
+  if (countWords(text) > maxWords) {
+    const sentences = text.match(/[^.!?]+[.!?]?/g) ?? [text];
+    const selected: string[] = [];
+    for (const sentence of sentences) {
+      const candidate = [...selected, sentence.trim()].filter(Boolean).join(" ");
+      if (countWords(candidate) > maxWords) break;
+      selected.push(sentence.trim());
+    }
+    text = selected.join(" ").trim();
+    if (!text) text = value.trim().split(/\s+/).slice(0, maxWords).join(" ");
+  }
+
+  text = text.replace(/\s+/g, " ").trim();
+  const finalWords = countWords(text);
+  return {
+    text,
+    compacted: text !== value.trim(),
+    originalWords,
+    finalWords,
+  };
+};
+
 function App() {
   const savedSession = React.useMemo(loadSavedSession, []);
   type AutoCheck = { label: string; status: "ok" | "warn" | "fail"; detail: string };
@@ -636,7 +688,8 @@ function App() {
       });
     };
     activeAnswerRequestIdRef.current = requestId;
-    if (questionOverride !== undefined) setQuestion(questionOverride);
+    // Manual/auto Answer overrides are point-in-time prompts. Persisting them as the reusable
+    // question makes later follow-ups fall back to stale generated context when STT is quiet.
     setIsGenerating(true);
     isGeneratingRef.current = true;
     const latencyRun = createLatencyMetricRun("answer", requestStartedAt);
@@ -792,6 +845,19 @@ function App() {
         : `Generation failed: ${result.error ?? "unknown error"}`;
       if (result.ok) {
         text = repairSystemDesignAnswerCoverage(text, effectiveQuestion, context.activeMode);
+      }
+      if (result.ok && liveSpokenOutput) {
+        const compacted = compactLiveSpokenAnswer(text, {
+          mode: context.activeMode,
+          userInput: effectiveQuestion,
+        });
+        if (compacted.compacted) {
+          text = compacted.text;
+          emitAnswerTiming("live_spoken_compacted", {
+            originalWords: compacted.originalWords,
+            finalWords: compacted.finalWords,
+          });
+        }
       }
       if (result.ok && !parsedStructured && context.activeMode === "behavioral") {
         const plainGrounding = assessPlainInterviewAnswerGrounding(context, effectiveQuestion, text);
