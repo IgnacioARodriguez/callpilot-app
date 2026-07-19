@@ -99,6 +99,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     transcript: conversationContext.transcript,
     mode: context.activeMode,
     userInput,
+    screenContext: context.screenContext,
   });
   const mode = modeById(context.activeMode);
   const outputLabels = localizedOutputLabels(mode.defaultOutputFormat, context.preferredLanguage);

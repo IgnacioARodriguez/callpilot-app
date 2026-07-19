@@ -49,9 +49,11 @@ export const formatConversationWindow = (
   snapshot: TranscriptSnapshot,
   liveInterviewerText = "",
   maxMessages = 8,
+  options: { minTimestamp?: number } = {},
 ): string => {
   const recent = snapshot.messages
     .filter((message) => message.speaker === "interviewer" || message.speaker === "candidate")
+    .filter((message) => typeof options.minTimestamp !== "number" || message.timestamp >= options.minTimestamp)
     .slice(-Math.max(0, maxMessages));
   const lines = recent.map((message) => `${message.speaker}: ${message.text.trim()}`);
   const liveText = liveInterviewerText.trim();

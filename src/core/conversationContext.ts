@@ -1,4 +1,5 @@
 import type { AssistantModeId } from "./modes.ts";
+import type { ScreenContext } from "./screenContext.ts";
 import type { TranscriptMessage, TranscriptSnapshot, TranscriptSpeaker } from "./transcriptBuffer.ts";
 
 export type ConversationRole = "interviewer" | "candidate" | "assistant";
@@ -41,6 +42,7 @@ export interface AnswerContext {
 const MAX_RECENT_TURNS = 18;
 const MAX_PREVIOUS_ASSISTANT_ANSWERS = 4;
 const MAX_CONTEXT_CHARS = 8_000;
+const LIVE_CODING_SCREEN_FRESHNESS_WINDOW_MS = 3 * 60 * 1000;
 
 const roleFromSpeaker = (speaker: TranscriptSpeaker): ConversationRole | null => {
   if (speaker === "interviewer" || speaker === "candidate" || speaker === "assistant") return speaker;
@@ -114,11 +116,23 @@ const manualQuestionTurn = (content: string, now: number): ConversationTurn | nu
   };
 };
 
-const chooseCurrentQuestion = (turns: ConversationTurn[], manualInput: string, now: number): ConversationTurn => {
+const hasFreshCodingScreen = (mode: AssistantModeId, screenContext?: ScreenContext): boolean =>
+  mode === "live_coding"
+  && Boolean(screenContext?.visibleText.trim());
+
+const freshnessCutoffForScreen = (mode: AssistantModeId, screenContext?: ScreenContext): number | null => {
+  if (!hasFreshCodingScreen(mode, screenContext) || typeof screenContext?.capturedAt !== "number") return null;
+  return Math.max(0, screenContext.capturedAt - LIVE_CODING_SCREEN_FRESHNESS_WINDOW_MS);
+};
+
+const chooseCurrentQuestion = (turns: ConversationTurn[], manualInput: string, now: number, cutoffTimestamp: number | null): ConversationTurn => {
   const manual = manualQuestionTurn(manualInput, now);
   if (manual) return manual;
-  return [...turns].reverse().find((turn) => turn.role === "interviewer" && !isFiller(turn))
-    ?? [...turns].reverse().find((turn) => turn.role === "interviewer")
+  const currentQuestionCandidates = cutoffTimestamp === null
+    ? turns
+    : turns.filter((turn) => turn.createdAt >= cutoffTimestamp);
+  return [...currentQuestionCandidates].reverse().find((turn) => turn.role === "interviewer" && !isFiller(turn))
+    ?? [...currentQuestionCandidates].reverse().find((turn) => turn.role === "interviewer")
     ?? {
       id: `empty-question-${now}`,
       role: "interviewer",
@@ -142,6 +156,7 @@ export const buildAnswerContext = (
     maxRecentTurns?: number;
     maxPreviousAssistantAnswers?: number;
     maxContextChars?: number;
+    screenContext?: ScreenContext;
   },
 ): AnswerContext => {
   const now = input.now ?? Date.now();
@@ -150,7 +165,8 @@ export const buildAnswerContext = (
   const maxPreviousAssistantAnswers = input.maxPreviousAssistantAnswers ?? MAX_PREVIOUS_ASSISTANT_ANSWERS;
   const maxContextChars = input.maxContextChars ?? MAX_CONTEXT_CHARS;
   const allTurns = dedupeCumulativeTurns(toConversationTurns(input.transcript));
-  const currentQuestion = chooseCurrentQuestion(allTurns, input.userInput ?? "", now);
+  const freshnessCutoff = freshnessCutoffForScreen(input.mode, input.screenContext);
+  const currentQuestion = chooseCurrentQuestion(allTurns, input.userInput ?? "", now, freshnessCutoff);
   const sameCurrentTurnIds = new Set(
     allTurns
       .filter((turn) => turn.role === "interviewer" && normalizeComparable(turn.content) === normalizeComparable(currentQuestion.content))
@@ -159,6 +175,7 @@ export const buildAnswerContext = (
   const conversationTurns = allTurns.filter((turn) => !sameCurrentTurnIds.has(turn.id));
   const previousAssistantAnswers = conversationTurns
     .filter((turn) => turn.role === "assistant" && turn.source === "generated" && !isFiller(turn))
+    .filter((turn) => freshnessCutoff === null || turn.createdAt >= freshnessCutoff)
     .slice(-maxPreviousAssistantAnswers);
   let recentTurns = conversationTurns
     .filter((turn) => turn.role !== "assistant")

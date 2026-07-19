@@ -4,7 +4,10 @@ import {
   TranscriptBuffer,
   buildAnswerContext,
   buildPrompt,
+  classifyScreenText,
   createGlobalContext,
+  formatAnswerContextSection,
+  formatConversationWindow,
   type BuiltPrompt,
 } from "../core/index.ts";
 
@@ -203,4 +206,52 @@ test("manual question without STT enters the same context contract", () => {
   assert.equal(answerContext.currentQuestion.id, "manual-question-42");
   assert.equal(answerContext.currentQuestion.content, "What is a message queue?");
   assert.equal(answerContext.currentQuestion.source, "manual");
+});
+
+test("conversation window can exclude turns older than a freshness cutoff", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Given a linked list, group odd and even nodes.", "stt", 1_000, "interviewer");
+  transcript.append("Now determine if this binary tree is a valid BST.", "stt", 1_000_000, "interviewer");
+
+  const window = formatConversationWindow(transcript.snapshot(), "", 10, { minTimestamp: 900_000 });
+
+  assert.doesNotMatch(window, /linked list/i);
+  assert.match(window, /valid BST/i);
+});
+
+test("fresh live coding screen prevents stale transcript from becoming current question", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Given a linked list, group odd and even nodes.", "stt", 1_000, "interviewer");
+  const screenContext = classifyScreenText("Q2. Given the root of a binary tree, determine if it is a valid binary search tree (BST).");
+  screenContext.capturedAt = 1_000_000;
+
+  const answerContext = buildAnswerContext({
+    transcript: transcript.snapshot(),
+    mode: "live_coding",
+    screenContext,
+    now: 1_000_100,
+  });
+
+  assert.equal(answerContext.currentQuestion.content, "");
+  assert.doesNotMatch(formatAnswerContextSection([answerContext.currentQuestion]), /linked list/i);
+});
+
+test("fresh live coding screen excludes stale previous assistant answers", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Given a linked list, group odd and even nodes.", "stt", 1_000, "interviewer");
+  transcript.append("Use odd and even pointers for the linked list.", "manual", 2_000, "assistant");
+  const screenContext = classifyScreenText("Q2. Given the root of a binary tree, determine if it is a valid binary search tree (BST).");
+  screenContext.capturedAt = 1_000_000;
+
+  const prompt = buildPrompt(createGlobalContext({
+    activeMode: "live_coding",
+    transcript: transcript.snapshot(),
+    screenContext,
+  }), "");
+
+  const currentQuestion = prompt.user.match(/<current_question>\n([\s\S]*?)\n<\/current_question>/)?.[1] ?? "";
+  const previousAnswers = prompt.user.match(/<previous_assistant_answers>\n([\s\S]*?)\n<\/previous_assistant_answers>/)?.[1] ?? "";
+  assert.doesNotMatch(currentQuestion, /linked list/i);
+  assert.doesNotMatch(previousAnswers, /linked list/i);
+  assert.match(prompt.user, /<screen_context>[\s\S]*binary search tree/i);
 });

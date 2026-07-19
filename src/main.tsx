@@ -1027,18 +1027,26 @@ function App() {
     warmAnswerModel,
   ]);
 
+  const liveCodingTranscriptCutoff = React.useCallback(() => {
+    if (activeMode !== "live_coding") return undefined;
+    if (!screenText.trim()) return undefined;
+    if (typeof screenContext.capturedAt !== "number") return undefined;
+    return Math.max(0, screenContext.capturedAt - 3 * 60 * 1000);
+  }, [activeMode, screenContext.capturedAt, screenContext.kind, screenText]);
+
   const getLatestInterviewPrompt = React.useCallback(() => {
     const liveInterviewerText = turnAssemblerRef.current.draftsBySpeaker.interviewer?.text.trim();
-    const conversationWindow = formatConversationWindow(transcriptRef.current, liveInterviewerText, 10);
+    const minTimestamp = liveCodingTranscriptCutoff();
+    const conversationWindow = formatConversationWindow(transcriptRef.current, liveInterviewerText, 10, { minTimestamp });
     const focusedQuestion = extractLatestQuestionFocus(conversationWindow);
     if (focusedQuestion && focusedQuestion !== conversationWindow) return `interviewer: ${focusedQuestion}`;
     if (conversationWindow) return conversationWindow;
     if (liveInterviewerText) return `interviewer_partial: ${liveInterviewerText}`;
     const lastInterviewerTurn = [...transcriptRef.current.messages]
       .reverse()
-      .find((message) => message.speaker === "interviewer");
+      .find((message) => message.speaker === "interviewer" && (typeof minTimestamp !== "number" || message.timestamp >= minTimestamp));
     return lastInterviewerTurn?.text.trim() ? `interviewer: ${lastInterviewerTurn.text.trim()}` : question.trim();
-  }, [question]);
+  }, [liveCodingTranscriptCutoff, question]);
 
   const getManualAnswerPrompt = React.useCallback(() => {
     const latestPrompt = getLatestInterviewPrompt().trim();
