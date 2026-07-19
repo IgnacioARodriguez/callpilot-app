@@ -26,6 +26,8 @@ The first implementation is a controlled local MP4 harness:
 
 This does not introduce a second CallPilot. It exercises existing IPC and app state, but it is not yet a full system-audio desktop capture run.
 
+The next layer is `test:e2e:desktop-video-interview:smoke`. It reuses the same manifest/checkpoint config, but opens the MP4 in a real desktop video window, starts the CallPilot UI session, relies on the app's live desktop-audio capture route, captures the actual screen, and presses `Answer` once. That smoke is intentionally one checkpoint first; once stable, it can be expanded into the multi-checkpoint desktop suite.
+
 ## Per-Video Configuration
 
 There is intentionally no universal checkpoint schedule. Each interview video has different pacing, screen layout, silence, problem timing, and follow-up timing. The analyzer therefore writes:
@@ -110,3 +112,13 @@ npm run test:e2e:local-video-interview
 ```
 
 Reports are written under `.cache/local-video-interview/<run-id>/report.json` and `.md`.
+
+```powershell
+$env:CALLPILOT_E2E_VIDEO="C:\Users\Asus\Downloads\videoplayback.mp4"
+$env:CALLPILOT_E2E_VIDEO_CONFIG="C:\Projects\callpilot-v0\callpilot-app\.cache\local-video-analysis\<run-id>\video-config.template.json"
+$env:E2E_DESKTOP_VIDEO_CHECKPOINT="linked-list-problem-intro"
+$env:E2E_MAX_REAL_CALLS="3"
+npm run test:e2e:desktop-video-interview:smoke
+```
+
+Desktop smoke reports are written under `.cache/desktop-video-interview/<run-id>/report.json` and `.md`.

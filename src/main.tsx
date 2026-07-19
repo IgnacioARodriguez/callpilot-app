@@ -1043,9 +1043,18 @@ function App() {
 
   const getManualAnswerPrompt = React.useCallback(() => {
     const latestPrompt = getLatestInterviewPrompt().trim();
-    if (latestPrompt) return latestPrompt;
-
     const screen = screenText.trim();
+    if (latestPrompt) {
+      if (activeMode === "live_coding" && screen) {
+        return [
+          latestPrompt,
+          `visible_screen: ${screen.slice(-1800)}`,
+          "task: Use the latest transcript together with the visible coding context to provide the next useful live-coding answer.",
+        ].join("\n");
+      }
+      return latestPrompt;
+    }
+
     const notesText = notes.trim();
     const fallbackLines = [
       "user_request: The candidate pressed Answer. There may not be a clean question mark in the transcript.",
@@ -2517,6 +2526,32 @@ function App() {
     setScreenText(value);
     setScreenContext(classifyScreenText(value));
   };
+
+  React.useEffect(() => {
+    const e2eEnabled = window.localStorage.getItem("callpilot_e2e_desktop_smoke") === "1";
+    if (!e2eEnabled) return;
+    const e2eWindow = window as unknown as {
+      __callpilotE2ESetScreenText?: (value: string) => boolean;
+      __callpilotE2EGetState?: () => {
+        answer: string;
+        screenText: string;
+        transcriptText: string;
+      };
+    };
+    e2eWindow.__callpilotE2ESetScreenText = (value: string) => {
+      updateScreenContext(String(value || ""));
+      return true;
+    };
+    e2eWindow.__callpilotE2EGetState = () => ({
+      answer,
+      screenText,
+      transcriptText: transcript.messages.map((message) => message.text).join(" "),
+    });
+    return () => {
+      delete e2eWindow.__callpilotE2ESetScreenText;
+      delete e2eWindow.__callpilotE2EGetState;
+    };
+  }, [answer, screenText, transcript.messages]);
 
   const setCallPrivacyAllowed = async (allowed: boolean) => {
     const next = window.callpilotDesktop

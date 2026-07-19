@@ -78,3 +78,27 @@ Checkpoint timing is video-specific. The automatic analyzer proposes candidates,
 Diarization is out of scope. The MP4 audio contains both voices mixed; transcripts are stored as `unknown` speaker. In this controlled harness, pressing `Answer` seeds the transcript and screen context, then uses a generic manual-answer prompt rather than treating mixed audio as a hand-written user question.
 
 Generated MP4-derived artifacts remain under `.cache/local-video-analysis/` and `.cache/local-video-interview/`, both ignored by Git.
+
+## Desktop Smoke
+
+The first full-desktop step is a one-checkpoint smoke. It opens CallPilot desktop, opens the MP4 in a real Electron video window with audio, starts the CallPilot UI session, pauses the video at a reviewed checkpoint, captures the actual desktop screen, presses `Answer`, and writes a report under `.cache/desktop-video-interview/<run-id>/`.
+
+```powershell
+$env:CALLPILOT_E2E_VIDEO="C:\Users\Asus\Downloads\videoplayback.mp4"
+$env:CALLPILOT_E2E_VIDEO_CONFIG="C:\Projects\callpilot-v0\callpilot-app\.cache\local-video-analysis\<run-id>\video-config.template.json"
+$env:E2E_DESKTOP_VIDEO_CHECKPOINT="linked-list-problem-intro"
+$env:E2E_MAX_REAL_CALLS="3"
+npm run test:e2e:desktop-video-interview:smoke
+```
+
+Useful desktop-smoke variables:
+
+- `E2E_DESKTOP_VIDEO_CHECKPOINT`: one reviewed checkpoint id.
+- `E2E_DESKTOP_VIDEO_WARMUP_MS`: playback window before the checkpoint, default `60000`.
+- `E2E_DESKTOP_VIDEO_FROM_BEGINNING=1`: play from the start instead of the warmup window.
+- `E2E_DESKTOP_VIDEO_LIVE_STT_PROVIDER`: UI live provider, default `natively`.
+- `E2E_DESKTOP_VIDEO_LIVE_AUDIO_SOURCE`: UI audio source, default `system`.
+- `E2E_DESKTOP_VIDEO_STT_DRAIN_MS`: wait after pausing so late transcript events can arrive.
+- `E2E_DESKTOP_VIDEO_SKIP_VISION=1` or `E2E_DESKTOP_VIDEO_SKIP_ANSWER=1`: isolate automation/audio/vision.
+
+This smoke is still user-timed: the runner chooses the checkpoint and presses `Answer`. It is the first test of the desktop capture path, not a claim that CallPilot autonomously knows when to answer.
