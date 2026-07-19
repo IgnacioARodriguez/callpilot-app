@@ -430,7 +430,6 @@ function App() {
     setActiveMode(setup.mode);
     setAnswerVerbosity(setup.answerVerbosity);
     setLiveLatencyPreset(setup.latencyPreset);
-    setLiveAudioSource("both");
     setAutoAnswerEnabled(false);
     autoAnswerEnabledRef.current = false;
     setDesktopStatus(`${setup.title} setup ready`);
@@ -438,9 +437,9 @@ function App() {
       activeMode: setup.mode,
       answerVerbosity: setup.answerVerbosity,
       liveLatencyPreset: setup.latencyPreset,
-      liveAudioSource: "both",
+      liveAudioSource,
     });
-  }, []);
+  }, [liveAudioSource]);
 
   React.useEffect(() => {
     window.callpilotDesktop?.getStealthState()

@@ -81,7 +81,7 @@ Generated MP4-derived artifacts remain under `.cache/local-video-analysis/` and 
 
 ## Desktop Smoke
 
-The first full-desktop step is a one-checkpoint smoke. It opens CallPilot desktop, opens the MP4 in a real Electron video window with audio, starts the CallPilot UI session, pauses the video at a reviewed checkpoint, captures the actual desktop screen, presses `Answer`, and writes a report under `.cache/desktop-video-interview/<run-id>/`.
+The first full-desktop runner opens CallPilot desktop, opens the MP4 in a real Electron video window with audio, starts the CallPilot UI session, pauses the video at reviewed checkpoint(s), captures the actual desktop screen, presses `Answer`, and writes a report under `.cache/desktop-video-interview/<run-id>/`.
 
 ```powershell
 $env:CALLPILOT_E2E_VIDEO="C:\Users\Asus\Downloads\videoplayback.mp4"
@@ -91,14 +91,19 @@ $env:E2E_MAX_REAL_CALLS="3"
 npm run test:e2e:desktop-video-interview:smoke
 ```
 
+`npm run test:e2e:desktop-video-interview` is an alias for the same desktop runner.
+
 Useful desktop-smoke variables:
 
-- `E2E_DESKTOP_VIDEO_CHECKPOINT`: one reviewed checkpoint id.
+- `E2E_DESKTOP_VIDEO_CHECKPOINT`: one reviewed checkpoint id, or comma-separated ids for a multi-checkpoint run.
+- `E2E_DESKTOP_VIDEO_MAX_ANSWERS`: cap how many selected checkpoints will press `Answer`; default `1`.
 - `E2E_DESKTOP_VIDEO_WARMUP_MS`: playback window before the checkpoint, default `60000`.
 - `E2E_DESKTOP_VIDEO_FROM_BEGINNING=1`: play from the start instead of the warmup window.
+- `E2E_DESKTOP_VIDEO_SEEK_BETWEEN_CHECKPOINTS=1`: speed/debug mode for multi-checkpoint runs. It seeks to each checkpoint warmup window, so it is not a strict continuous desktop interview simulation.
 - `E2E_DESKTOP_VIDEO_LIVE_STT_PROVIDER`: UI live provider, default `natively`.
 - `E2E_DESKTOP_VIDEO_LIVE_AUDIO_SOURCE`: UI audio source, default `system`.
 - `E2E_DESKTOP_VIDEO_STT_DRAIN_MS`: wait after pausing so late transcript events can arrive.
+- `E2E_DESKTOP_VIDEO_MAX_LIVE_ANSWER_WORDS`: quality threshold for live-interview answer length, default `180`.
 - `E2E_DESKTOP_VIDEO_SKIP_VISION=1` or `E2E_DESKTOP_VIDEO_SKIP_ANSWER=1`: isolate automation/audio/vision.
 
-This smoke is still user-timed: the runner chooses the checkpoint and presses `Answer`. It is the first test of the desktop capture path, not a claim that CallPilot autonomously knows when to answer.
+This runner is still user-timed: it chooses reviewed checkpoint timestamps and presses `Answer`. It tests the desktop capture path, not autonomous Answer detection.

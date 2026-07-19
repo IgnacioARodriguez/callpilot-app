@@ -26,7 +26,7 @@ The first implementation is a controlled local MP4 harness:
 
 This does not introduce a second CallPilot. It exercises existing IPC and app state, but it is not yet a full system-audio desktop capture run.
 
-The next layer is `test:e2e:desktop-video-interview:smoke`. It reuses the same manifest/checkpoint config, but opens the MP4 in a real desktop video window, starts the CallPilot UI session, relies on the app's live desktop-audio capture route, captures the actual screen, and presses `Answer` once. That smoke is intentionally one checkpoint first; once stable, it can be expanded into the multi-checkpoint desktop suite.
+The next layer is `test:e2e:desktop-video-interview:smoke`. It reuses the same manifest/checkpoint config, but opens the MP4 in a real desktop video window, starts the CallPilot UI session, relies on the app's live desktop-audio capture route, captures the actual screen, and presses `Answer` at reviewed checkpoint(s). By default it still runs one checkpoint for cost/speed, but `E2E_DESKTOP_VIDEO_CHECKPOINT` can contain comma-separated ids and `E2E_DESKTOP_VIDEO_MAX_ANSWERS` controls how many answers are attempted.
 
 ## Per-Video Configuration
 
@@ -122,3 +122,5 @@ npm run test:e2e:desktop-video-interview:smoke
 ```
 
 Desktop smoke reports are written under `.cache/desktop-video-interview/<run-id>/report.json` and `.md`.
+
+For a faster multi-checkpoint debug run, set `E2E_DESKTOP_VIDEO_CHECKPOINT` to comma-separated ids, raise `E2E_DESKTOP_VIDEO_MAX_ANSWERS`, raise `E2E_MAX_REAL_CALLS`, and optionally use `E2E_DESKTOP_VIDEO_SEEK_BETWEEN_CHECKPOINTS=1`. Seek mode is useful for shaking out automation and per-checkpoint reporting, but it is not a strict continuous-playback interview simulation because the audio context between checkpoints is skipped.
