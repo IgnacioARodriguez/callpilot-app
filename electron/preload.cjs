@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   applyShareSafe: () => ipcRenderer.invoke("stealth:apply-share-safe"),
   resetPrivacy: () => ipcRenderer.invoke("stealth:reset-privacy"),
   runPrivacyCheck: () => ipcRenderer.invoke("privacy:check"),
-  captureScreenshot: () => ipcRenderer.invoke("screen:capture"),
+  captureScreenshot: (input) => ipcRenderer.invoke("screen:capture", input),
   recognizeScreenText: (input) => ipcRenderer.invoke("screen:ocr", input),
   analyzeScreenshot: (input) => ipcRenderer.invoke("screen:analyze", input),
   startSession: (options) => ipcRenderer.invoke("session:start", options),

@@ -14,6 +14,8 @@ const requestedWidth = Number(argValue("--width", process.env.CALLPILOT_DESKTOP_
 const requestedHeight = Number(argValue("--height", process.env.CALLPILOT_DESKTOP_VIDEO_HEIGHT || "0"));
 
 if (debugPort) app.commandLine.appendSwitch("remote-debugging-port", debugPort);
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("disable-gpu");
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 const fileUrl = (filePath) => `file:///${filePath.replace(/\\/g, "/").replace(/#/g, "%23")}`;
@@ -137,6 +139,7 @@ app.whenReady().then(async () => {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
   win.setAlwaysOnTop(true, "screen-saver");

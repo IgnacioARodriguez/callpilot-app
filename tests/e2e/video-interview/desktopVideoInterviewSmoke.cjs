@@ -380,6 +380,7 @@ const playerPlay = (client) => evaluate(client, `window.__callpilotVideoControls
 const playerPause = (client) => evaluate(client, `window.__callpilotVideoControls.pause()`);
 const playerSeek = (client, targetSeconds) => evaluate(client, `window.__callpilotVideoControls.seek(${JSON.stringify(targetSeconds)})`);
 const playerStatus = (client) => evaluate(client, `window.__callpilotVideoControls.status()`);
+const playerBringToFront = (client) => client.send("Page.bringToFront").catch(() => undefined);
 const waitForPlayerTime = async (client, targetSeconds, timeoutMs) => evaluate(client, `new Promise((resolve) => {
   const target = ${JSON.stringify(targetSeconds)};
   const started = Date.now();
@@ -776,6 +777,7 @@ const makeCheckpointReport = (checkpoint, playbackStartMs) => ({
   reason_for_answer: checkpoint.reason,
   player_screenshot_path: null,
   screen_capture_path: null,
+  screen_capture_display_name: null,
   transcript_before_answer: "",
   transcript_source: "none",
   callpilot_screen_analysis: null,
@@ -953,9 +955,12 @@ const main = async () => {
         return null;
       });
 
-      const screenCapture = await evaluate(mainClient, `window.callpilotDesktop.captureScreenshot()`);
+      await playerBringToFront(playerClient);
+      await sleep(500);
+      const screenCapture = await evaluate(mainClient, `window.callpilotDesktop.captureScreenshot({ preferWindowTitle: "CallPilot E2E Video Player" })`);
       if (screenCapture?.ok && screenCapture.path) {
         checkpointReport.screen_capture_path = screenCapture.path;
+        checkpointReport.screen_capture_display_name = screenCapture.displayName || null;
         report.summary.screen_captured = true;
         try {
           checkpointReport.callpilot_screen_analysis = await analyzeScreen(mainClient, screenCapture.path);

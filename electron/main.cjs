@@ -2330,11 +2330,15 @@ ipcMain.handle("audio:transcribe", async (_event, input) => {
     });
   }
 });
-ipcMain.handle("screen:capture", async () => {
+ipcMain.handle("screen:capture", async (_event, input) => {
   const startedAt = Date.now();
   try {
-    const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1600, height: 1000 } });
-    const source = sources[0];
+    const preferWindowTitle = typeof input?.preferWindowTitle === "string" ? input.preferWindowTitle.trim().toLowerCase() : "";
+    const sourceTypes = preferWindowTitle ? ["window", "screen"] : ["screen"];
+    const sources = await desktopCapturer.getSources({ types: sourceTypes, thumbnailSize: { width: 1600, height: 1000 } });
+    const source = preferWindowTitle
+      ? sources.find((item) => String(item.name || "").toLowerCase().includes(preferWindowTitle)) || sources.find((item) => item.id?.startsWith("screen:")) || sources[0]
+      : sources[0];
     if (!source) {
       appendTraceEvent("screen_capture_completed", { ok: false, durationMs: Date.now() - startedAt, error: "no_screen_source" });
       writeActiveSessionTrace("active");
@@ -2349,6 +2353,7 @@ ipcMain.handle("screen:capture", async () => {
       ok: true,
       durationMs: Date.now() - startedAt,
       displayName: source.name,
+      preferredWindowTitle: preferWindowTitle || undefined,
       bytes: png.length,
       fileName: path.basename(filePath),
     });
