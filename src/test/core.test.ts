@@ -261,6 +261,46 @@ test("prompt builder clarifies Spanish no-crash live coding requests", () => {
   assert.match(prompt.system, /do not intentionally throw/i);
 });
 
+test("prompt builder uses English spoken labels for English answers", () => {
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english" }),
+    "user_request: The candidate pressed Answer.",
+  );
+
+  assert.match(prompt.system, /\*\*To say:\*\* or \*\*Answer:\*\*/);
+  assert.doesNotMatch(prompt.system, /\*\*Para decir:\*\*/);
+});
+
+test("prompt builder localizes output format labels for English technical answers", () => {
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "technical_qa", preferredLanguage: "english" }),
+    "interviewer: What is the complexity?",
+  );
+
+  assert.match(prompt.user, /<output_format>\s*Answer\nExample or tradeoff only if useful\nTo say/);
+  assert.doesNotMatch(prompt.user, /Para decir|Respuesta/);
+});
+
+test("prompt builder tells live coding to prefer current screen over stale prior answers", () => {
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english" }),
+    "user_request: The candidate pressed Answer.",
+  );
+
+  assert.match(prompt.system, /current screen_context shows a different problem/i);
+  assert.match(prompt.system, /refer to the visible function and variables/i);
+});
+
+test("prompt builder prioritizes local code issues from fresh live coding transcript", () => {
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english" }),
+    "fresh_mixed_audio_evidence_not_manual_question: the right child lower bound should be node.val plus 1",
+  );
+
+  assert.match(prompt.system, /specific variables, bounds, failing tests, exceptions, or code edits/i);
+  assert.match(prompt.user, /node\.val plus 1/);
+});
+
 test("technical definitions do not force candidate background into the prompt", () => {
   const context = createGlobalContext({
     activeMode: "technical_qa",

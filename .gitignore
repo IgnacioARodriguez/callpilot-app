@@ -19,7 +19,12 @@ Thumbs.db
 coverage/
 .nyc_output/
 .cache/e2e/
+.cache/local-video-analysis/
+.cache/local-video-interview/
 reports/llm-scenarios-*.json
 tests/e2e/reports/*.json
+tests/local-media/
+tests/e2e/video-interview/reports/
 
 *.local
+*.traineddata

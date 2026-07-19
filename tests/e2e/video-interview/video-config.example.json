@@ -1,0 +1,41 @@
+{
+  "video_path": "C:\\path\\to\\interview.mp4",
+  "notes": "Example only. Copy/edit per MP4; do not commit configs that reference private local videos.",
+  "analysis": {
+    "frame_step_ms": 30000,
+    "max_frames": 24,
+    "max_checkpoints": 5,
+    "min_checkpoint_gap_ms": 45000,
+    "fallback_ratios": [0.25, 0.5, 0.75],
+    "ignore_ranges_ms": [
+      {
+        "start_ms": 0,
+        "end_ms": 60000,
+        "reason": "intro/setup, no technical question yet"
+      }
+    ],
+    "force_checkpoints": [
+      {
+        "id": "problem-intro",
+        "timestamp_ms": 185000,
+        "reason": "Interviewer has finished presenting the coding problem.",
+        "visual_context_expected": ["problem statement", "examples", "constraints"],
+        "expected_topics": ["problem constraints", "initial approach"],
+        "desirable_topics": ["complexity", "edge cases"],
+        "forbidden_claims": ["Do not use future code or later candidate explanation."]
+      }
+    ]
+  },
+  "execution": {
+    "default_audio_lookback_ms": 60000,
+    "stt": {
+      "adapter": "natively",
+      "mode": "stream-per-checkpoint",
+      "frame_delay_ms": 100,
+      "drain_ms": 5000
+    },
+    "preferred_language": "english",
+    "answer_verbosity": "short",
+    "recommended_max_real_calls_per_checkpoint": 3
+  }
+}

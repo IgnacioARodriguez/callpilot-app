@@ -78,16 +78,30 @@ const answerLanguageInstruction = (context: GlobalContext, userInput: string): s
   return "Use the same language as the latest interviewer turn; if unclear, use the candidate's preferred language.";
 };
 
+const localizedOutputLabels = (labels: string[], preferredLanguage: GlobalContext["preferredLanguage"]): string[] => {
+  if (preferredLanguage !== "english") return labels;
+  return labels.map((label) => {
+    if (/^respuesta$/i.test(label)) return "Answer";
+    if (/^para decir$/i.test(label)) return "To say";
+    if (/^ejemplo/i.test(label)) return label.replace(/^Ejemplo/i, "Example");
+    return label;
+  });
+};
+
 export const buildPromptWithEvidence = (context: GlobalContext, userInput: string, evidence: EvidenceSelection): BuiltPrompt => {
   const factualContext = withoutStaleCasualTurns(withoutAssistantTurns(context), userInput);
   const conversationContext = withoutStaleCasualTurns(context, userInput);
   const factualEvidence = withoutStaleCasualEvidence(withoutAssistantEvidence(evidence), userInput);
+  const spokenLabelInstruction = context.preferredLanguage === "english"
+    ? "Never label a suggested candidate answer as **Interviewer:** or interviewer. If you provide a sentence to say aloud, label it **To say:** or **Answer:**."
+    : "Never label a suggested candidate answer as **Interviewer:** or interviewer. If you provide a sentence to say aloud, label it **Para decir:** or **Respuesta:**.";
   const answerContext = buildAnswerContext({
     transcript: conversationContext.transcript,
     mode: context.activeMode,
     userInput,
   });
   const mode = modeById(context.activeMode);
+  const outputLabels = localizedOutputLabels(mode.defaultOutputFormat, context.preferredLanguage);
   const includePersonalContext = shouldIncludePersonalContext(context, userInput);
   const includedSections: string[] = ["mode", "output_format"];
   const omittedSections: Array<{ section: string; reason: string }> = [];
@@ -102,7 +116,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     ].join("\n");
   const sections = [
     fenced("active_mode", mode.id),
-    fenced("output_format", `${mode.defaultOutputFormat.join("\n")}\n\n${structuredContract}`),
+    fenced("output_format", `${outputLabels.join("\n")}\n\n${structuredContract}`),
   ];
   const add = (name: string, value: string) => {
     if (!value.trim()) {
@@ -153,6 +167,9 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     "Use resume, STAR stories, company, role, and job description only when the current question asks about the candidate's experience, background, projects, personal tradeoffs, company fit, or how the candidate has used something.",
     "The latest_actionable_input section is the highest-priority task. If it contains a clear technical, behavioral, system-design, or coding question, answer that question directly even if older transcript, screen text, or selected evidence is about another topic.",
     "Use transcript and screen_context only to understand surrounding context; never let stale earlier context override the latest_actionable_input.",
+    "In live coding, if the current screen_context shows a different problem, data structure, function name, or test output than older transcript or previous assistant answers, prioritize the current screen_context and explicitly switch to that visible problem.",
+    "For manual live-coding Answer requests without a clean interviewer question, infer the most useful next coding response from current screen_context first, then recent transcript, then previous answers.",
+    "When fresh live-coding transcript mentions specific variables, bounds, failing tests, exceptions, or code edits, answer that local issue directly before giving any broader approach.",
     "If latest_actionable_input rewrites or resolves an elliptical question such as 'what is it used for' or 'para que sirve', answer the resolved subject in latest_actionable_input and ignore noisy raw STT prefixes in transcript.",
     "If older transcript turns are casual or unrelated to the latest technical question, silently ignore their topic, entities, and examples; do not say that you are ignoring them.",
     "When user_input or transcript contains role-prefixed lines, treat interviewer as the interviewer and candidate as the user. Answer the latest interviewer question in light of what the candidate already said.",
@@ -166,9 +183,10 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     "For interview modes, write like a candidate answer to say aloud: direct first sentence, no greeting, no 'hola', no 'claro', no 'por supuesto', no meta preface like 'ahi tienes', no optional sections, no decorative markdown, no all-caps headings, and no code block unless the interviewer explicitly asks for code.",
     "For technical interview Q&A, do not include Python, SQLAlchemy, pseudocode, code fences, or implementation snippets unless the interviewer explicitly asks for code. Prefer a compact verbal answer of 80 to 120 words.",
     "Use readable micro-sections with plain bold labels when helpful, for example **Idea:**, **Aclaracion:**, **Respuesta:**, **Tradeoff:**. Avoid long uniform paragraphs.",
-    "Never label a suggested candidate answer as **Interviewer:** or interviewer. If you provide a sentence to say aloud, label it **Para decir:** or **Respuesta:**.",
+    spokenLabelInstruction,
     "Do not claim company-specific facts unless they are explicitly present in the provided evidence. Treat company_name as personalization context, not proof of internal systems.",
     "In live coding mode, prioritize correctness, code, complexity, edge cases, and requested changes. Use at most one short code block. Do not mention resume, company, payments, pipelines, or business background unless the interviewer explicitly asks for an experience-based justification.",
+    "If current screen_context contains code, refer to the visible function and variables instead of inventing a new unrelated solution skeleton.",
     "In live coding Spanish, phrases like 'sin que explote' mean 'handle it gracefully without crashing'; do not intentionally throw errors or rename the requested function unless the interviewer explicitly asks for that.",
     "When asked why the candidate made a technical choice or how they used a technology, connect the answer to a relevant project, constraint, tradeoff, or business outcome from the resume or STAR stories. If no matching evidence exists, say the closest supported answer and label any assumption.",
     "For behavioral or personal-experience questions, never invent concrete incidents, employers, user counts, timelines, outages, metrics, hotfixes, or business results that are not present in resume, STAR stories, notes, or transcript. If no real story is available, give a safe fill-in structure the candidate can adapt and explicitly mark missing details as placeholders.",

@@ -30,6 +30,8 @@
     "test:e2e:real-audio-track-d": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-audio-track-d",
     "test:e2e:real-long-session": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-long-session",
     "test:e2e:real-vision": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-vision",
+    "test:e2e:local-video-interview": "npm run build && node tests/e2e/video-interview/localVideoInterviewRunner.cjs",
+    "analyze:local-video-interview": "node tests/local-video-analysis/analyzeLocalVideo.cjs",
     "test:e2e:reports": "node scripts/summarize-e2e-reports.mjs",
     "check:nvidia": "node scripts/check-nvidia-api.mjs",
     "benchmark:core": "node --experimental-strip-types scripts/benchmark-core.ts",
