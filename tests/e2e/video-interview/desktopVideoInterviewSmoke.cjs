@@ -933,6 +933,9 @@ const main = async () => {
         });
       }
 
+      await playerPlay(playerClient).catch((error) => {
+        checkpointReport.errors.push(`player_play_before_wait:${error.message}`);
+      });
       const targetSeconds = Number(checkpoint.timestamp_ms || 0) / 1000;
       const currentStatus = await playerStatus(playerClient).catch(() => ({ currentTime: playbackStartMs / 1000 }));
       checkpointReport.player_status_before_wait = currentStatus;
