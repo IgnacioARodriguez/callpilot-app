@@ -38,6 +38,7 @@ import {
   extractOpenAITranscriptionText,
   extractLatestQuestionFocus,
   formatAnswerForDisplay,
+  formatFactualTranscriptText,
   formatStructuredAnswerPayload,
   formatConversationWindow,
   assessPartialTurnStability,
@@ -927,45 +928,29 @@ test("coding display renderer repairs malformed markdown labels", () => {
   assert.doesNotMatch(rendered, /\*Idea:\*\*|\*Aclaracion:\*\*/);
 });
 
-test("live coding repair adds missing odd-even linked-list complexity and order", () => {
+test("factual transcript text excludes assistant messages", () => {
+  const text = formatFactualTranscriptText({
+    paused: false,
+    updatedAt: 4,
+    messages: [
+      { id: "1", timestamp: 1, source: "stt", speaker: "interviewer", text: "Can you explain the approach?" },
+      { id: "2", timestamp: 2, source: "manual", speaker: "assistant", text: "Use the previous generated answer." },
+      { id: "3", timestamp: 3, source: "stt", speaker: "candidate", text: "I would use a hash map." },
+    ],
+  });
+
+  assert.equal(text, "Can you explain the approach? I would use a hash map.");
+});
+
+test("live coding repair does not inject named problem solutions", () => {
   const repaired = repairLiveCodingAnswerCoverage(
-    "Use odd and even pointers to relink the list.",
+    "I would first clarify the input and then describe the invariant.",
     "Given the head of a singly linked list, group nodes with odd indices then even indices.",
     "live_coding",
   );
 
-  assert.match(repaired, /relative order/i);
-  assert.match(repaired, /O\(n\) time/i);
-  assert.match(repaired, /O\(1\) extra space/i);
-});
-
-test("live coding repair keeps current linked-list evidence separate from stale BST text", () => {
-  const repaired = repairLiveCodingAnswerCoverage(
-    "To solve this problem, we can use a two-pass approach and store the nodes in two separate lists.",
-    [
-      "Technical OCR focus:",
-      "Given the head of a singly linked list, group odd indices followed by even indices.",
-      "",
-      "Vision summary:",
-      "Older visible text mentioned a valid BST.",
-    ].join("\n"),
-    "live_coding",
-  );
-
-  assert.match(repaired, /in-place two-pointer/i);
-  assert.match(repaired, /O\(1\) extra space/i);
-  assert.doesNotMatch(repaired, /low\/high bounds|binary search tree|BST/i);
-});
-
-test("live coding repair adds missing BST bounds invariant", () => {
-  const repaired = repairLiveCodingAnswerCoverage(
-    "Use recursion to check that left subtree values are less and right subtree values are greater.",
-    "Given the root of a binary tree, determine whether it is a valid BST.",
-    "live_coding",
-  );
-
-  assert.match(repaired, /low\/high bounds/i);
-  assert.match(repaired, /O\(n\) time/i);
+  assert.equal(repaired, "I would first clarify the input and then describe the invariant.");
+  assert.doesNotMatch(repaired, /odd = head|evenHead|low\/high bounds|O\(1\) extra space/i);
 });
 
 test("system design repair covers explicit Redis-alone requests when model omits them", () => {

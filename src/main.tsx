@@ -30,6 +30,7 @@ import {
   formatAnswerForDisplay,
   liveTranscriptionPlan,
   markLatencyStage,
+  formatFactualTranscriptText,
   normalizeTechnicalTranscript,
   normalizeLiveTranscriptionSettings,
   normalizeOcrLanguage,
@@ -2633,7 +2634,7 @@ function App() {
     e2eWindow.__callpilotE2EGetState = () => ({
       answer,
       screenText,
-      transcriptText: transcript.messages.map((message) => message.text).join(" "),
+      transcriptText: formatFactualTranscriptText(transcript),
     });
     return () => {
       delete e2eWindow.__callpilotE2ESetScreenText;

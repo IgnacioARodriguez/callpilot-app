@@ -63,6 +63,13 @@ export const formatConversationWindow = (
   return lines.join("\n");
 };
 
+export const formatFactualTranscriptText = (snapshot: TranscriptSnapshot): string =>
+  snapshot.messages
+    .filter((message) => message.speaker !== "assistant")
+    .map((message) => message.text.trim())
+    .filter(Boolean)
+    .join(" ");
+
 export class TranscriptBuffer {
   private messages: TranscriptMessage[];
   private paused: boolean;

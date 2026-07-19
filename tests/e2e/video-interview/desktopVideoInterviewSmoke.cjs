@@ -9,6 +9,14 @@ loadDotEnv(root);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-");
+const killProcessTree = (child) => {
+  if (!child?.pid || child.killed) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    return;
+  }
+  child.kill("SIGTERM");
+};
 const argValue = (name, fallback = "") => {
   const prefix = `${name}=`;
   return process.argv.find((item) => item.startsWith(prefix))?.slice(prefix.length).trim() || fallback;
@@ -905,6 +913,16 @@ const main = async () => {
     `--debug-port=${playerDebugPort}`,
     `--start-ms=${firstPlaybackStartMs}`,
   ], { cwd: root, shell: false, stdio: ["ignore", "pipe", "pipe"], env: childEnv });
+  const cleanupChildren = () => {
+    killProcessTree(callpilot);
+    killProcessTree(player);
+  };
+  const exitOnSignal = (signal) => {
+    cleanupChildren();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", () => exitOnSignal("SIGINT"));
+  process.once("SIGTERM", () => exitOnSignal("SIGTERM"));
 
   let callpilotStdout = "";
   let callpilotStderr = "";
@@ -1084,8 +1102,7 @@ const main = async () => {
     overlayClient?.close();
     mainClient?.close();
     playerClient?.close();
-    callpilot.kill();
-    player.kill();
+    cleanupChildren();
   }
 
   report.cost_guard.real_calls = realCalls;
