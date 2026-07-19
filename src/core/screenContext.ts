@@ -27,6 +27,56 @@ export const createEmptyScreenContext = (capturedAt = Date.now()): ScreenContext
   capturedAt,
 });
 
+const uiNoisePatterns = [
+  /\b(video player|viewing replay|facebook logo|yellow button|sign up|signup|interviewing\.io|callpilot e2e video player)\b/i,
+  /\b(location|purpose|key features|top-left corner|bottom of the screen|top-right corner)\b/i,
+  /\bthe image shows|screenshot of|the purpose of this image|features of the image\b/i,
+  /\bvision summary|secondary; ignore if it conflicts with ocr|ignoredui\b/i,
+  /\bplayback|controls|button reads|title:\s*viewing replay\b/i,
+];
+
+const technicalSignalPatterns = [
+  /\b(given|return|determine|valid|invalid|constraints?|examples?|input|output|expected|edge cases?)\b/i,
+  /\b(linked list|binary tree|bst|binary search tree|tree|node|root|left|right|subtree|odd|even|indices)\b/i,
+  /\b(hash ?map|set|stack|queue|heap|graph|array|string|matrix|pointer|recursion|bounds?|invariant)\b/i,
+  /\b(o\([^)]+\)|complexity|time|space|constant|linear|logarithmic)\b/i,
+  /\b(error|exception|traceback|failed|failing|assert|test|expected|actual)\b/i,
+  /\b(def|class|return|import|from|function|const|let|var|public|private|while|for|if|else)\b/,
+  /[{};=<>]|\w+\.\w+|\w+\([^)]*\)/,
+];
+
+const hasTechnicalSignal = (line: string): boolean =>
+  technicalSignalPatterns.some((pattern) => pattern.test(line));
+
+const isUiNoise = (line: string): boolean =>
+  uiNoisePatterns.some((pattern) => pattern.test(line));
+
+export const extractTechnicalScreenFocus = (visibleText: string, maxLines = 32): string => {
+  const lines = visibleText
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+
+  const focused = lines
+    .filter((line) => hasTechnicalSignal(line) && !isUiNoise(line))
+    .slice(0, maxLines);
+  if (focused.length > 0) {
+    const title = lines.find((line) =>
+      !isUiNoise(line)
+      && !focused.includes(line)
+      && /^[A-Z0-9][A-Za-z0-9 +#.'_-]{1,80}$/.test(line)
+    );
+    return [title, ...focused].filter(Boolean).slice(0, maxLines).join("\n");
+  }
+
+  return lines
+    .filter((line) => !isUiNoise(line))
+    .slice(0, Math.min(maxLines, 12))
+    .join("\n");
+};
+
 const score = (text: string, patterns: RegExp[]) =>
   patterns.reduce((total, pattern) => total + (pattern.test(text) ? 1 : 0), 0);
 
@@ -40,7 +90,7 @@ const detectedLanguage = (text: string): string | undefined => {
 };
 
 export const classifyScreenText = (visibleText: string): ScreenContext => {
-  const text = visibleText.trim();
+  const text = extractTechnicalScreenFocus(visibleText).trim() || visibleText.trim();
   if (!text) return createEmptyScreenContext();
   const lower = text.toLowerCase();
   const scores: Record<ScreenKind, number> = {

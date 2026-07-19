@@ -14,7 +14,7 @@ export const MODES: ModeDefinition[] = [
     id: "live_coding",
     label: "Live Coding",
     description: "Step-by-step coding interview support.",
-    systemPromptFragment: "Prefer Python unless context clearly indicates another language. Include approach, solution, complexity, edge cases, and what to say out loud.",
+    systemPromptFragment: "Prefer Python unless context clearly indicates another language. First answer with the optimal interview approach, invariant, data structure or pointer strategy, and time/space complexity. Include code only when requested.",
     defaultOutputFormat: ["Approach", "Code or change", "Complexity", "Edge cases if relevant"],
     responseLengthPreference: "medium",
   },

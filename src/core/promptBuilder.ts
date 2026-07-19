@@ -1,4 +1,5 @@
 import { modeById, type AssistantModeId } from "./modes.ts";
+import { extractTechnicalScreenFocus } from "./screenContext.ts";
 import { compactTranscript } from "./transcriptBuffer.ts";
 import { formatEvidenceForPrompt, pickEvidence, type EvidenceItem, type EvidenceSelection } from "./evidencePicker.ts";
 import { buildAnswerContext, formatAnswerContextSection, type AnswerContextTrace } from "./conversationContext.ts";
@@ -102,6 +103,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     screenContext: context.screenContext,
   });
   const mode = modeById(context.activeMode);
+  const screenTechnicalFocus = extractTechnicalScreenFocus(factualContext.screenContext.visibleText);
   const outputLabels = localizedOutputLabels(mode.defaultOutputFormat, context.preferredLanguage);
   const includePersonalContext = shouldIncludePersonalContext(context, userInput);
   const includedSections: string[] = ["mode", "output_format"];
@@ -159,7 +161,12 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
   add("current_question", formatAnswerContextSection([answerContext.currentQuestion]));
   add("latest_actionable_input", userInput);
   add("transcript", compactTranscript(factualContext.transcript, 6000, 80));
-  add("screen_context", `kind: ${factualContext.screenContext.kind}\nconfidence: ${factualContext.screenContext.confidence}\n${factualContext.screenContext.visibleText}`);
+  add("screen_context", [
+    `kind: ${factualContext.screenContext.kind}`,
+    `confidence: ${factualContext.screenContext.confidence}`,
+    screenTechnicalFocus ? `technical_focus:\n${screenTechnicalFocus}` : "",
+    factualContext.screenContext.visibleText ? `raw_visible_text:\n${factualContext.screenContext.visibleText.slice(-2400)}` : "",
+  ].filter(Boolean).join("\n"));
   add("user_input", userInput);
 
   const system = [
@@ -169,6 +176,8 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     "The latest_actionable_input section is the highest-priority task. If it contains a clear technical, behavioral, system-design, or coding question, answer that question directly even if older transcript, screen text, or selected evidence is about another topic.",
     "Use transcript and screen_context only to understand surrounding context; never let stale earlier context override the latest_actionable_input.",
     "In live coding, if the current screen_context shows a different problem, data structure, function name, or test output than older transcript or previous assistant answers, prioritize the current screen_context and explicitly switch to that visible problem.",
+    "In live coding, treat screen_context.technical_focus as the primary visual evidence. Use raw_visible_text only to recover exact wording; ignore player controls, buttons, replay titles, logos, browser chrome, and assistant UI unless they are part of the coding problem.",
+    "For live-coding problem statements, give the optimal interview approach when standard constraints imply one. Include the core invariant, the data structure or pointer strategy, and time/space complexity. Avoid proposing extra data structures when an in-place or constant-space standard solution is expected by the visible constraints.",
     "For manual live-coding Answer requests without a clean interviewer question, infer the most useful next coding response from current screen_context first, then recent transcript, then previous answers.",
     "When fresh live-coding transcript mentions specific variables, bounds, failing tests, exceptions, or code edits, answer that local issue directly before giving any broader approach.",
     "If latest_actionable_input rewrites or resolves an elliptical question such as 'what is it used for' or 'para que sirve', answer the resolved subject in latest_actionable_input and ignore noisy raw STT prefixes in transcript.",

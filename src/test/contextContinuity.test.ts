@@ -255,3 +255,22 @@ test("fresh live coding screen excludes stale previous assistant answers", () =>
   assert.doesNotMatch(previousAnswers, /linked list/i);
   assert.match(prompt.user, /<screen_context>[\s\S]*binary search tree/i);
 });
+
+test("live coding prompt places technical screen focus before raw player text", () => {
+  const screenContext = classifyScreenText([
+    "The image shows a screenshot with a video player and replay controls.",
+    "Need some interview practice? interviewing.io/signup",
+    "Given the root of a binary tree, determine if it is a valid binary search tree.",
+    "Use bounds while recursing through left and right subtrees.",
+  ].join("\n"));
+
+  const prompt = buildPrompt(createGlobalContext({
+    activeMode: "live_coding",
+    screenContext,
+  }), "");
+  const screenSection = prompt.user.match(/<screen_context>\n([\s\S]*?)\n<\/screen_context>/)?.[1] ?? "";
+
+  assert.match(screenSection, /technical_focus:/);
+  assert.match(screenSection, /valid binary search tree/i);
+  assert.doesNotMatch(screenSection.split("technical_focus:")[1]?.split("raw_visible_text:")[0] ?? "", /video player|signup/i);
+});

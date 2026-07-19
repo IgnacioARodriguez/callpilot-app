@@ -29,6 +29,7 @@ import {
   detectQuestionIntent,
   hasTranscriptProgress,
   cleanOcrText,
+  extractTechnicalScreenFocus,
   extractOllamaModels,
   extractOllamaResponseText,
   extractOpenAICompatibleModels,
@@ -55,6 +56,7 @@ import {
   parseSessionJson,
   parseStructuredAnswerPayload,
   reduceStealthState,
+  repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
   resetStealthState,
   serializeSession,
@@ -911,6 +913,59 @@ test("interview display renderer removes placeholders and stray foreign glyphs",
 
   assert.match(rendered, /logs y traces/);
   assert.doesNotMatch(rendered, /京|Nombre de la Empresa|Shakespeare/i);
+});
+
+test("coding display renderer repairs malformed markdown labels", () => {
+  const rendered = formatAnswerForDisplay(
+    "Use bounds recursion. *Idea:** carry low and high limits. *Aclaracion:** visit each node once.",
+    null,
+    { mode: "coding" },
+  );
+
+  assert.match(rendered, /Idea: carry low and high limits/);
+  assert.match(rendered, /Aclaracion: visit each node once/);
+  assert.doesNotMatch(rendered, /\*Idea:\*\*|\*Aclaracion:\*\*/);
+});
+
+test("live coding repair adds missing odd-even linked-list complexity and order", () => {
+  const repaired = repairLiveCodingAnswerCoverage(
+    "Use odd and even pointers to relink the list.",
+    "Given the head of a singly linked list, group nodes with odd indices then even indices.",
+    "live_coding",
+  );
+
+  assert.match(repaired, /relative order/i);
+  assert.match(repaired, /O\(n\) time/i);
+  assert.match(repaired, /O\(1\) extra space/i);
+});
+
+test("live coding repair keeps current linked-list evidence separate from stale BST text", () => {
+  const repaired = repairLiveCodingAnswerCoverage(
+    "To solve this problem, we can use a two-pass approach and store the nodes in two separate lists.",
+    [
+      "Technical OCR focus:",
+      "Given the head of a singly linked list, group odd indices followed by even indices.",
+      "",
+      "Vision summary:",
+      "Older visible text mentioned a valid BST.",
+    ].join("\n"),
+    "live_coding",
+  );
+
+  assert.match(repaired, /in-place two-pointer/i);
+  assert.match(repaired, /O\(1\) extra space/i);
+  assert.doesNotMatch(repaired, /low\/high bounds|binary search tree|BST/i);
+});
+
+test("live coding repair adds missing BST bounds invariant", () => {
+  const repaired = repairLiveCodingAnswerCoverage(
+    "Use recursion to check that left subtree values are less and right subtree values are greater.",
+    "Given the root of a binary tree, determine whether it is a valid BST.",
+    "live_coding",
+  );
+
+  assert.match(repaired, /low\/high bounds/i);
+  assert.match(repaired, /O\(n\) time/i);
 });
 
 test("system design repair covers explicit Redis-alone requests when model omits them", () => {
@@ -1830,6 +1885,23 @@ test("screen classifier recognizes common V0 inputs", () => {
   assert.equal(classifyScreenText("API Reference\nParameters\nReturns").kind, "documentation");
   assert.equal(classifyScreenText("10:30 Alice: Let's ship it\nBob: Action item is the rollout plan").kind, "meeting_transcript");
   assert.equal(classifyScreenText("A quiet paragraph with no technical markers.").kind, "unknown");
+});
+
+test("screen focus keeps coding text ahead of video player chrome", () => {
+  const focus = extractTechnicalScreenFocus([
+    "The image shows a screenshot of a live coding interview assistant with a video player.",
+    "Yellow Button: Need some interview practice? interviewing.io/signup",
+    "Title: Viewing Replay",
+    "Coding Problem Statement: Given the head of a singly linked list, group all the nodes with odd indices together followed by even indices.",
+    "The relative order inside both groups should remain as it was in the input.",
+    "Constraints: number of nodes is in the range [0, 10^4].",
+  ].join("\n"));
+
+  assert.match(focus, /singly linked list/i);
+  assert.match(focus, /relative order/i);
+  assert.match(focus, /constraints/i);
+  assert.doesNotMatch(focus, /video player|signup|Viewing Replay/i);
+  assert.equal(classifyScreenText(focus).kind, "coding_problem");
 });
 
 test("OCR helpers normalize language and clean extracted text", () => {

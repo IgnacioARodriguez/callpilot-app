@@ -200,8 +200,13 @@ const splitSentences = (value: string): string[] =>
     .map((sentence) => sentence.trim())
     .filter(Boolean);
 
-const stripMarkdownDecoration = (value: string): string =>
+const repairMalformedMarkdownLabels = (value: string): string =>
   value
+    .replace(/\*+([\p{L}][\p{L}\s-]{1,40}):\*+/gu, "$1:")
+    .replace(/\*+([\p{L}][\p{L}\s-]{1,40})\*+:/gu, "$1:");
+
+const stripMarkdownDecoration = (value: string): string =>
+  repairMalformedMarkdownLabels(value)
     .replace(/^\s*>\s?/gm, "")
     .replace(/\*\*([^*\n]+)\*\*/g, "$1")
     .replace(/__([^_\n]+)__/g, "$1")
@@ -328,7 +333,7 @@ export const formatAnswerForDisplay = (
   options: RenderAnswerOptions = {},
 ): string => {
   if (structured) return formatStructuredAnswerPayload(structured, options);
-  if (options.mode === "coding") return rawText.trim();
+  if (options.mode === "coding") return repairMalformedMarkdownLabels(rawText).trim();
   const normalized = normalizeInterviewAnswerText(rawText, options);
   return normalized ? `**Respuesta:** ${normalized}` : rawText.trim();
 };

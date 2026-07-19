@@ -401,6 +401,17 @@ const capturePlayerScreenshot = async (client, filePath) => {
   fs.writeFileSync(filePath, Buffer.from(result.data, "base64"));
   return filePath;
 };
+const captureExpectedPlayerWindow = async (mainClient, playerClient) => {
+  let lastResult = null;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    await playerBringToFront(playerClient);
+    await evaluate(playerClient, `document.title = ${JSON.stringify(expectedScreenCaptureTitle)}; window.focus(); true`).catch(() => false);
+    await sleep(350 * attempt);
+    lastResult = await evaluate(mainClient, `window.callpilotDesktop.captureScreenshot({ preferWindowTitle: ${JSON.stringify(expectedScreenCaptureTitle)}, strictWindowTitle: true })`);
+    if (lastResult?.ok) return { ...lastResult, attempts: attempt };
+  }
+  return { ...(lastResult || { ok: false, error: "screen_capture_failed" }), attempts: 5 };
+};
 
 const summarizeEvents = (events) => events.map((event) => ({
   type: event.type,
@@ -502,6 +513,10 @@ const chooseTranscriptCandidate = (candidates, previousAnswers) => {
     ? { text: String(fallback.text || "").trim(), source: `${fallback.source}:possible_prior_answer_echo` }
     : { text: "", source: "none" };
 };
+const isUsableTranscriptSource = (source) => {
+  const value = String(source || "");
+  return Boolean(value && value !== "none" && !value.includes("possible_prior_answer_echo"));
+};
 
 const normalizeEvaluationText = (value) => String(value || "")
   .toLowerCase()
@@ -542,14 +557,18 @@ const evaluateCheckpoint = (checkpoint, checkpointReport) => {
   const transcript = String(checkpointReport.transcript_before_answer || "");
   const screenText = String(checkpointReport.callpilot_screen_analysis?.text || "");
   const answerText = String(checkpointReport.answer || "");
+  const usableTranscript = Boolean(transcript && isUsableTranscriptSource(checkpointReport.transcript_source));
   const expectedTopics = checkpoint.evaluation?.expected_topics || [];
   const forbidden = checkpoint.evaluation?.forbidden_claims || [];
   const presentInAnswer = expectedTopics.filter((term) => topicMatches(answerText, term));
   const missingFromAnswer = expectedTopics.filter((term) => !topicMatches(answerText, term));
   const checkpointIdText = normalizeEvaluationText(checkpoint.id);
+  const expectedTopicText = normalizeEvaluationText(expectedTopics.join(" "));
+  const expectsBst = checkpointIdText.includes("bst") || /\bbst\b|binary search tree/.test(expectedTopicText);
+  const expectsLinkedList = checkpointIdText.includes("linked list") || /linked list|odd even/.test(expectedTopicText);
   const staleTopicFlags = [
-    checkpointIdText.includes("bst") && /\blinked[- ]?list|singly[- ]?linked/i.test(answerText) ? "answered_linked_list_during_bst_checkpoint" : "",
-    checkpointIdText.includes("linked list") && /\bbst\b|binary search tree/i.test(answerText) ? "answered_bst_during_linked_list_checkpoint" : "",
+    expectsBst && /\blinked[- ]?list|singly[- ]?linked/i.test(answerText) ? "answered_linked_list_during_bst_checkpoint" : "",
+    expectsLinkedList && /\bbst\b|binary search tree/i.test(answerText) ? "answered_bst_during_linked_list_checkpoint" : "",
   ].filter(Boolean);
   const answerWords = answerText.split(/\s+/).filter(Boolean).length;
   const tooLongForLiveInterview = answerWords > maxLiveAnswerWords;
@@ -557,8 +576,10 @@ const evaluateCheckpoint = (checkpoint, checkpointReport) => {
   const onExpectedTopic = expectedTopics.length === 0 ? staleTopicFlags.length === 0 : missingFromAnswer.length === 0 && staleTopicFlags.length === 0;
   return {
     transcription: {
-      ok: Boolean(transcript),
+      ok: usableTranscript,
       transcript_chars: transcript.length,
+      source: checkpointReport.transcript_source,
+      possible_prior_answer_echo: Boolean(transcript && !usableTranscript),
       mixed_audio_no_diarization: true,
       technical_terms_detected: expectedTopics.filter((term) => topicMatches(transcript, term)),
       technical_terms_omitted: expectedTopics.filter((term) => !topicMatches(transcript, term)),
@@ -681,6 +702,7 @@ const writeMarkdownReport = (reportPath, report) => {
     `- Transcript source: ${checkpoint.transcript_source || "none"}`,
     `- Screen capture: ${checkpoint.screen_capture_display_name || "none"}`,
     `- Screen capture expected window: ${Boolean(checkpoint.screen_capture_matches_expected_window)}`,
+    `- Screen capture attempts: ${checkpoint.screen_capture_attempts ?? "n/a"}`,
     `- Answer status: ${checkpoint.answer_completion_status || ""}`,
     `- Complete latency: ${checkpoint.latency_ms?.trigger_to_complete ?? "n/a"} ms`,
     `- Technical rubric ok: ${Boolean(checkpoint.evaluation?.technical_answer?.ok)}`,
@@ -789,6 +811,7 @@ const makeCheckpointReport = (checkpoint, playbackStartMs) => ({
   screen_capture_display_name: null,
   screen_capture_source_names: [],
   screen_capture_matches_expected_window: false,
+  screen_capture_attempts: null,
   transcript_before_answer: "",
   transcript_source: "none",
   callpilot_screen_analysis: null,
@@ -966,10 +989,9 @@ const main = async () => {
         return null;
       });
 
-      await playerBringToFront(playerClient);
-      await sleep(500);
-      const screenCapture = await evaluate(mainClient, `window.callpilotDesktop.captureScreenshot({ preferWindowTitle: ${JSON.stringify(expectedScreenCaptureTitle)}, strictWindowTitle: true })`);
+      const screenCapture = await captureExpectedPlayerWindow(mainClient, playerClient);
       checkpointReport.screen_capture_source_names = Array.isArray(screenCapture?.sourceNames) ? screenCapture.sourceNames : [];
+      checkpointReport.screen_capture_attempts = screenCapture?.attempts || null;
       if (screenCapture?.ok && screenCapture.path) {
         checkpointReport.screen_capture_path = screenCapture.path;
         checkpointReport.screen_capture_display_name = screenCapture.displayName || null;
@@ -1067,7 +1089,9 @@ const main = async () => {
   }
 
   report.cost_guard.real_calls = realCalls;
-  report.summary.transcript_produced = report.checkpoints.some((checkpoint) => Boolean(checkpoint.transcript_before_answer));
+  report.summary.transcript_produced = report.checkpoints.some((checkpoint) => (
+    Boolean(checkpoint.transcript_before_answer) && isUsableTranscriptSource(checkpoint.transcript_source)
+  ));
   report.summary.vision_produced = report.checkpoints.some((checkpoint) => Boolean(checkpoint.callpilot_screen_analysis?.ok && checkpoint.callpilot_screen_analysis?.text));
   report.summary.answer_produced = report.checkpoints.some((checkpoint) => Boolean(checkpoint.answer));
   const completedAnswers = report.checkpoints.filter((checkpoint) => Boolean(checkpoint.answer)).length;
@@ -1078,7 +1102,7 @@ const main = async () => {
     .filter((value) => typeof value === "number")
     .sort((a, b) => a - b);
   report.summary.error_count = errorCount;
-  report.summary.transcription = `${report.checkpoints.filter((checkpoint) => checkpoint.evaluation?.transcription?.ok).length}/${report.checkpoints.length} checkpoints produced STT text.`;
+  report.summary.transcription = `${report.checkpoints.filter((checkpoint) => checkpoint.evaluation?.transcription?.ok).length}/${report.checkpoints.length} checkpoints produced usable STT text (prior-answer echoes are excluded).`;
   report.summary.vision = `${report.checkpoints.filter((checkpoint) => checkpoint.evaluation?.vision?.ok).length}/${report.checkpoints.length} checkpoints produced screen analysis.`;
   report.summary.context_retention = `${report.checkpoints.filter((checkpoint) => checkpoint.evaluation?.context?.ok).length}/${report.checkpoints.length} checkpoints had transcript or screen context available.`;
   report.summary.coding_problem_understanding = `${report.checkpoints.filter((checkpoint) => (checkpoint.evaluation?.vision?.visible_text_chars || 0) > 0 || (checkpoint.evaluation?.transcription?.transcript_chars || 0) > 0).length}/${report.checkpoints.length} checkpoints had observable technical inputs.`;

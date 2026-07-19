@@ -14,6 +14,7 @@ const requestedWidth = Number(argValue("--width", process.env.CALLPILOT_DESKTOP_
 const requestedHeight = Number(argValue("--height", process.env.CALLPILOT_DESKTOP_VIDEO_HEIGHT || "0"));
 
 if (debugPort) app.commandLine.appendSwitch("remote-debugging-port", debugPort);
+app.setName("CallPilot E2E Video Player");
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("disable-gpu");
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
@@ -142,8 +143,26 @@ app.whenReady().then(async () => {
       backgroundThrottling: false,
     },
   });
+  win.webContents.on("page-title-updated", (event) => {
+    event.preventDefault();
+    win.setTitle("CallPilot E2E Video Player");
+  });
+  win.on("show", () => win.setTitle("CallPilot E2E Video Player"));
+  const keepVisible = () => {
+    if (win.isDestroyed()) return;
+    win.setTitle("CallPilot E2E Video Player");
+    win.setAlwaysOnTop(true, "screen-saver");
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    if (!win.isVisible()) win.show();
+    if (win.isMinimized()) win.restore();
+    win.moveTop();
+  };
   win.setAlwaysOnTop(true, "screen-saver");
   await win.loadFile(htmlPath);
+  win.setTitle("CallPilot E2E Video Player");
+  keepVisible();
+  win.focus();
+  setInterval(keepVisible, 1000);
 });
 
 app.on("window-all-closed", () => app.quit());

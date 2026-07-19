@@ -40,6 +40,7 @@ import {
   parseStructuredAnswerPayload,
   pruneRecentSpeech,
   reduceStealthState,
+  repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
@@ -147,10 +148,15 @@ const formatMockAnswer = (context: GlobalContext, userInput: string): string => 
 
 const countWords = (value: string): number => value.trim().split(/\s+/).filter(Boolean).length;
 
+const requestTextForCodeIntent = (value: string): string =>
+  String(value || "")
+    .split(/\nvisible_screen:|\nscreen_context:|\nraw_visible_text:|\nTechnical OCR focus:|\nVisible OCR text:/i)[0]
+    ?.trim() || String(value || "");
+
 const explicitlyRequestsCode = (value: string): boolean =>
-  /\b(write|implement|add|fix)\s+(?:the\s+|a\s+|an\s+|some\s+)?(?:code|function|method|tests?|test cases?|implementation)\b/i.test(value)
-  || /\b(show|provide)\s+(?:me\s+)?(?:the\s+|a\s+|an\s+)?(?:code|implementation|function|method|tests?|test cases?)\b/i.test(value)
-  || /\b(code this|write tests?|add tests?|fix the code|implement it)\b/i.test(value);
+  /\b(write|implement|add|fix)\s+(?:the\s+|a\s+|an\s+|some\s+)?(?:code|function|method|tests?|test cases?|implementation)\b/i.test(requestTextForCodeIntent(value))
+  || /\b(show|provide)\s+(?:me\s+)?(?:the\s+|a\s+|an\s+)?(?:code|implementation|function|method|tests?|test cases?)\b/i.test(requestTextForCodeIntent(value))
+  || /\b(code this|write tests?|add tests?|fix the code|implement it)\b/i.test(requestTextForCodeIntent(value));
 
 const compactLiveSpokenAnswer = (
   value: string,
@@ -168,7 +174,9 @@ const compactLiveSpokenAnswer = (
   if (options.mode === "live_coding" && !explicitlyRequestsCode(options.userInput)) {
     text = text
       .replace(/```[\s\S]*?```/g, "")
+      .replace(/```[\s\S]*$/g, "")
       .replace(/^\s*(here(?:'s| is)?|below is|this is)\b.*\b(code|snippet|implementation)\b.*:?$/gim, "")
+      .replace(/\bhere(?:'s| is)?\s+a\s+(?:python\s+)?(?:function|solution|implementation)[^:.]*:\s*/gi, "")
       .replace(/^\s*[-*]\s*/gm, "")
       .replace(/^#{1,6}\s*/gm, "")
       .trim();
@@ -859,6 +867,13 @@ function App() {
           });
         }
       }
+      if (result.ok) {
+        const repaired = repairLiveCodingAnswerCoverage(text, effectiveQuestion, context.activeMode);
+        if (repaired !== text) {
+          text = repaired;
+          emitAnswerTiming("live_coding_repaired", { textChars: text.length });
+        }
+      }
       if (result.ok && !parsedStructured && context.activeMode === "behavioral") {
         const plainGrounding = assessPlainInterviewAnswerGrounding(context, effectiveQuestion, text);
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
@@ -1122,7 +1137,7 @@ function App() {
         return [
           latestPrompt,
           `visible_screen: ${screen.slice(-1800)}`,
-          "task: Use the latest transcript together with the visible coding context to provide the next useful live-coding answer.",
+          "task: Use the latest transcript together with the visible coding context to provide the next useful live-coding answer. If no one explicitly asked to write code or tests, explain the optimal approach, invariant, and complexity without code.",
         ].join("\n");
       }
       return latestPrompt;

@@ -175,6 +175,7 @@ const liveSpokenPromptInstructions = [
   "For live coding, use the standard optimal approach when it is visible or strongly implied, including in-place pointer updates, bounds, invariants, or data structures as applicable.",
   "For live coding, include the key invariant or approach and time/space complexity first.",
   "For live coding, include code only when the latest prompt explicitly asks to write code, fix code, or add tests.",
+  "A visible problem statement or function signature is not by itself a request to output code; for an intro Answer press, explain the approach without code.",
 ].join("\n");
 
 const buildLiveSpokenPrompt = (prompt) => {
@@ -260,6 +261,19 @@ const writeActiveSessionTrace = (status = "active") => {
   fs.writeFileSync(activeSessionTrace.path, `${JSON.stringify(serialized, null, 2)}\n`);
   return activeSessionTrace.path;
 };
+
+const sanitizeCaptureSourceName = (name) => {
+  const value = String(name || "").trim();
+  if (!value) return "";
+  if (/callpilot e2e video player/i.test(value)) return "CallPilot E2E Video Player";
+  if (/callpilot/i.test(value)) return "CallPilot window";
+  if (/visual studio code|code\.exe/i.test(value)) return "Visual Studio Code window";
+  if (/google chrome|chrome/i.test(value)) return "Google Chrome window";
+  if (/chatgpt/i.test(value)) return "ChatGPT window";
+  if (/screen|toda la pantalla|entire screen/i.test(value)) return value;
+  return value.split(/\s+-\s+/).pop()?.slice(0, 80) || "Window";
+};
+
 const startSessionTrace = (options = {}) => {
   const id = `session-${safeIsoStamp()}-${crypto.randomBytes(3).toString("hex")}`;
   activeSessionTrace = {
@@ -1420,6 +1434,30 @@ const removeNonTechnicalOcrNoise = (text) => String(text || "")
   .join("\n")
   .trim();
 
+const extractTechnicalOcrFocus = (text) => String(text || "")
+  .split("\n")
+  .map((line) => line.replace(/\s+/g, " ").trim())
+  .filter(Boolean)
+  .filter((line) => (
+    /\b(given|return|determine|valid|constraints?|examples?|input|output|edge cases?)\b/i.test(line)
+    || /\b(linked list|binary tree|bst|binary search tree|node|root|left|right|subtree|odd|even|indices)\b/i.test(line)
+    || /\b(def|class|return|function|while|for|if|else)\b/.test(line)
+    || /\b(error|exception|traceback|failed|assert|test|expected|actual)\b/i.test(line)
+  ))
+  .slice(0, 28)
+  .join("\n")
+  .trim();
+
+const stripVisionProblemGuessesWhenOcrHasProblem = (analysisText, visibleText) => {
+  if (!/\b(given|constraints?|input|output|return)\b/i.test(String(visibleText || ""))) return analysisText;
+  return String(analysisText || "")
+    .split("\n")
+    .filter((line) => !/\b(coding problem .*asks|asks the user to write|overall, the image shows|likely python or java)\b/i.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+};
+
 const hasVisibleCodeLikeText = (text) =>
   String(text || "")
     .split("\n")
@@ -1427,7 +1465,7 @@ const hasVisibleCodeLikeText = (text) =>
 
 const stripInventedCodeWhenNoVisibleCode = (analysisText, visibleText) => {
   if (hasVisibleCodeLikeText(visibleText)) return analysisText;
-  return String(analysisText || "")
+  return stripVisionProblemGuessesWhenOcrHasProblem(analysisText, visibleText)
     .replace(/\*\*Code\*\*[\s\S]*?(?=\n\n\*\*|Visible OCR text:|$)/gi, "")
     .replace(/\bCode:\s*[\s\S]*?(?=\n\n|Visible OCR text:|$)/gi, "")
     .replace(/```[\s\S]*?```/g, "")
@@ -2340,7 +2378,7 @@ ipcMain.handle("screen:capture", async (_event, input) => {
     const strictWindowTitle = Boolean(input?.strictWindowTitle);
     const sourceTypes = preferWindowTitle ? ["window", "screen"] : ["screen"];
     const sources = await desktopCapturer.getSources({ types: sourceTypes, thumbnailSize: { width: 1600, height: 1000 } });
-    const sourceNames = sources.map((item) => item.name).filter(Boolean).slice(0, 40);
+    const sourceNames = sources.map((item) => sanitizeCaptureSourceName(item.name)).filter(Boolean).slice(0, 40);
     const preferredWindowSource = preferWindowTitle
       ? sources.find((item) => item.id?.startsWith("window:") && String(item.name || "").toLowerCase().includes(preferWindowTitle))
       : null;
@@ -2467,7 +2505,10 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
       "Analyze this screenshot for a live coding interview assistant.",
       "Use the screenshot image, not OCR text, as the source of truth.",
       visibleOcrText ? `Local OCR visible text, for exact transcription support:\n${visibleOcrText}` : "",
-      "Return only JSON. Include visibleTextExact as short verbatim snippets of important text that is actually visible in the screenshot.",
+      "Return only JSON with these fields: visibleTextExact, technicalFocus, problemStatement, visibleCode, testsOrErrors, constraints, examples, inferredTask, ignoredUi.",
+      "Put coding-problem, code, terminal, tests, errors, constraints, examples, function names, variables, and complexity hints in technicalFocus.",
+      "Put replay/player/browser/app chrome, logos, buttons, signup banners, video titles, and generic screenshot descriptions in ignoredUi, not in technicalFocus.",
+      "Include visibleTextExact as short verbatim snippets of important text that is actually visible in the screenshot.",
       "Do not invent code, errors, test results, or text that is not visible.",
       "Do not write an implementation or code block unless code is visibly present in the screenshot. For problem-statement-only screenshots, describe the approach without code.",
       "If unrelated chat, Slack, calendar, or notification content is visible, do not transcribe or treat that message as part of the technical problem.",
@@ -2504,8 +2545,10 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
       }
       const text = stripInventedCodeWhenNoVisibleCode(extractOpenAICompatibleChatText(payload), visibleOcrText);
       const codeOcrText = normalizeCodeLikeOcrText(visibleOcrText);
+      const technicalOcrFocus = extractTechnicalOcrFocus(codeOcrText || visibleOcrText);
       const enrichedText = [
-        text,
+        technicalOcrFocus ? `Technical OCR focus:\n${technicalOcrFocus}` : "",
+        text ? `Vision summary (secondary; ignore if it conflicts with OCR):\n${text}` : "",
         visibleOcrText ? `Visible OCR text:\n${visibleOcrText}` : "",
         codeOcrText && codeOcrText !== visibleOcrText ? `Code-normalized OCR text:\n${codeOcrText}` : "",
       ].filter(Boolean).join("\n\n");
@@ -2517,6 +2560,7 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
         ocrText: visibleOcrText || "",
         rawOcrText: ocr?.text || "",
         codeOcrText,
+        technicalOcrFocus,
         ocrConfidence: ocr?.confidence,
         error: enrichedText ? undefined : "empty_nvidia_vision_response",
       });
@@ -2551,8 +2595,10 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
     }
     const text = stripInventedCodeWhenNoVisibleCode(extractOpenAIResponseText(payload), visibleOcrText);
     const codeOcrText = normalizeCodeLikeOcrText(visibleOcrText);
+    const technicalOcrFocus = extractTechnicalOcrFocus(codeOcrText || visibleOcrText);
     const enrichedText = [
-      text,
+      technicalOcrFocus ? `Technical OCR focus:\n${technicalOcrFocus}` : "",
+      text ? `Vision summary (secondary; ignore if it conflicts with OCR):\n${text}` : "",
       visibleOcrText ? `Visible OCR text:\n${visibleOcrText}` : "",
       codeOcrText && codeOcrText !== visibleOcrText ? `Code-normalized OCR text:\n${codeOcrText}` : "",
     ].filter(Boolean).join("\n\n");
@@ -2564,6 +2610,7 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
       ocrText: visibleOcrText || "",
       rawOcrText: ocr?.text || "",
       codeOcrText,
+      technicalOcrFocus,
       ocrConfidence: ocr?.confidence,
       error: enrichedText ? undefined : "empty_openai_response",
     });
