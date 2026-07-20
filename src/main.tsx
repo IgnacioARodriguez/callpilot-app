@@ -1458,7 +1458,7 @@ function App() {
     };
   }, [ask, handleFinalTranscript, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence, preferredLanguage]);
 
-  const stopLiveRecording = () => {
+  const stopLiveRecording = React.useCallback(() => {
     liveContinueRef.current = false;
     if (localSegmentTimerRef.current !== null) {
       window.clearTimeout(localSegmentTimerRef.current);
@@ -1490,7 +1490,15 @@ function App() {
     nativelySessionsRef.current = [];
     setIsDictating(false);
     setLiveAssistStatus("Live assist idle");
-  };
+  }, []);
+
+  React.useEffect(() => {
+    const unsubscribe = window.callpilotDesktop?.onSessionEnded?.(() => {
+      stopLiveRecording();
+      setDesktopStatus("Overlay session ended; live transcription stopped");
+    });
+    return () => unsubscribe?.();
+  }, [stopLiveRecording]);
 
   React.useEffect(() => {
     if (!isDictating) return;
@@ -2092,6 +2100,12 @@ function App() {
     if (forceStart) {
       stopLiveRecording();
     }
+    void window.callpilotDesktop?.recordSessionEvent?.("live_transcription_start_requested", {
+      forceStart,
+      provider: liveTranscriptionProvider,
+      audioSource: liveAudioSource,
+      latencyPreset: liveLatencyPreset,
+    });
 
     if (liveTranscriptionProvider === "browser" && (liveAudioSource === "system" || liveAudioSource === "both")) {
       setLiveTranscriptionProvider("local");
@@ -2196,10 +2210,10 @@ function App() {
     applyInterviewSetup(selectedSetup);
     autoAnswerEnabledRef.current = false;
     setAutoAnswerEnabled(false);
-    await toggleDictation(true);
     const result = await window.callpilotDesktop.startSession({ mode: selectedSetup === "live_coding" ? "live_coding" : "technical_qa" });
     if (result.ok) {
       await window.callpilotDesktop.recordSessionEvent?.("evidence_embedder_warmup_state", evidenceEmbedderWarmupRef.current).catch(() => undefined);
+      await toggleDictation(true);
       const traceStatus = await window.callpilotDesktop.getSessionTraceStatus?.();
       setDesktopStatus(traceStatus?.path
         ? `Overlay session started. Metrics trace: ${traceStatus.path}`

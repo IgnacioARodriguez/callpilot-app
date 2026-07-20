@@ -74,6 +74,9 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   assert.match(overlay, /onAnswerStatus/);
   assert.match(overlay, /renderFormattedText/);
   assert.match(overlay, /cp-rich-text/);
+  assert.match(preload, /onSessionEnded/);
+  assert.match(app, /onSessionEnded/);
+  assert.match(app, /Overlay session ended; live transcription stopped/);
   assert.match(overlay, /assistantIdByRequest/);
   assert.match(overlay, /lastSequenceByRequest/);
   assert.match(main, /requestId/);
@@ -162,7 +165,7 @@ test("acceptance: live STT chunks are queued instead of dropped while busy", () 
 
 test("acceptance: stopping live recording preserves pending final audio chunks", () => {
   const app = read("src/main.tsx");
-  const stopStart = app.indexOf("const stopLiveRecording = () => {");
+  const stopStart = app.indexOf("const stopLiveRecording = React.useCallback(() => {");
   const stopEnd = app.indexOf("React.useEffect", stopStart);
   const stopBody = app.slice(stopStart, stopEnd);
 
@@ -192,6 +195,22 @@ test("acceptance: Natively stream close is recoverable while audio is still flow
   assert.match(main, /stream\.closed/);
   assert.match(main, /reconnects >= 3/);
   assert.doesNotMatch(main, /if \(!stream \|\| stream\.closed\)[\s\S]{0,220}natively_stream_not_started/);
+});
+
+test("acceptance: session lifecycle stops stale live transcription streams", () => {
+  const main = read("electron/main.cjs");
+  const sessionStart = main.indexOf('ipcMain.handle("session:start"');
+  const sessionEnd = main.indexOf('ipcMain.handle("session:end"');
+  const traceEvent = main.indexOf('ipcMain.handle("session:trace-event"');
+  const startBody = main.slice(sessionStart, sessionEnd);
+  const endBody = main.slice(sessionEnd, traceEvent);
+
+  assert.match(main, /const stopAllNativelyStreams = \(\) =>/);
+  assert.match(startBody, /startSessionTrace\(options\)[\s\S]*stopAllNativelyStreams\(\)/);
+  assert.match(startBody, /live_transcription_runtime_reset/);
+  assert.match(endBody, /mainWindow\?\.webContents\.send\("session:ended"\)/);
+  assert.match(endBody, /stopAllNativelyStreams\(\)/);
+  assert.match(endBody, /reason: "session_end"/);
 });
 
 test("acceptance: Natively partial auto-answer waits for turn stability", () => {
@@ -470,7 +489,14 @@ test("acceptance: session start clears stale live transcription streams", () => 
 
   assert.ok(startSessionStart > 0, "startSession helper must exist");
   assert.match(startSessionBody, /stopLiveRecording\(\)[\s\S]*resetSessionRuntimeContext\(\)/);
+  assert.ok(
+    startSessionBody.indexOf("window.callpilotDesktop.startSession") < startSessionBody.indexOf("await toggleDictation(true)"),
+    "session trace must open before live transcription starts so STT startup failures are observable",
+  );
   assert.match(toggleBody, /if\s*\(forceStart\)\s*{\s*stopLiveRecording\(\);/);
+  assert.match(toggleBody, /live_transcription_start_requested/);
+  assert.match(toggleBody, /provider:\s*liveTranscriptionProvider/);
+  assert.match(toggleBody, /audioSource:\s*liveAudioSource/);
   assert.match(app, /local_stt_started/);
   assert.match(app, /local_stt_blob_received/);
 });

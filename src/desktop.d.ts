@@ -182,6 +182,7 @@ declare global {
       getShortcutHealth: () => Promise<ShortcutHealth[]>;
       onShortcut: (callback: (action: DesktopShortcutAction) => void) => () => void;
       onManualAnswerRequest: (callback: () => void) => () => void;
+      onSessionEnded: (callback: () => void) => () => void;
       onManualAnswerStatus: (callback: (payload: { ok: boolean; status: string; error?: string }) => void) => () => void;
       onAnswerHeadline: (callback: (payload: { requestId?: string; headline: string; keywords: string[] }) => void) => () => void;
       onAnswerDetailChunk: (callback: (payload: { requestId?: string; sequence?: number; text?: string; done?: boolean; error?: string } | string) => void) => () => void;

@@ -52,6 +52,11 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     ipcRenderer.on("answer:manual-request", handler);
     return () => ipcRenderer.removeListener("answer:manual-request", handler);
   },
+  onSessionEnded: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on("session:ended", handler);
+    return () => ipcRenderer.removeListener("session:ended", handler);
+  },
   onManualAnswerStatus: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on("answer:manual-status", handler);

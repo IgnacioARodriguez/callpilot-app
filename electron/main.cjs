@@ -494,6 +494,12 @@ const stopNativelyStream = (streamId) => {
   return { ok: true };
 };
 
+const stopAllNativelyStreams = () => {
+  const streamIds = [...nativelyStreams.keys()];
+  for (const streamId of streamIds) stopNativelyStream(streamId);
+  return streamIds;
+};
+
 const openNativelyStreamSocket = (streamId, config, existing = {}) => {
   const WebSocketCtor = globalThis.WebSocket;
   const ws = new WebSocketCtor(nativelyTranscriptionUrl());
@@ -1942,6 +1948,11 @@ ipcMain.handle("stealth:reset-privacy", () => {
 ipcMain.handle("privacy:check", () => assessPrivacyState());
 ipcMain.handle("session:start", async (_event, options = {}) => {
   startSessionTrace(options);
+  const stoppedStreams = stopAllNativelyStreams();
+  appendTraceEvent("live_transcription_runtime_reset", {
+    stoppedNativelyStreams: stoppedStreams.length,
+    streamIds: stoppedStreams,
+  });
   await createOverlayWindow();
   if (options.mode === "live_coding") {
     await createCodingWindow();
@@ -1954,6 +1965,13 @@ ipcMain.handle("session:start", async (_event, options = {}) => {
   return { ok: true };
 });
 ipcMain.handle("session:end", () => {
+  mainWindow?.webContents.send("session:ended");
+  const stoppedStreams = stopAllNativelyStreams();
+  appendTraceEvent("live_transcription_runtime_reset", {
+    reason: "session_end",
+    stoppedNativelyStreams: stoppedStreams.length,
+    streamIds: stoppedStreams,
+  });
   closeOverlayWindow();
   closeCodingWindow();
   mainWindow?.show();
@@ -2129,7 +2147,7 @@ ipcMain.handle("natively:stop", (_event, input) => {
   appendTraceEvent("natively_stop_requested", { streamId: streamId || "all" });
   writeActiveSessionTrace("active");
   if (streamId) return stopNativelyStream(streamId);
-  for (const id of [...nativelyStreams.keys()]) stopNativelyStream(id);
+  stopAllNativelyStreams();
   return { ok: true };
 });
 ipcMain.handle("session:export-file", async (_event, session) => {
