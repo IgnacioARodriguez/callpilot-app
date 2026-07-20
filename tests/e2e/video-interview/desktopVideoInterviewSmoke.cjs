@@ -7,6 +7,7 @@ const {
   assertManifestAllowedForEvaluation,
   cliDatasetOptions,
 } = require("../../eval/datasetPolicy.cjs");
+const { createEvaluationRecord } = require("../../eval/evaluationContract.cjs");
 
 const root = path.resolve(__dirname, "..", "..", "..");
 loadDotEnv(root);
@@ -686,6 +687,13 @@ const evaluateCheckpoint = (checkpoint, checkpointReport) => {
   };
 };
 
+const deterministicScoresForCheckpoint = (evaluation) => ({
+  transcription_ok: Boolean(evaluation?.transcription?.ok),
+  vision_ok: Boolean(evaluation?.vision?.ok),
+  context_ok: Boolean(evaluation?.context?.ok),
+  technical_answer_ok: Boolean(evaluation?.technical_answer?.ok),
+});
+
 const waitForAnswer = async (mainClient, overlayClient) => {
   const startedAt = Date.now();
   recordRealCall();
@@ -1164,6 +1172,55 @@ const main = async () => {
       }
 
       checkpointReport.evaluation = evaluateCheckpoint(checkpoint, checkpointReport);
+      const deterministicScores = deterministicScoresForCheckpoint(checkpointReport.evaluation);
+      checkpointReport.evaluation_record = createEvaluationRecord({
+        run_id: `${runId}-${checkpoint.id}`,
+        dataset: datasetMetadata.dataset,
+        split: datasetMetadata.split,
+        scenario_id: checkpoint.id,
+        source_id: datasetMetadata.source_id,
+        source_type: datasetMetadata.source_type,
+        provider,
+        model: modelName,
+        model_parameters: {
+          live_transcription_provider: liveTranscriptionProvider,
+          live_audio_source: liveAudioSource,
+          preferred_language: preferredLanguage,
+          answer_verbosity: answerVerbosity,
+          vision_model: visionModelName,
+        },
+        input_snapshot: {
+          checkpoint_id: checkpoint.id,
+          video_timestamp_ms: checkpoint.timestamp_ms,
+          playback_start_ms: checkpointReport.playback_start_ms,
+          reason_for_answer: checkpoint.reason,
+          expected_topics: checkpoint.evaluation?.expected_topics || [],
+        },
+        available_transcript: checkpointReport.transcript_before_answer || "",
+        available_screen_context: checkpointReport.callpilot_screen_analysis?.text || "",
+        raw_model_output: checkpointReport.answer || "",
+        parsed_output: null,
+        recovered_output: null,
+        final_rendered_output: checkpointReport.answer || "",
+        raw_model_pass: Boolean(checkpointReport.answer?.trim()) && checkpointReport.answer_completion_status === "completed",
+        parsed_pass: false,
+        recovered_pass: Boolean(checkpointReport.evaluation?.technical_answer?.ok),
+        retry_count: 0,
+        repair_events: [],
+        deterministic_scores: deterministicScores,
+        execution_scores: {},
+        judge_scores: null,
+        latency: {
+          first_usable_ms: checkpointReport.latency_ms?.trigger_to_first_token ?? null,
+          complete_ms: checkpointReport.latency_ms?.trigger_to_complete ?? null,
+        },
+        failure_class: Object.values(deterministicScores).every(Boolean) ? null : "desktop_video_deterministic_failure",
+        severity: checkpointReport.evaluation?.technical_answer?.ok ? null : "P1",
+        artifacts: {
+          player_screenshot_path: checkpointReport.player_screenshot_path,
+          screen_capture_path: checkpointReport.screen_capture_path,
+        },
+      });
     }
 
     const endSession = await evaluate(mainClient, `window.callpilotDesktop.endSession()`).catch((error) => ({ ok: false, error: error.message }));
@@ -1202,6 +1259,8 @@ const main = async () => {
     ? `Median observed answer latency: ${completedLatencies[Math.floor(completedLatencies.length / 2)]} ms.`
     : "No completed answer latency observed.";
   report.summary.stability = errorCount === 0 ? "No runner errors recorded." : `${errorCount} runner/provider errors recorded.`;
+  report.evaluation_version = report.checkpoints[0]?.evaluation_record?.evaluation_version || "callpilot-eval-result-v1";
+  report.evaluation_records = report.checkpoints.map((checkpoint) => checkpoint.evaluation_record).filter(Boolean);
   report.process_output = {
     callpilot_stdout_tail: callpilotStdout.slice(-2000),
     callpilot_stderr_tail: callpilotStderr.slice(-2000),

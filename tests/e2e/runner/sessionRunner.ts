@@ -170,6 +170,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "../../..");
 const require = createRequire(import.meta.url);
 const { loadDotEnv } = require("../../../electron/env.cjs");
+const { createEvaluationRecord } = require("../../eval/evaluationContract.cjs");
 loadDotEnv(root);
 
 const fixturesDir = path.join(root, "tests", "fixtures");
@@ -3844,6 +3845,44 @@ const run = async () => {
   }
 
   const failed = results.filter((result) => !Object.values(result.deterministicChecks).every(Boolean));
+  const evaluationRecords = results.map((result) => createEvaluationRecord({
+    run_id: `${selectedTrack}-${result.scenarioId}-${result.run}`,
+    dataset: "e2e-fixtures",
+    split: "development",
+    scenario_id: result.scenarioId,
+    source_id: result.track,
+    source_type: "e2e_track",
+    provider: "callpilot-e2e",
+    model: "configured-in-app",
+    model_parameters: {
+      track: result.track,
+      run: result.run,
+    },
+    input_snapshot: {
+      diagnostics: result.diagnostics,
+    },
+    raw_model_output: String((result.diagnostics as Record<string, unknown>)?.answerText || ""),
+    parsed_output: (result.diagnostics as Record<string, unknown>)?.structuredValidation || null,
+    recovered_output: null,
+    final_rendered_output: String((result.diagnostics as Record<string, unknown>)?.answerText || ""),
+    raw_model_pass: Boolean(result.deterministicChecks.providerOk ?? Object.values(result.deterministicChecks).every(Boolean)),
+    parsed_pass: "structuredSchemaValid" in result.deterministicChecks
+      ? Boolean(result.deterministicChecks.structuredSchemaValid)
+      : false,
+    recovered_pass: Object.values(result.deterministicChecks).every(Boolean),
+    retry_count: 0,
+    repair_events: [],
+    deterministic_scores: result.deterministicChecks,
+    execution_scores: (result.diagnostics as Record<string, unknown>)?.executableValidation || {},
+    judge_scores: result.judge,
+    latency: {
+      first_usable_ms: result.latency_ms.first_token,
+      complete_ms: result.latency_ms.total,
+    },
+    failure_class: Object.values(result.deterministicChecks).every(Boolean) ? null : "e2e_deterministic_failure",
+    severity: Object.values(result.deterministicChecks).every(Boolean) ? null : "P1",
+    artifacts: {},
+  }));
   const report = {
     generatedAt: new Date().toISOString(),
     runner: "tests/e2e/runner/sessionRunner.ts",
@@ -3857,6 +3896,8 @@ const run = async () => {
       failed: failed.length,
       passed: results.length - failed.length,
     },
+    evaluationVersion: evaluationRecords[0]?.evaluation_version || "callpilot-eval-result-v1",
+    evaluationRecords,
     results,
   };
 

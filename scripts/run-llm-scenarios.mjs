@@ -17,6 +17,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const require = createRequire(import.meta.url);
 const { loadDotEnv } = require("../electron/env.cjs");
+const {
+  createEvaluationRecord,
+  sha256Json,
+} = require("../tests/eval/evaluationContract.cjs");
 loadDotEnv(root);
 const electronBin = process.platform === "win32"
   ? path.join(root, "node_modules", "electron", "dist", "electron.exe")
@@ -1257,7 +1261,18 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     mode: scenario.mode === "live_coding" ? "coding" : "interview",
     maxInterviewWords: scenario.category === "manual_interview_hard" ? 95 : 140,
   });
+  const preRepairText = text;
   text = repairTechnicalDebuggingAnswerCoverage(text, scenario.userInput, scenario.mode);
+  const repairEvents = text !== preRepairText ? [{
+    type: "technical_debugging_answer_coverage",
+    cause: "post_format_answer_coverage",
+    stage: "final_render",
+    input_hash: sha256Json({ text: preRepairText, userInput: scenario.userInput, mode: scenario.mode }),
+    output_hash: sha256Json({ text, userInput: scenario.userInput, mode: scenario.mode }),
+    duration_ms: null,
+    result: "changed",
+    semantic: true,
+  }] : [];
   const modelText = rawText;
   const normalizeLatin = (value) => String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const lower = normalizeLatin(text);
@@ -1358,6 +1373,9 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     chars: text.length,
     rawChars: rawText.length,
     renderedText: text,
+    parsedOutput: structured,
+    recoveredText: text !== preRepairText ? text : null,
+    repairEvents,
     modelText,
     rawModelChecks,
     checks,
@@ -1439,6 +1457,40 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
   const preflightDetection = detectQuestionIntent(scenario.userInput, scenario.context.preferredLanguage);
   if (scenario.expectedDispatch === false) {
     const ok = !preflightDetection.shouldDispatch;
+    const evaluationRecord = createEvaluationRecord({
+      run_id: `${scenario.id}-${Date.now()}`,
+      dataset: "llm-scenarios",
+      split: "development",
+      scenario_id: scenario.id,
+      source_id: scenario.category || "llm-scenario",
+      source_type: "synthetic_scenario",
+      provider,
+      model: modelName,
+      input_snapshot: {
+        mode: scenario.mode,
+        category: scenario.category,
+        label: scenario.label,
+        expected_dispatch: false,
+      },
+      available_transcript: (scenario.context.transcript?.messages || [])
+        .map((item) => `${item.speaker || item.role || "unknown"}: ${item.text}`)
+        .join("\n"),
+      available_screen_context: scenario.context.screenContext?.visibleText || "",
+      raw_model_output: "",
+      parsed_output: null,
+      recovered_output: null,
+      final_rendered_output: "",
+      raw_model_pass: ok,
+      parsed_pass: ok,
+      recovered_pass: ok,
+      retry_count: 0,
+      repair_events: [],
+      deterministic_scores: { noDispatchExpected: ok },
+      execution_scores: {},
+      latency: { complete_ms: 0 },
+      failure_class: ok ? null : "unexpected_dispatch",
+      severity: ok ? null : "P1",
+    });
     return {
       id: scenario.id,
       label: scenario.label,
@@ -1458,6 +1510,7 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
         grounding: null,
         questionDetection: preflightDetection,
       },
+      evaluationRecord,
       response: { ok, text: "", provider, modelName, requestId: `${scenario.id}-preflight`, error: ok ? undefined : "unexpected_dispatch" },
     };
   }
@@ -1472,9 +1525,11 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
     liveSpokenOutput,
   };
   const started = performance.now();
+  let retryCount = 0;
   let result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify(input)})`);
   const parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
   if (result.ok && scenario.mode === "live_coding" && shouldRetryLiveCodingCompleteness(parsedStructured, scenario.prompt.user, result.text)) {
+    retryCount += 1;
     const retryPrompt = buildLiveCodingCompletenessRetryPrompt(scenario.prompt);
     result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify({
       ...input,
@@ -1487,6 +1542,7 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
   for (let validationAttempt = 1; validationAttempt <= 2; validationAttempt += 1) {
     const executableValidation = executableAssertionsForResult(scenario, result);
     if (!result.ok || scenario.mode !== "live_coding" || !executableValidation.required || executableValidation.ok) break;
+    retryCount += 1;
     const repairPrompt = buildExecutableRepairPrompt(scenario.prompt, result, executableValidation, scenario);
     result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify({
       ...input,
@@ -1499,12 +1555,59 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
   const elapsedMs = Math.round(performance.now() - started);
   const metrics = scoreAnswer(scenario, result, elapsedMs);
   const observability = buildScenarioObservability(scenario, metrics, result);
+  const evaluationRecord = createEvaluationRecord({
+    run_id: `${scenario.id}-${Date.now()}`,
+    dataset: "llm-scenarios",
+    split: "development",
+    scenario_id: scenario.id,
+    source_id: scenario.category || "llm-scenario",
+    source_type: "synthetic_scenario",
+    provider,
+    model: modelName,
+    model_parameters: {
+      maxTokens: scenario.maxTokens,
+      structuredOutput: input.structuredOutput,
+      liveSpokenOutput: input.liveSpokenOutput,
+    },
+    input_snapshot: {
+      mode: scenario.mode,
+      category: scenario.category,
+      label: scenario.label,
+      prompt_debug: scenario.prompt.debug,
+    },
+    available_transcript: (scenario.context.transcript?.messages || [])
+      .map((item) => `${item.speaker || item.role || "unknown"}: ${item.text}`)
+      .join("\n"),
+    available_screen_context: scenario.context.screenContext?.visibleText || "",
+    raw_model_output: result?.text || "",
+    parsed_output: metrics.parsedOutput,
+    recovered_output: metrics.recoveredText,
+    final_rendered_output: metrics.renderedText,
+    raw_model_pass: Boolean(result?.ok) && Object.values(metrics.rawModelChecks || {}).every(Boolean),
+    parsed_pass: Boolean(metrics.parsedOutput),
+    recovered_pass: Boolean(metrics.qualityOk),
+    retry_count: retryCount,
+    repair_events: metrics.repairEvents || [],
+    deterministic_scores: metrics.qualityChecks || metrics.checks || {},
+    execution_scores: metrics.codingContract?.executableAssertions || {},
+    judge_scores: null,
+    latency: {
+      complete_ms: elapsedMs,
+      target_ms: scenario.latencyTargetMs || null,
+    },
+    failure_class: metrics.qualityOk ? null : "deterministic_quality_failure",
+    severity: metrics.qualityOk ? null : "P1",
+    artifacts: {
+      request_id: result?.requestId || null,
+    },
+  });
   return {
     id: scenario.id,
     label: scenario.label,
     mode: scenario.mode,
     promptDebug: scenario.prompt.debug,
     observability,
+    evaluationRecord,
     metrics,
     response: result,
   };
@@ -1623,6 +1726,8 @@ const run = async () => {
       },
       corpus: summarizeCorpus(selectedDefinitions),
       observabilitySummary: summarizeObservability(results),
+      evaluationVersion: results[0]?.evaluationRecord?.evaluation_version || "callpilot-eval-result-v1",
+      evaluationRecords: results.map((item) => item.evaluationRecord),
       results,
     };
     const qualityPassed = results.every((item) => item.metrics.qualityOk ?? item.metrics.ok);
