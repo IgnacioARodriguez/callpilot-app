@@ -8,7 +8,9 @@ const {
   assertManifestAllowedForEvaluation,
   cliDatasetOptions,
 } = require("../../eval/datasetPolicy.cjs");
+const { readDatasetJsonl } = require("../../eval/datasetCases.cjs");
 const { createEvaluationRecord, summarizeEvaluationRecords } = require("../../eval/evaluationContract.cjs");
+const { scoreEvaluationRecordForCase } = require("../../eval/scorers/evaluationScoring.cjs");
 
 const root = path.resolve(__dirname, "..", "..", "..");
 loadDotEnv(root);
@@ -227,6 +229,16 @@ const loadOrCreateManifest = () => {
     requested: { ...datasetOptions, configPath: videoConfigPath },
   });
   return { manifestPath, manifest, datasetMetadata };
+};
+
+const datasetCasesByCheckpoint = (manifestPath) => {
+  const jsonlPath = path.join(path.dirname(manifestPath), "dataset.jsonl");
+  if (!fs.existsSync(jsonlPath)) return { jsonlPath: null, casesByCheckpoint: new Map() };
+  const cases = readDatasetJsonl(jsonlPath);
+  return {
+    jsonlPath,
+    casesByCheckpoint: new Map(cases.map((item) => [String(item?.input?.checkpoint_id || ""), item])),
+  };
 };
 
 const selectCheckpoints = (manifest) => {
@@ -833,6 +845,7 @@ const writeMarkdownReport = (reportPath, report) => {
 const main = async () => {
   fs.mkdirSync(runDir, { recursive: true });
   const { manifestPath, manifest, datasetMetadata } = loadOrCreateManifest();
+  const datasetCases = datasetCasesByCheckpoint(manifestPath);
   const checkpoints = selectCheckpoints(manifest);
   const audioSegments = prepareAudioSegments(manifest, checkpoints);
 
@@ -1047,8 +1060,24 @@ const main = async () => {
           artifacts: {
             screen_capture_path: checkpoint.source_frame_path,
             audio_segment_path: segment?.path || null,
+            dataset_jsonl_path: datasetCases.jsonlPath,
           },
         });
+        const datasetCase = datasetCases.casesByCheckpoint.get(checkpoint.id);
+        if (datasetCase) {
+          const sharedScores = scoreEvaluationRecordForCase(evaluationRecord, datasetCase);
+          evaluationRecord.deterministic_scores = {
+            ...evaluationRecord.deterministic_scores,
+            ...sharedScores.deterministic_scores,
+          };
+          evaluationRecord.execution_scores = sharedScores.execution_scores;
+          evaluationRecord.judge_scores = sharedScores.judge_scores;
+          evaluationRecord.failure_class = Object.values(evaluationRecord.deterministic_scores).every(Boolean)
+            && (sharedScores.execution_scores.skipped || sharedScores.execution_scores.ok)
+            ? null
+            : "local_video_shared_scoring_failure";
+          evaluationRecord.severity = evaluationRecord.failure_class ? "P1" : null;
+        }
 
         report.checkpoints.push({
           checkpoint_id: repeatCount > 1 ? `${checkpoint.id}-repeat-${pass + 1}` : checkpoint.id,
@@ -1071,6 +1100,7 @@ const main = async () => {
           })),
           latency_ms: answer.latency_ms,
           evaluation,
+          dataset_case_id: datasetCase?.case_id || null,
           evaluation_record: evaluationRecord,
           errors,
         });
