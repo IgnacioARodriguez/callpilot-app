@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   captureScreenshot: (input) => ipcRenderer.invoke("screen:capture", input),
   recognizeScreenText: (input) => ipcRenderer.invoke("screen:ocr", input),
   analyzeScreenshot: (input) => ipcRenderer.invoke("screen:analyze", input),
+  publishScreenContext: (payload) => ipcRenderer.invoke("screen:publish-context", payload),
   startSession: (options) => ipcRenderer.invoke("session:start", options),
   endSession: () => ipcRenderer.invoke("session:end"),
   getSessionTraceStatus: () => ipcRenderer.invoke("session:trace-status"),
@@ -95,5 +96,10 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on("natively:status", handler);
     return () => ipcRenderer.removeListener("natively:status", handler);
+  },
+  onScreenContextPublished: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("screen:context-published", handler);
+    return () => ipcRenderer.removeListener("screen:context-published", handler);
   },
 });

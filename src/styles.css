@@ -366,6 +366,15 @@ button:disabled {
   gap: 2px;
 }
 
+.cp-coding__actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  -webkit-app-region: no-drag;
+}
+
 .cp-coding__bar strong {
   color: #18323b;
   font-size: 13px;
@@ -382,6 +391,13 @@ button:disabled {
   padding: 5px 9px;
   font-size: 12px;
   -webkit-app-region: no-drag;
+}
+
+.cp-coding__actions span {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cp-coding__body {

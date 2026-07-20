@@ -2443,6 +2443,35 @@ ipcMain.handle("screen:ocr", async (_event, input) => {
   writeActiveSessionTrace("active");
   return result;
 });
+ipcMain.handle("screen:publish-context", (_event, payload) => {
+  const screenshotPath = typeof payload?.screenshotPath === "string" ? payload.screenshotPath : "";
+  const visibleText = typeof payload?.visibleText === "string" ? payload.visibleText : "";
+  const displayName = typeof payload?.displayName === "string" ? payload.displayName : "";
+  const source = typeof payload?.source === "string" ? payload.source : "unknown";
+  if (!screenshotPath && !visibleText.trim()) {
+    appendTraceEvent("screen_context_publish_failed", { source, error: "empty_screen_context" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "empty_screen_context" };
+  }
+  const contextPayload = {
+    screenshotPath,
+    visibleText,
+    displayName,
+    source,
+    capturedAt: typeof payload?.capturedAt === "number" ? payload.capturedAt : Date.now(),
+  };
+  appendTraceEvent("screen_context_published", {
+    source,
+    hasScreenshot: Boolean(screenshotPath),
+    displayName,
+    text: textSummary(visibleText, 180),
+    fileName: screenshotPath ? path.basename(screenshotPath) : "",
+  });
+  writeActiveSessionTrace("active");
+  mainWindow?.webContents.send("screen:context-published", contextPayload);
+  sendToSessionWindows("screen:context-published", contextPayload);
+  return { ok: true };
+});
 ipcMain.handle("screen:analyze", async (_event, input) => {
   const startedAt = Date.now();
   const imagePath = typeof input?.path === "string" ? input.path : "";

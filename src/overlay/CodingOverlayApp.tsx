@@ -1,5 +1,6 @@
 import React from "react";
-import type { CodingAnswerPayload, StructuredAnswerPayload } from "../core";
+import { Camera } from "lucide-react";
+import { normalizeOcrLanguage, ocrConfidenceLabel, type CodingAnswerPayload, type StructuredAnswerPayload } from "../core";
 
 interface StructuredAnswerEvent {
   requestId?: string;
@@ -57,6 +58,8 @@ const CodePlaceholder = () => (
 export default function CodingOverlayApp() {
   const [payload, setPayload] = React.useState<CodingAnswerPayload>(emptyCodingAnswer);
   const [updatedAt, setUpdatedAt] = React.useState<number>(0);
+  const [screenStatus, setScreenStatus] = React.useState("No screenshot selected");
+  const [isCapturingScreen, setIsCapturingScreen] = React.useState(false);
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onStructuredAnswer?.((event: StructuredAnswerEvent) => {
@@ -66,6 +69,62 @@ export default function CodingOverlayApp() {
     });
     return () => dispose?.();
   }, []);
+
+  React.useEffect(() => {
+    const dispose = window.callpilotDesktop?.onScreenContextPublished?.((event) => {
+      if (event.source !== "coding_overlay") return;
+      setScreenStatus(event.visibleText?.trim() ? "Screenshot ready for Answer" : "Screenshot saved without readable text");
+    });
+    return () => dispose?.();
+  }, []);
+
+  const captureScreenContext = async () => {
+    if (
+      !window.callpilotDesktop?.captureScreenshot
+      || !window.callpilotDesktop?.recognizeScreenText
+      || !window.callpilotDesktop?.publishScreenContext
+    ) {
+      setScreenStatus("Desktop screenshot tools unavailable");
+      return;
+    }
+
+    setIsCapturingScreen(true);
+    setScreenStatus("Capturing screen...");
+    try {
+      const capturedAt = Date.now();
+      const screenshot = await window.callpilotDesktop.captureScreenshot();
+      if (!screenshot.ok || !screenshot.path) {
+        setScreenStatus(`Screenshot failed: ${screenshot.error ?? "unknown"}`);
+        return;
+      }
+
+      setScreenStatus("Reading screenshot...");
+      const ocr = await window.callpilotDesktop.recognizeScreenText({
+        path: screenshot.path,
+        language: normalizeOcrLanguage("auto"),
+      });
+      const visibleText = [
+        ocr.ok && ocr.text ? ocr.text : "",
+        ocr.ok
+          ? `Local OCR: ${ocr.language} - confidence ${ocrConfidenceLabel(ocr.confidence)}${typeof ocr.confidence === "number" ? ` (${ocr.confidence.toFixed(1)})` : ""}`
+          : `Local OCR failed: ${ocr.error ?? "no text found"}`,
+      ].filter(Boolean).join("\n\n");
+      const published = await window.callpilotDesktop.publishScreenContext({
+        screenshotPath: screenshot.path,
+        visibleText,
+        displayName: screenshot.displayName,
+        source: "coding_overlay",
+        capturedAt,
+      });
+      setScreenStatus(published.ok
+        ? ocr.ok && ocr.text ? "Screenshot ready for Answer" : "Screenshot saved without readable text"
+        : `Context update failed: ${published.error ?? "unknown"}`);
+    } catch (error) {
+      setScreenStatus(error instanceof Error ? error.message : "Screenshot capture failed");
+    } finally {
+      setIsCapturingScreen(false);
+    }
+  };
 
   const code = displayCode(payload);
   const complexity = [
@@ -79,9 +138,16 @@ export default function CodingOverlayApp() {
       <div className="cp-coding__bar">
         <div>
           <strong>Live Coding</strong>
-          <span>{hasContent ? responseTypeLabel(payload.responseType) : "Solution workspace"}</span>
+          <span>{screenStatus}</span>
         </div>
-        <button type="button" onClick={() => window.callpilotDesktop?.endSession?.()}>End</button>
+        <div className="cp-coding__actions">
+          <button type="button" onClick={captureScreenContext} disabled={isCapturingScreen} title="Capture screen for the next Answer">
+            <Camera size={14} />
+            {isCapturingScreen ? "..." : "Screen"}
+          </button>
+          <span>{hasContent ? responseTypeLabel(payload.responseType) : "Solution workspace"}</span>
+          <button type="button" onClick={() => window.callpilotDesktop?.endSession?.()}>End</button>
+        </div>
       </div>
       <div className="cp-coding__body">
         <section className="cp-code-panel">

@@ -39,6 +39,19 @@ export interface ScreenAnalysisResult {
   error?: string;
 }
 
+export interface PublishScreenContextInput {
+  screenshotPath?: string;
+  visibleText?: string;
+  displayName?: string;
+  source?: string;
+  capturedAt?: number;
+}
+
+export interface PublishScreenContextResult {
+  ok: boolean;
+  error?: string;
+}
+
 export interface CredentialStatus {
   ok: boolean;
   hasOpenAIKey: boolean;
@@ -123,6 +136,7 @@ declare global {
       captureScreenshot: (input?: { preferWindowTitle?: string; strictWindowTitle?: boolean }) => Promise<ScreenshotResult>;
       recognizeScreenText: (input: { path: string; language?: OcrLanguage | "auto" | "english" | "spanish" }) => Promise<OcrResult>;
       analyzeScreenshot: (input: { path: string; modelName: string; provider?: "openai" | "nvidia"; apiKey?: string; nvidiaApiKey?: string }) => Promise<ScreenAnalysisResult>;
+      publishScreenContext: (payload: PublishScreenContextInput) => Promise<PublishScreenContextResult>;
       startSession: (options?: { mode?: AssistantModeId }) => Promise<{ ok: boolean; error?: string }>;
       endSession: () => Promise<{ ok: boolean; error?: string; tracePath?: string }>;
       getSessionTraceStatus: () => Promise<{ ok: boolean; active: boolean; id?: string; path?: string; eventCount?: number; startedAt?: string; updatedAt?: string }>;
@@ -177,6 +191,7 @@ declare global {
       onLiveTranscript: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onNativelyTranscript: (callback: (payload: { streamId: string; text: string; isFinal: boolean; confidence: number }) => void) => () => void;
       onNativelyStatus: (callback: (payload: { streamId: string; status: string; detail?: string }) => void) => () => void;
+      onScreenContextPublished: (callback: (payload: PublishScreenContextInput) => void) => () => void;
     };
   }
 }

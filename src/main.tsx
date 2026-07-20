@@ -2742,6 +2742,23 @@ function App() {
   };
 
   React.useEffect(() => {
+    const dispose = window.callpilotDesktop?.onScreenContextPublished?.((payload) => {
+      const nextScreenText = [
+        payload.visibleText?.trim() ? payload.visibleText.trim() : "",
+        payload.screenshotPath ? `Screenshot: ${payload.screenshotPath}` : "",
+        payload.displayName ? `Display: ${payload.displayName}` : "",
+        payload.source ? `Source: ${payload.source}` : "",
+      ].filter(Boolean).join("\n");
+      if (!nextScreenText.trim()) return;
+      updateScreenContext(nextScreenText);
+      setDesktopStatus(payload.screenshotPath
+        ? "Live coding screenshot set as active screen context"
+        : "Live coding screen context updated");
+    });
+    return () => dispose?.();
+  }, []);
+
+  React.useEffect(() => {
     const e2eEnabled = window.localStorage.getItem("callpilot_e2e_desktop_smoke") === "1";
     if (!e2eEnabled) return;
     const e2eWindow = window as unknown as {
