@@ -33,8 +33,22 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Run development eval smoke
+        run: npm run test:e2e:ci-development
+
+      - name: Summarize eval reports
+        run: npm run test:e2e:reports -- --limit=20
+
       - name: Run core benchmark
         run: npm run benchmark:core
 
       - name: Build
         run: npm run build
+
+      - name: Upload eval reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: callpilot-eval-reports
+          path: tests/e2e/reports/*.json
+          if-no-files-found: ignore
