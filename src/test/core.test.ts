@@ -785,6 +785,36 @@ test("structured follow-up coding answers infer replace patch from updated code 
   assert.match(structured.payload.patch.code ?? "", /Updated full solution/);
 });
 
+test("structured coding parser rescues full replace patch when solution code is empty", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "follow_up_change",
+      problem: { title: "Shortest Path", summary: "Weighted graph", language: "Python", functionSignature: "def shortest_path(graph, start, end)", constraints: [] },
+      solution: {
+        approachSteps: ["Use Dijkstra with a heap."],
+        code: "",
+        complexity: { time: "O(E log V)", space: "O(V)", rationale: "Priority queue over weighted edges." },
+        edgeCases: ["unreachable end"],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "I would switch this to heap-based Dijkstra.", currentStep: "Replace BFS." },
+      tests: [],
+      patch: {
+        kind: "replace",
+        code: "import heapq\n\ndef shortest_path(graph, start, end):\n    # Keep the closest frontier node first.\n    heap = [(0, start)]\n    best = {start: 0}\n    while heap:\n        dist, node = heapq.heappop(heap)\n        if node == end:\n            return dist\n        if dist != best.get(node):\n            continue\n        for neighbor, weight in graph.get(node, []):\n            new_dist = dist + weight\n            if new_dist < best.get(neighbor, float('inf')):\n                best[neighbor] = new_dist\n                heapq.heappush(heap, (new_dist, neighbor))\n    return -1",
+      },
+    },
+  }));
+
+  assert.equal(structured?.kind, "coding");
+  assert.match(structured?.payload.solution.code ?? "", /def shortest_path/);
+  assert.match(structured?.payload.solution.code ?? "", /closest frontier/);
+  assert.equal(structured?.payload.patch.kind, "replace");
+});
+
 test("structured coding parser normalizes escaped newlines and fills missing change narration", () => {
   const structured = parseStructuredAnswerPayload(JSON.stringify({
     kind: "coding",

@@ -474,10 +474,16 @@ export const parseCodingAnswerPayload = (value: unknown, options: { allowEmpty?:
   if (!solution) return null;
   const rawSpokenAnswer = asString(narration.spokenAnswer) || asString(record.spokenAnswer);
   const problem = asRecord(record.problem) ?? {};
-  const code = ensureInlineCodeComment(normalizeCodeString(solution.code), asString(problem.language) || "Python");
+  const patch = asRecord(record.patch) ?? {};
+  const patchKind = asString(patch.kind);
+  const explicitPatchCode = normalizeCodeString(patch.code) || null;
+  const rawSolutionCode = normalizeCodeString(solution.code);
+  const code = ensureInlineCodeComment(
+    rawSolutionCode || (patchKind === "replace" ? explicitPatchCode || "" : ""),
+    asString(problem.language) || "Python",
+  );
   if (!rawSpokenAnswer && !code && !options.allowEmpty) return null;
   const complexity = asRecord(solution.complexity) ?? {};
-  const patch = asRecord(record.patch) ?? {};
   const responseType = asString(record.responseType);
   const normalizedResponseType = ["initial_solution", "explanation", "follow_up_change", "debug_fix", "clarification"].includes(responseType)
     ? responseType as CodingAnswerPayload["responseType"]
@@ -485,8 +491,6 @@ export const parseCodingAnswerPayload = (value: unknown, options: { allowEmpty?:
   const spokenAnswer = compactCodingNarration(rawSpokenAnswer
     || (normalizedResponseType === "follow_up_change" && code ? "Updated the solution with the requested change." : "")
     || (code ? "Here is the commented solution." : ""));
-  const patchKind = asString(patch.kind);
-  const explicitPatchCode = normalizeCodeString(patch.code) || null;
   const inferredPatch = normalizedResponseType === "follow_up_change" && patchKind !== "replace" && patchKind !== "diff" && code
     ? { kind: "replace" as const, code }
     : {

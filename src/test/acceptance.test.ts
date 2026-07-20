@@ -382,10 +382,11 @@ test("acceptance: overlay shows the changing tail of long live transcripts", () 
 
 test("acceptance: LLM quality runner has a broad scenario corpus", () => {
   const runner = read("scripts/run-llm-scenarios.mjs");
+  const pkg = read("package.json");
   const scenarioLikeEntries = (runner.match(/(?:id:\s*"|makeTechnicalScenario\("|makeBehavioralScenario\("|makeCodingScenario\(")/g) ?? []).length;
 
   assert.ok(scenarioLikeEntries >= 50, `expected at least 50 LLM scenarios, found ${scenarioLikeEntries}`);
-  for (const category of ["technical", "background", "followup", "candidate_error", "no_answer", "coding", "coding_followup", "adversarial_spanish", "coding_contract", "coderpad_baseline"]) {
+  for (const category of ["technical", "background", "followup", "candidate_error", "no_answer", "coding", "coding_followup", "adversarial_spanish", "coding_contract", "coderpad_baseline", "executable_code", "executable_code_stretch"]) {
     assert.match(runner, new RegExp(`category:\\s*"${category}"|category:\\s*options\\.category\\s*\\|\\|\\s*"${category}"`));
   }
   assert.match(runner, /--category/);
@@ -397,6 +398,14 @@ test("acceptance: LLM quality runner has a broad scenario corpus", () => {
   assert.match(runner, /codingInlineComments/);
   assert.match(runner, /runPythonAssertions/);
   assert.match(runner, /codingExecutableAssertions/);
+  assert.match(runner, /executable_valid_parentheses/);
+  assert.match(runner, /executable_two_sum/);
+  assert.match(runner, /executable_rotate_matrix/);
+  assert.match(runner, /executable_lru_cache/);
+  assert.match(runner, /executable_dijkstra_shortest_path/);
+  assert.match(runner, /expectedFunctionName/);
+  assert.match(runner, /codingExpectedFunctionName/);
+  assert.match(pkg, /verify:llm-executable-code/);
   assert.match(runner, /buildLiveCodingFollowUpPrompt/);
   assert.match(runner, /liveSpokenOutput/);
   assert.match(runner, /scenario\.mode === "live_coding" \? true : !liveSpokenOutput/);

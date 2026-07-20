@@ -185,6 +185,7 @@ const makeCodingScenario = (id, label, screenText, transcript, expected, options
   requireStructuredCoding: options.requireStructuredCoding,
   previousCodingPayload: options.previousCodingPayload,
   followUpChange: options.followUpChange,
+  expectedFunctionName: options.expectedFunctionName,
   executableAssertions: options.executableAssertions || [],
   mustUseContext: options.mustUseContext || [],
   mustIgnoreContext: options.mustIgnoreContext || [],
@@ -838,7 +839,150 @@ const scenarioDefinitions = [
     ],
     forbidden: ["set output order", "mercado", "billing"],
     maxTokens: 560,
+    latencyTargetMs: 30000,
+  }),
+  makeCodingScenario("executable_valid_parentheses", "Executable Valid Parentheses", [
+    "CoderPad Interview",
+    "Python 3",
+    "Implement def is_valid(s):",
+    "Return True if s contains valid parentheses/brackets/braces, False otherwise.",
+    "Characters are only brackets: (), [], {}.",
+    "Examples:",
+    "'()[]{}' -> True",
+    "'(]' -> False",
+    "'([)]' -> False",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "Implement is_valid(s) for Valid Parentheses. I need executable Python with comments, a simple explanation, complexity, and runnable tests." },
+  ], ["stack", "map", "o(n)", "false"], {
+    category: "executable_code",
+    expectedResponseType: "initial_solution",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    expectedFunctionName: "is_valid",
+    executableAssertions: [
+      { python: "__callpilot_assert_equal(is_valid('()[]{}'), True)" },
+      { python: "__callpilot_assert_equal(is_valid('(]'), False)" },
+      { python: "__callpilot_assert_equal(is_valid('([)]'), False)" },
+      { python: "__callpilot_assert_equal(is_valid('{[]}'), True)" },
+      { python: "__callpilot_assert_equal(is_valid(''), True)" },
+    ],
+    forbidden: ["regex", "mercado", "billing"],
+    maxTokens: 560,
+    latencyTargetMs: 30000,
+  }),
+  makeCodingScenario("executable_two_sum", "Executable Two Sum", [
+    "CoderPad Interview",
+    "Python 3",
+    "Implement def two_sum(nums, target):",
+    "Return indices of two different elements whose values add to target.",
+    "Return [] if there is no solution.",
+    "Example: nums=[2,7,11,15], target=9 -> [0,1]",
+    "Example: nums=[3,3], target=6 -> [0,1]",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "Implement exactly def two_sum(nums, target). Keep commented executable Python, a simple explanation, complexity, and handle no solution with []." },
+  ], ["hash", "complement", "o(n)", "return"], {
+    category: "executable_code",
+    expectedResponseType: "initial_solution",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    expectedFunctionName: "two_sum",
+    executableAssertions: [
+      { python: "__callpilot_assert_equal(two_sum([2, 7, 11, 15], 9), [0, 1])" },
+      { python: "__callpilot_assert_equal(two_sum([3, 3], 6), [0, 1])" },
+      { python: "__callpilot_assert_equal(two_sum([1, 2, 3], 10), [])" },
+      { python: "__callpilot_assert_equal(two_sum([-3, 4, 3, 90], 0), [0, 2])" },
+    ],
+    forbidden: ["mercado", "billing"],
+    maxTokens: 560,
+    latencyTargetMs: 30000,
+  }),
+  makeCodingScenario("executable_rotate_matrix", "Executable Rotate Matrix", [
+    "CoderPad Interview",
+    "Python 3",
+    "Implement def rotate(matrix):",
+    "Rotate an n x n matrix 90 degrees clockwise.",
+    "Return the rotated matrix so CoderPad tests can assert it.",
+    "Example: [[1,2,3],[4,5,6],[7,8,9]] -> [[7,4,1],[8,5,2],[9,6,3]]",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "Implement exactly def rotate(matrix). Keep commented executable Python, a simple explanation, and complexity. Returning the rotated matrix is fine." },
+  ], ["transpose", "reverse", "matrix", "o("], {
+    category: "executable_code",
+    expectedResponseType: "initial_solution",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    expectedFunctionName: "rotate",
+    executableAssertions: [
+      { python: "__callpilot_assert_equal(rotate([[1,2,3],[4,5,6],[7,8,9]]), [[7,4,1],[8,5,2],[9,6,3]])" },
+      { python: "__callpilot_assert_equal(rotate([[1,2],[3,4]]), [[3,1],[4,2]])" },
+      { python: "__callpilot_assert_equal(rotate([[1]]), [[1]])" },
+    ],
+    forbidden: ["mercado", "billing"],
+    maxTokens: 560,
     latencyTargetMs: 12000,
+  }),
+  makeCodingScenario("executable_lru_cache", "Executable LRU Cache", [
+    "CoderPad Interview",
+    "Python 3",
+    "Implement class LRUCache:",
+    "  __init__(capacity)",
+    "  get(key) -> value or -1",
+    "  put(key, value) -> None",
+    "Both get and put should be O(1). Evict the least recently used key when capacity is exceeded.",
+    "Use from collections import OrderedDict. Do not implement a custom Node or linked list for this baseline.",
+    "Use move_to_end(key) after get/update, and popitem(last=False) to evict.",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "Implement LRUCache in Python with collections.OrderedDict, not a custom Node. Keep commented code visible, explain the data structure simply, and include complexity." },
+  ], ["ordered", "dict", "o(1)", "evict"], {
+    category: "executable_code_stretch",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    expectedFunctionName: "LRUCache",
+    executableAssertions: [
+      { python: "cache = LRUCache(2)\ncache.put(1, 1)\ncache.put(2, 2)\n__callpilot_assert_equal(cache.get(1), 1)\ncache.put(3, 3)\n__callpilot_assert_equal(cache.get(2), -1)\ncache.put(4, 4)\n__callpilot_assert_equal(cache.get(1), -1)\n__callpilot_assert_equal(cache.get(3), 3)\n__callpilot_assert_equal(cache.get(4), 4)" },
+      { python: "cache = LRUCache(1)\ncache.put(1, 10)\ncache.put(2, 20)\n__callpilot_assert_equal(cache.get(1), -1)\n__callpilot_assert_equal(cache.get(2), 20)" },
+    ],
+    forbidden: ["database", "redis", "mercado"],
+    maxChars: 1750,
+    maxTokens: 760,
+    latencyTargetMs: 14000,
+  }),
+  makeCodingScenario("executable_dijkstra_shortest_path", "Executable Dijkstra shortest path", [
+    "CoderPad Interview",
+    "Python 3",
+    "Implement def shortest_path(graph, start, end):",
+    "The top-level function name must be exactly shortest_path, not dijkstra.",
+    "graph is a dict where graph[node] is a list of (neighbor, weight) tuples.",
+    "All weights are non-negative.",
+    "Return the shortest distance from start to end, or -1 if end is unreachable.",
+    "Example: {'A': [('B', 2), ('C', 5)], 'B': [('C', 1)]}, A -> C returns 3.",
+    "Required skeleton:",
+    "heap = [(0, start)]",
+    "dist = {start: 0}",
+    "while heap: pop; skip stale entries; if node == end return cost; relax graph.get(node, [])",
+    "After the while loop return -1. Do not return -1 inside the neighbor loop.",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "Fresh CoderPad task: implement exactly def shortest_path(graph, start, end). Use Dijkstra internally with heapq and graph.get(node, []), but do not name the required top-level function dijkstra. Return -1 only after the heap is exhausted. I need executable Python, comments, and a simple explanation." },
+  ], ["dijkstra", "heap", "weight", "o("], {
+    category: "executable_code_stretch",
+    expectedResponseType: "initial_solution",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    expectedFunctionName: "shortest_path",
+    executableAssertions: [
+      { python: "graph = {'A': [('B', 2), ('C', 5)], 'B': [('C', 1), ('D', 4)], 'C': [('D', 1)], 'D': []}\n__callpilot_assert_equal(shortest_path(graph, 'A', 'D'), 4)" },
+      { python: "graph = {1: [(2, 7), (3, 1)], 3: [(2, 2)], 2: []}\n__callpilot_assert_equal(shortest_path(graph, 1, 2), 3)" },
+      { python: "graph = {'A': [('B', 1)], 'B': [], 'C': []}\n__callpilot_assert_equal(shortest_path(graph, 'A', 'C'), -1)" },
+      { python: "__callpilot_assert_equal(shortest_path({'A': []}, 'A', 'A'), 0)" },
+    ],
+    forbidden: ["bfs only", "unweighted", "mercado"],
+    maxChars: 1900,
+    maxTokens: 700,
+    latencyTargetMs: 14000,
   }),
   makeCodingScenario("coding_contract_matrix_rotate_in_place", "Matrix rotate in-place commented code", "def rotate(matrix):\n    n = len(matrix)\n    return [[matrix[n-1-j][i] for j in range(n)] for i in range(n)]", [
     { speaker: "interviewer", text: "Esto crea una matriz nueva. Hacelo in-place con O(1) extra space." },
@@ -1009,14 +1153,23 @@ const executableAssertionsForResult = (scenario, result) => {
   return runPythonAssertions(payload?.solution?.code || "", scenario.executableAssertions);
 };
 
-const buildExecutableRepairPrompt = (prompt, result, validation) => {
+const buildExecutableRepairPrompt = (prompt, result, validation, scenario = {}) => {
   const payload = codingPayloadFromResult(result);
   const failedCode = payload?.solution?.code || String(result?.text || "").slice(0, 3000);
+  const expectedResponseType = scenario.expectedResponseType || payload?.responseType || "initial_solution";
+  const expectedPatchLine = scenario.expectedPatch === false
+    ? "This is a fresh CoderPad task, not a follow-up. Set responseType to initial_solution, set patch.kind to none, and put the full final code only in solution.code."
+    : "If a patch is expected, include a complete patch that preserves the existing code and only changes what is needed.";
+  const expectedFunctionLine = scenario.expectedFunctionName
+    ? `The top-level Python function/class required by the prompt is exactly ${scenario.expectedFunctionName}. Do not rename it, do not replace it with a helper name, and make sure solution.code defines it.`
+    : "";
   const instruction = [
     "The previous coding answer failed executable validation in a Python runner.",
-    `Return the same raw JSON schema and preserve responseType ${payload?.responseType || "initial_solution"} unless the latest user request explicitly asks for a different type.`,
+    `Return the same raw JSON schema and set responseType exactly to ${expectedResponseType}.`,
+    expectedPatchLine,
     "Provide a complete executable solution.code with inline comments. Do not return explanation-only text.",
     "Fix the code so every validation assertion passes; preserve the requested function name and return shape.",
+    expectedFunctionLine,
     "validation_error:",
     validation.error || "missing or invalid code",
     "previous_code_or_answer:",
@@ -1096,6 +1249,10 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
   const expectsCodingContract = scenario.requireStructuredCoding || scenario.expectedResponseType || scenario.expectedPatch || scenario.requireInlineComments;
   const inlineCommentPattern = /(^|\n)\s*(#|\/\/|\/\*|\*)\s+\S/;
   const pythonAssertions = runPythonAssertions(codingCode, scenario.executableAssertions);
+  const expectedFunctionName = scenario.expectedFunctionName;
+  const expectedFunctionPattern = expectedFunctionName
+    ? new RegExp(`(^|\\n)\\s*(?:def|class)\\s+${expectedFunctionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*(?:\\(|:)`)
+    : null;
   const checks = {
     providerOk: Boolean(result?.ok),
     nonEmpty: expectsNoAnswer ? text.trim().length > 15 : text.trim().length > 40,
@@ -1125,6 +1282,7 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     codingInlineComments: !scenario.requireInlineComments || inlineCommentPattern.test(codingCode),
     codingPatchExpected: scenario.expectedPatch !== true || Boolean(codingPatch && codingPatch.kind !== "none" && codingPatch.code && codingPatch.code.trim()),
     codingNarrationShort: !expectsCodingContract || Boolean(codingNarration.trim()) && wordCount(codingNarration) <= 55,
+    codingExpectedFunctionName: !expectedFunctionPattern || expectedFunctionPattern.test(codingCode),
     codingExecutableAssertions: !pythonAssertions.required || pythonAssertions.ok,
   };
   const qualityChecks = Object.fromEntries(
@@ -1213,7 +1371,7 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
   for (let validationAttempt = 1; validationAttempt <= 2; validationAttempt += 1) {
     const executableValidation = executableAssertionsForResult(scenario, result);
     if (!result.ok || scenario.mode !== "live_coding" || !executableValidation.required || executableValidation.ok) break;
-    const repairPrompt = buildExecutableRepairPrompt(scenario.prompt, result, executableValidation);
+    const repairPrompt = buildExecutableRepairPrompt(scenario.prompt, result, executableValidation, scenario);
     result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify({
       ...input,
       prompt: repairPrompt,
