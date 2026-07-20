@@ -2,6 +2,25 @@
 
 Evaluation splits are enforced by `tests/eval/datasetPolicy.cjs`.
 
+## Repository Structure
+
+```text
+tests/eval/
+  schemas/
+  datasets/
+    development/
+    validation/
+    holdout/
+  manifests/
+  mutations/
+  scorers/
+  reports/
+```
+
+Schemas and docs live in Git. Raw media, extracted artifacts, transcripts,
+expected answers, provider responses, and validation/holdout manifests stay
+outside the repository.
+
 ## Splits
 
 - `development`: known material used while improving CallPilot. Existing local MP4s, generated manifests in `.cache`, and repository fixtures belong here.

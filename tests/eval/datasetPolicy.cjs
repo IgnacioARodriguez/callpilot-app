@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const path = require("node:path");
 
 const VALID_SPLITS = new Set(["development", "validation", "holdout"]);
@@ -31,6 +32,12 @@ const sourceIdFromPath = (filePath) => {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     || "unknown-source";
+};
+
+const sha256File = (filePath) => {
+  const hash = crypto.createHash("sha256");
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest("hex");
 };
 
 const splitEnvName = (split) => `CALLPILOT_EVAL_${split.toUpperCase()}_DIR`;
@@ -133,12 +140,52 @@ const assertManifestAllowedForEvaluation = ({ root, manifest, manifestPath, requ
   if (metadata.split !== "development" && !metadata.content_hash && !manifest?.video?.sha256) {
     throw new Error(`${metadata.split} manifest must include a stable content hash.`);
   }
+  const expectedHash = metadata.content_hash || manifest?.video?.sha256 || "";
+  if (metadata.split !== "development" && metadata.content_hash && manifest?.video?.sha256 && metadata.content_hash !== manifest.video.sha256) {
+    throw new Error(`${metadata.split} manifest content_hash does not match video.sha256.`);
+  }
+  const sourcePath = metadata.source_path || manifest?.video?.path || "";
+  if (metadata.split !== "development" && sourcePath && fs.existsSync(sourcePath) && expectedHash) {
+    const actualHash = sha256File(sourcePath);
+    if (actualHash !== expectedHash) {
+      throw new Error(`${metadata.split} source hash mismatch for ${sourcePath}.`);
+    }
+  }
+  validateCheckpointSet(manifest);
   return metadata;
+};
+
+const validateCheckpointSet = (manifest) => {
+  const checkpoints = Array.isArray(manifest?.checkpoints) ? manifest.checkpoints : [];
+  const ids = new Set();
+  for (const checkpoint of checkpoints) {
+    const id = String(checkpoint?.id || "").trim();
+    if (!id) throw new Error("Manifest checkpoint is missing id.");
+    if (ids.has(id)) throw new Error(`Manifest has duplicate checkpoint id: ${id}`);
+    ids.add(id);
+    const timestamp = Number(checkpoint?.timestamp_ms);
+    if (!Number.isFinite(timestamp) || timestamp < 0) {
+      throw new Error(`Checkpoint ${id} has invalid timestamp_ms.`);
+    }
+    const availableUntil = Number(checkpoint?.available_until_ms ?? checkpoint?.timestamp_ms);
+    if (Number.isFinite(availableUntil) && availableUntil > timestamp) {
+      throw new Error(`Checkpoint ${id} uses evidence after its timestamp.`);
+    }
+  }
+  return true;
 };
 
 const validateManifestSet = ({ root, entries, env = process.env }) => {
   const checked = [];
-  const sourceSplits = new Map();
+  const splitKeys = new Map();
+  const rememberSplitKey = (key, split) => {
+    if (!key) return;
+    const existing = splitKeys.get(key);
+    if (existing && existing !== split) {
+      throw new Error(`Source "${key}" is assigned to multiple splits: ${existing}, ${split}. Split by complete interview/session.`);
+    }
+    splitKeys.set(key, split);
+  };
   for (const entry of entries) {
     const manifest = entry.manifest;
     const manifestPath = entry.manifestPath;
@@ -149,14 +196,8 @@ const validateManifestSet = ({ root, entries, env = process.env }) => {
       sourceId: entry.sourceId,
     };
     const metadata = assertManifestAllowedForEvaluation({ root, manifest, manifestPath, requested, env });
-    const sourceKey = metadata.source_id || manifest?.video?.sha256 || metadata.source_path;
-    if (sourceKey) {
-      const existing = sourceSplits.get(sourceKey);
-      if (existing && existing !== metadata.split) {
-        throw new Error(`Source "${sourceKey}" is assigned to multiple splits: ${existing}, ${metadata.split}. Split by complete interview/session.`);
-      }
-      sourceSplits.set(sourceKey, metadata.split);
-    }
+    rememberSplitKey(`source_id:${metadata.source_id}`, metadata.split);
+    rememberSplitKey(`content_hash:${metadata.content_hash || manifest?.video?.sha256 || ""}`, metadata.split);
     checked.push({ manifestPath, metadata });
   }
   return checked;
@@ -195,7 +236,9 @@ module.exports = {
   metadataFromInputs,
   mergeManifestMetadata,
   normalizeSplit,
+  sha256File,
   sourceIdFromPath,
+  validateCheckpointSet,
   validateManifestSet,
   writeDatasetReadme,
 };

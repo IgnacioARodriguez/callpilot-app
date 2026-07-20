@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const {
   assertManifestAllowedForEvaluation,
   metadataFromInputs,
+  sha256File,
   validateManifestSet,
 } = require("../../tests/eval/datasetPolicy.cjs");
 
@@ -60,6 +61,7 @@ test("validation manifests must be tagged and contained in the external split di
   const manifestPath = path.join(externalRoot, "interview-a", "manifest.json");
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
   fs.writeFileSync(videoPath, "synthetic placeholder", "utf8");
+  const contentHash = sha256File(videoPath);
 
   assert.throws(
     () => assertManifestAllowedForEvaluation({
@@ -80,9 +82,10 @@ test("validation manifests must be tagged and contained in the external split di
       source_id: "interview-a",
       source_type: "mp4",
       external_dataset_dir: externalRoot,
-      content_hash: "abc123",
+      content_hash: contentHash,
     },
-    video: { path: videoPath },
+    video: { path: videoPath, sha256: contentHash },
+    checkpoints: [{ id: "cp-001", timestamp_ms: 1000 }],
   };
   const metadata = assertManifestAllowedForEvaluation({
     root,
@@ -106,6 +109,9 @@ test("external manifest sets require content hashes and forbid source split mixi
   const holdoutVideoPath = path.join(holdoutRoot, "interview-shared", "interview.mp4");
   fs.mkdirSync(path.dirname(validationManifestPath), { recursive: true });
   fs.mkdirSync(path.dirname(holdoutManifestPath), { recursive: true });
+  fs.writeFileSync(validationVideoPath, "same media", "utf8");
+  fs.writeFileSync(holdoutVideoPath, "same media", "utf8");
+  const stableHash = sha256File(validationVideoPath);
 
   const baseManifest = {
     schema_version: 1,
@@ -114,9 +120,10 @@ test("external manifest sets require content hashes and forbid source split mixi
       dataset: "external-smoke",
       source_id: "interview-shared",
       source_type: "mp4",
-      content_hash: "stable-video-hash",
+      content_hash: stableHash,
     },
-    video: { sha256: "stable-video-hash" },
+    video: { sha256: stableHash },
+    checkpoints: [{ id: "cp-001", timestamp_ms: 1000 }],
   };
 
   assert.throws(
@@ -176,5 +183,54 @@ test("external manifest sets require content hashes and forbid source split mixi
       env: {},
     }),
     /multiple splits/,
+  );
+});
+
+test("external manifests reject source hash mismatch and future checkpoint evidence", () => {
+  const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), "callpilot-validation-"));
+  const sourceRoot = path.join(externalRoot, "interview-b");
+  fs.mkdirSync(sourceRoot, { recursive: true });
+  const videoPath = path.join(sourceRoot, "interview.mp4");
+  const manifestPath = path.join(sourceRoot, "manifest.json");
+  fs.writeFileSync(videoPath, "actual media", "utf8");
+  const contentHash = sha256File(videoPath);
+  const baseMetadata = {
+    schema_version: 1,
+    dataset: "external-validation-smoke",
+    split: "validation",
+    source_id: "interview-b",
+    source_type: "mp4",
+    external_dataset_dir: externalRoot,
+    content_hash: contentHash,
+  };
+
+  assert.throws(
+    () => assertManifestAllowedForEvaluation({
+      root,
+      manifest: {
+        evaluation_dataset: { ...baseMetadata, content_hash: "wrong-hash" },
+        video: { path: videoPath, sha256: "wrong-hash" },
+        checkpoints: [{ id: "cp-001", timestamp_ms: 1000 }],
+      },
+      manifestPath,
+      requested: { split: "validation", datasetDir: externalRoot },
+      env: {},
+    }),
+    /hash mismatch/,
+  );
+
+  assert.throws(
+    () => assertManifestAllowedForEvaluation({
+      root,
+      manifest: {
+        evaluation_dataset: baseMetadata,
+        video: { path: videoPath, sha256: contentHash },
+        checkpoints: [{ id: "cp-001", timestamp_ms: 1000, available_until_ms: 1001 }],
+      },
+      manifestPath,
+      requested: { split: "validation", datasetDir: externalRoot },
+      env: {},
+    }),
+    /after its timestamp/,
   );
 });

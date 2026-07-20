@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "callpilot-video-manifest-v1",
+  "title": "CallPilot video evaluation manifest",
+  "type": "object",
+  "required": ["schema_version", "evaluation_dataset", "video", "checkpoints"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "evaluation_dataset": {
+      "type": "object",
+      "required": ["schema_version", "dataset", "split", "source_id", "source_type", "content_hash"],
+      "additionalProperties": true,
+      "properties": {
+        "schema_version": { "const": 1 },
+        "dataset": { "type": "string", "minLength": 1 },
+        "split": { "enum": ["development", "validation", "holdout"] },
+        "source_id": { "type": "string", "minLength": 1 },
+        "source_type": { "type": "string", "minLength": 1 },
+        "content_hash": { "type": "string", "minLength": 16 }
+      }
+    },
+    "video": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": true,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "minLength": 16 },
+        "duration_ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "checkpoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "timestamp_ms"],
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "timestamp_ms": { "type": "number", "minimum": 0 },
+          "available_until_ms": { "type": "number", "minimum": 0 },
+          "evaluation": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}
