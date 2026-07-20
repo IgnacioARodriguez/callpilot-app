@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   MODES,
@@ -56,11 +56,13 @@ import {
   pickEvidenceWithEmbeddings,
   parseSessionJson,
   parseStructuredAnswerPayload,
+  buildLiveCodingCompletenessRetryPrompt,
   reduceStealthState,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
   resetStealthState,
   serializeSession,
+  shouldRetryLiveCodingCompleteness,
   shouldAutoAnswer,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
@@ -951,6 +953,99 @@ test("live coding repair does not inject named problem solutions", () => {
 
   assert.equal(repaired, "I would first clarify the input and then describe the invariant.");
   assert.doesNotMatch(repaired, /odd = head|evenHead|low\/high bounds|O\(1\) extra space/i);
+});
+
+test("live coding completeness retry fires for visible problem with empty complexity", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Visible problem", summary: "", language: "Python", functionSignature: null, constraints: [] },
+      solution: { approachSteps: ["Use the natural state transition."], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "Track the state transition.", currentStep: "explain" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  assert.equal(shouldRetryLiveCodingCompleteness(structured, "<screen_context>\ntechnical_focus:\nSolve the visible task.\n</screen_context>"), true);
+});
+
+test("live coding completeness retry does not fire when complexity is populated", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Visible problem", summary: "", language: "Python", functionSignature: null, constraints: [] },
+      solution: { approachSteps: ["Use the natural state transition."], code: "", complexity: { time: "O(n)", space: "O(1)", rationale: "Single pass." }, edgeCases: [], invariants: ["State remains consistent."] },
+      narration: { spokenAnswer: "Track the state transition.", currentStep: "explain" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  assert.equal(shouldRetryLiveCodingCompleteness(structured, "<screen_context>\ntechnical_focus:\nSolve the visible task.\n</screen_context>"), false);
+});
+
+test("live coding completeness retry does not fire without visible problem context", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "Python", functionSignature: null, constraints: [] },
+      solution: { approachSteps: ["Use the natural state transition."], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "Track the state transition.", currentStep: "explain" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  assert.equal(shouldRetryLiveCodingCompleteness(structured, "<screen_context>\nkind: unknown\n</screen_context>"), false);
+});
+
+test("live coding completeness retry prompt stays problem agnostic", () => {
+  const prompt = buildLiveCodingCompletenessRetryPrompt({
+    system: "system",
+    user: "<screen_context>\ntechnical_focus:\nSolve the visible task.\n</screen_context>",
+    debug: { modeId: "live_coding", includedSections: [], omittedSections: [], approximateChars: 0, selectedEvidence: [], evidenceQueryTerms: [], answerContextTrace: {} as never },
+  });
+  const source = readFileSync(join(process.cwd(), "src", "core", "answerRepair.ts"), "utf8");
+
+  for (const banned of ["linked list", "bst", "odd", "even"]) {
+    assert.doesNotMatch(prompt.system.toLowerCase(), new RegExp(banned));
+    assert.doesNotMatch(prompt.user.toLowerCase(), new RegExp(banned));
+    assert.doesNotMatch(source.toLowerCase(), new RegExp(banned));
+  }
 });
 
 test("system design repair covers explicit Redis-alone requests when model omits them", () => {

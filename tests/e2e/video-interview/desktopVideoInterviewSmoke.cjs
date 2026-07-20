@@ -486,6 +486,40 @@ const traceSttEvents = (trace) => (trace?.events || [])
     error: event.error,
   }))
   .slice(-120);
+const summarizeSttCheckpointObservability = (checkpointWallTimeMs, events = [], trace = null) => {
+  const relevantEvents = events.filter((event) => !checkpointWallTimeMs || Number(event.at || 0) <= checkpointWallTimeMs);
+  const sttEvents = relevantEvents
+    .filter((event) => ["natively_transcript", "transcript"].includes(event.type))
+    .filter((event) => String(event.payload?.text || "").trim())
+    .sort((a, b) => Number(a.at || 0) - Number(b.at || 0));
+  const lastStt = sttEvents[sttEvents.length - 1] || null;
+  const traceEvents = Array.isArray(trace?.events) ? trace.events : [];
+  const reconnectEvents = [
+    ...relevantEvents.filter((event) => (
+      /reconnect/i.test(String(event.type || ""))
+      || /reconnect/i.test(String(event.payload?.status || ""))
+      || /reconnect/i.test(String(event.payload?.detail || ""))
+    )),
+    ...traceEvents.filter((event) => /reconnect/i.test(String(event.type || ""))),
+  ];
+  const gapEvents = [
+    ...relevantEvents.filter((event) => (
+      /gap|disconnect|closed|error/i.test(String(event.type || ""))
+      || /gap|disconnect|closed|error/i.test(String(event.payload?.status || ""))
+      || /gap|disconnect|closed|error/i.test(String(event.payload?.error || ""))
+      || /gap|disconnect|closed|error/i.test(String(event.payload?.detail || ""))
+    )),
+    ...traceEvents.filter((event) => /gap|disconnect|closed|error/i.test(String(event.type || event.error || ""))),
+  ];
+  return {
+    checkpoint_wall_time_ms: checkpointWallTimeMs || null,
+    last_stt_event_at: lastStt?.at || null,
+    last_stt_event_type: lastStt?.type || null,
+    stt_gap_ms: lastStt && checkpointWallTimeMs ? Math.max(0, checkpointWallTimeMs - lastStt.at) : null,
+    stt_reconnect_count: reconnectEvents.length,
+    stt_gap_event_count: gapEvents.length,
+  };
+};
 const savedSessionTranscriptText = (session) => (session?.transcript?.messages || [])
   .map((message) => String(message?.text || "").replace(/\s+/g, " ").trim())
   .filter(Boolean)
@@ -708,6 +742,8 @@ const writeMarkdownReport = (reportPath, report) => {
     `- Playback start: ${checkpoint.playback_start_ms ?? ""} ms`,
     `- Reason: ${checkpoint.reason_for_answer || ""}`,
     `- Transcript source: ${checkpoint.transcript_source || "none"}`,
+    `- STT gap: ${checkpoint.stt_gap_ms ?? "n/a"} ms`,
+    `- STT reconnects/gap events: ${checkpoint.stt_reconnect_count ?? 0}/${checkpoint.stt_gap_event_count ?? 0}`,
     `- Screen capture: ${checkpoint.screen_capture_display_name || "none"}`,
     `- Screen capture expected window: ${Boolean(checkpoint.screen_capture_matches_expected_window)}`,
     `- Screen capture attempts: ${checkpoint.screen_capture_attempts ?? "n/a"}`,
@@ -822,6 +858,12 @@ const makeCheckpointReport = (checkpoint, playbackStartMs) => ({
   screen_capture_attempts: null,
   transcript_before_answer: "",
   transcript_source: "none",
+  checkpoint_wall_time_ms: null,
+  last_stt_event_at: null,
+  last_stt_event_type: null,
+  stt_gap_ms: null,
+  stt_reconnect_count: 0,
+  stt_gap_event_count: 0,
   callpilot_screen_analysis: null,
   answer: "",
   answer_completion_status: "not_run",
@@ -999,6 +1041,7 @@ const main = async () => {
       checkpointReport.player_status_at_checkpoint = reached;
       if (!reached.reached) checkpointReport.errors.push(`player_checkpoint_not_reached:${reached.currentTime}`);
       await playerPause(playerClient);
+      checkpointReport.checkpoint_wall_time_ms = Date.now();
       await sleep(sttDrainMs);
 
       const playerShot = path.join(runDir, `player-${checkpoint.id}.png`);
@@ -1058,6 +1101,10 @@ const main = async () => {
         || (traceBeforeAnswer?.events || []).some((event) => event.type === "natively_audio_chunk" && event.connected);
       checkpointReport.stt_events = summarizeEvents(allBeforeAnswer.filter((event) => event.type.startsWith("natively") || event.type === "transcript"));
       if (checkpointReport.stt_events.length === 0) checkpointReport.stt_events = traceSttEvents(traceBeforeAnswer);
+      Object.assign(
+        checkpointReport,
+        summarizeSttCheckpointObservability(checkpointReport.checkpoint_wall_time_ms, allBeforeAnswer, traceBeforeAnswer),
+      );
 
       if (!skipAnswer) {
         try {
@@ -1150,15 +1197,21 @@ const main = async () => {
   }, null, 2)}\n`);
 };
 
-main().catch((error) => {
-  fs.mkdirSync(runDir, { recursive: true });
-  const reportPath = path.join(runDir, "report.json");
-  fs.writeFileSync(reportPath, `${JSON.stringify({
-    generated_at: new Date().toISOString(),
-    runner: "tests/e2e/video-interview/desktopVideoInterviewSmoke.cjs",
-    run_dir: runDir,
-    fatal: error instanceof Error ? error.message : String(error),
-  }, null, 2)}\n`, "utf8");
-  console.error(error);
-  process.exit(1);
-});
+module.exports = {
+  summarizeSttCheckpointObservability,
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    fs.mkdirSync(runDir, { recursive: true });
+    const reportPath = path.join(runDir, "report.json");
+    fs.writeFileSync(reportPath, `${JSON.stringify({
+      generated_at: new Date().toISOString(),
+      runner: "tests/e2e/video-interview/desktopVideoInterviewSmoke.cjs",
+      run_dir: runDir,
+      fatal: error instanceof Error ? error.message : String(error),
+    }, null, 2)}\n`, "utf8");
+    console.error(error);
+    process.exit(1);
+  });
+}

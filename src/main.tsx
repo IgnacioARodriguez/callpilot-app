@@ -13,6 +13,7 @@ import {
   assembleTurn,
   appendSegmentChunk,
   browserRecognitionLanguage,
+  buildLiveCodingCompletenessRetryPrompt,
   buildPrompt,
   buildPromptWithEvidence,
   classifyScreenText,
@@ -43,6 +44,7 @@ import {
   reduceStealthState,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
+  shouldRetryLiveCodingCompleteness,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
   shouldSendNativelyFrame,
@@ -802,7 +804,7 @@ function App() {
         maxTokens: liveSpokenOutput ? liveMaxTokens : context.activeMode === "live_coding" ? 1200 : 700,
         timeoutMs: liveSpokenOutput ? liveTimeoutMs : context.activeMode === "live_coding" ? 120000 : 90000,
       });
-      const result = await window.callpilotDesktop.generateAnswer({
+      let result = await window.callpilotDesktop.generateAnswer({
         provider: modelProvider,
         modelName,
         requestId,
@@ -829,7 +831,40 @@ function App() {
         timestamp: Date.now(),
       });
       emitAnswerTiming("format_started");
-      const parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
+      let parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
+      if (
+        result.ok
+        && context.activeMode === "live_coding"
+        && !liveSpokenOutput
+        && shouldRetryLiveCodingCompleteness(parsedStructured, builtPrompt.user)
+      ) {
+        emitAnswerTiming("live_coding_completeness_retry_started");
+        const retryPrompt = buildLiveCodingCompletenessRetryPrompt(builtPrompt);
+        const retryResult = await window.callpilotDesktop.generateAnswer({
+          provider: modelProvider,
+          modelName,
+          requestId,
+          structuredOutput: true,
+          liveSpokenOutput,
+          prompt: retryPrompt,
+          apiKey: sessionApiKey,
+          nativelyApiKey,
+          nvidiaApiKey,
+          ollamaBaseUrl,
+          maxTokens: 1200,
+          timeoutMs: 120000,
+        });
+        emitAnswerTiming("live_coding_completeness_retry_completed", {
+          ok: retryResult.ok,
+          cancelled: Boolean(retryResult.cancelled),
+          error: retryResult.error,
+          textChars: retryResult.text.length,
+        });
+        if (retryResult.ok) {
+          result = retryResult;
+          parsedStructured = parseStructuredAnswerPayload(result.text);
+        }
+      }
       emitAnswerTiming("parse_completed", {
         parsedStructured: Boolean(parsedStructured),
         structuredKind: parsedStructured?.kind,
