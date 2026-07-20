@@ -44,6 +44,18 @@ The preparation command creates `_incoming`, `reports`, `dataset-policy.json`,
 and a split-specific `WORKFLOW.md` in the external directory. It rejects paths
 inside the repository.
 
+Preview batch ingestion for MP4s placed under `_incoming/<source-id>/`:
+
+```powershell
+npm run ingest:eval-dataset -- --split=validation --dir="D:\callpilot-eval\validation" --dataset=backend-interviews-v1
+```
+
+Pass `--run` when the plan is correct:
+
+```powershell
+npm run ingest:eval-dataset -- --split=validation --dir="D:\callpilot-eval\validation" --dataset=backend-interviews-v1 --run
+```
+
 ```powershell
 $env:CALLPILOT_EVAL_VALIDATION_DIR="D:\callpilot-eval\validation"
 node tests/local-video-analysis/analyzeLocalVideo.cjs --split=validation --dataset=backend-interviews-v1 --source-id=interview-001 --video="D:\callpilot-eval\validation\interview-001\interview.mp4"
