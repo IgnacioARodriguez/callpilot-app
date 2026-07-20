@@ -21,7 +21,22 @@ model. It covers:
 These checks are objective gates. They can supplement executable or judge
 scorers, but they should not replace execution when code can be run.
 
+## Executable
+
+`executableScorers.cjs` runs coding answers against local, deterministic
+assertions. Python is supported first because CallPilot's live-coding contract
+defaults to Python. It covers:
+
+- syntax and import-time execution;
+- public assertion blocks;
+- hidden assertion blocks;
+- previous-turn regression assertions for follow-up turns;
+- expected callable entrypoint/function shape;
+- timeout handling.
+
+Executable scorers must not encode expected prose answers. They should validate
+observable behavior from external validation or holdout datasets.
+
 ## Pending
 
-- executable scorers;
 - judge adapter.
