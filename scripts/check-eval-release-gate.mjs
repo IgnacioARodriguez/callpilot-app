@@ -81,6 +81,8 @@ const reports = files.map(({ file, report }) => {
     const scores = record.execution_scores;
     return scores && typeof scores === "object" && scores.skipped !== true && scores.ok === false;
   }).map((record) => record.scenario_id);
+  const blockedJudges = records.filter((record) => record.judge_scores?.blocked === true)
+    .map((record) => record.scenario_id);
   return {
     file,
     track: report.track || null,
@@ -88,6 +90,7 @@ const reports = files.map(({ file, report }) => {
     failed,
     semanticRepairs,
     executionFailures,
+    blockedJudges,
     p95CompleteMs: percentile(completeLatencies, 95),
   };
 });
@@ -97,6 +100,7 @@ for (const report of reports) {
   if (report.failed > 0) failures.push(`${report.file}: failed=${report.failed}`);
   if (report.semanticRepairs > maxSemanticRepairs) failures.push(`${report.file}: semantic_repairs=${report.semanticRepairs}`);
   if (report.executionFailures.length > 0) failures.push(`${report.file}: execution_failed=${report.executionFailures.join(",")}`);
+  if (report.blockedJudges.length > 0) failures.push(`${report.file}: judge_blocked=${report.blockedJudges.join(",")}`);
   if (report.p95CompleteMs !== null && report.p95CompleteMs > maxP95CompleteMs) {
     failures.push(`${report.file}: p95_complete_ms=${report.p95CompleteMs} > ${maxP95CompleteMs}`);
   }
