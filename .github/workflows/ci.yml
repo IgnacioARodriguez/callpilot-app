@@ -39,6 +39,9 @@ jobs:
       - name: Summarize eval reports
         run: npm run test:e2e:reports -- --limit=20
 
+      - name: Check eval release gate
+        run: npm run test:e2e:release-gate -- --track=coding-objective-smoke --latest-only
+
       - name: Run core benchmark
         run: npm run benchmark:core
 

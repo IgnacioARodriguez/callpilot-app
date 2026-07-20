@@ -19,6 +19,7 @@
     "test:eval-datasets": "node scripts/check-eval-datasets.mjs",
     "test:e2e:subset": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=all",
     "test:e2e:ci-development": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=coding-objective-smoke",
+    "test:e2e:release-gate": "node scripts/check-eval-release-gate.mjs",
     "test:e2e:full": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=all",
     "test:e2e:coding-objective": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=coding-objective-smoke",
     "test:e2e:real-behavioral": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-behavioral",
