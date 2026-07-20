@@ -170,7 +170,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "../../..");
 const require = createRequire(import.meta.url);
 const { loadDotEnv } = require("../../../electron/env.cjs");
-const { createEvaluationRecord } = require("../../eval/evaluationContract.cjs");
+const { createEvaluationRecord, summarizeEvaluationRecords } = require("../../eval/evaluationContract.cjs");
 loadDotEnv(root);
 
 const fixturesDir = path.join(root, "tests", "fixtures");
@@ -3898,6 +3898,7 @@ const run = async () => {
     },
     evaluationVersion: evaluationRecords[0]?.evaluation_version || "callpilot-eval-result-v1",
     evaluationRecords,
+    evaluationSummary: summarizeEvaluationRecords(evaluationRecords),
     results,
   };
 

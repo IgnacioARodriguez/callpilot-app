@@ -7,7 +7,7 @@ const {
   assertManifestAllowedForEvaluation,
   cliDatasetOptions,
 } = require("../../eval/datasetPolicy.cjs");
-const { createEvaluationRecord } = require("../../eval/evaluationContract.cjs");
+const { createEvaluationRecord, summarizeEvaluationRecords } = require("../../eval/evaluationContract.cjs");
 
 const root = path.resolve(__dirname, "..", "..", "..");
 loadDotEnv(root);
@@ -1261,6 +1261,7 @@ const main = async () => {
   report.summary.stability = errorCount === 0 ? "No runner errors recorded." : `${errorCount} runner/provider errors recorded.`;
   report.evaluation_version = report.checkpoints[0]?.evaluation_record?.evaluation_version || "callpilot-eval-result-v1";
   report.evaluation_records = report.checkpoints.map((checkpoint) => checkpoint.evaluation_record).filter(Boolean);
+  report.evaluation_summary = summarizeEvaluationRecords(report.evaluation_records);
   report.process_output = {
     callpilot_stdout_tail: callpilotStdout.slice(-2000),
     callpilot_stderr_tail: callpilotStderr.slice(-2000),

@@ -8,7 +8,7 @@ const {
   assertManifestAllowedForEvaluation,
   cliDatasetOptions,
 } = require("../../eval/datasetPolicy.cjs");
-const { createEvaluationRecord } = require("../../eval/evaluationContract.cjs");
+const { createEvaluationRecord, summarizeEvaluationRecords } = require("../../eval/evaluationContract.cjs");
 
 const root = path.resolve(__dirname, "..", "..", "..");
 loadDotEnv(root);
@@ -1108,6 +1108,7 @@ const main = async () => {
   };
   report.evaluation_version = report.checkpoints[0]?.evaluation_record?.evaluation_version || "callpilot-eval-result-v1";
   report.evaluation_records = report.checkpoints.map((checkpoint) => checkpoint.evaluation_record).filter(Boolean);
+  report.evaluation_summary = summarizeEvaluationRecords(report.evaluation_records);
 
   const reportPath = path.join(runDir, "report.json");
   fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");

@@ -1408,9 +1408,10 @@ test("live coding completeness retry prompt stays problem agnostic", () => {
   }
 });
 
-test("system design repair covers explicit Redis-alone requests when model omits them", () => {
+test("system design semantic repair does not add missing architecture facts", () => {
+  const original = "**Respuesta:** Final link shortener design uses multi-region routing and strongly consistent click counters.";
   const repaired = repairSystemDesignAnswerCoverage(
-    "**Respuesta:** Final link shortener design uses multi-region routing and strongly consistent click counters.",
+    original,
     "Give me a concise executive summary including why Redis alone is not enough.",
     "system_design",
   );
@@ -1420,14 +1421,14 @@ test("system design repair covers explicit Redis-alone requests when model omits
     "technical_qa",
   );
 
-  assert.match(repaired, /Redis alone is not enough/i);
-  assert.match(repaired, /durable source of truth/i);
+  assert.equal(repaired, original);
   assert.equal(unchangedTechnical, "Use a cache for reads.");
 });
 
-test("technical debugging repair adds concrete Python memory leak diagnostics", () => {
+test("technical debugging semantic repair does not add missing diagnostics", () => {
+  const original = "**Respuesta:** Primero miraria el worker para confirmar que la memoria crece y no culparia al GC directamente.";
   const repaired = repairTechnicalDebuggingAnswerCoverage(
-    "**Respuesta:** Primero miraria el worker para confirmar que la memoria crece y no culparia al GC directamente.",
+    original,
     "Como investigarias este leak en un worker Python cuyo RSS crece hasta OOM?",
     "technical_qa",
   );
@@ -1437,60 +1438,52 @@ test("technical debugging repair adds concrete Python memory leak diagnostics", 
     "technical_qa",
   );
 
-  assert.match(repaired, /tracemalloc/i);
-  assert.match(repaired, /snapshots?/i);
-  assert.match(repaired, /RSS/i);
-  assert.match(repaired, /objeto/i);
-  assert.match(repaired, /cache/i);
+  assert.equal(repaired, original);
   assert.equal(unchanged, "**Respuesta:** Revisaria el query plan y las metricas de latencia.");
 });
 
-test("system design repair rewrites Redis central-store shortcuts", () => {
+test("system design semantic repair does not rewrite Redis central-store shortcuts", () => {
+  const original = "**Respuesta:** We'll use Redis as a central store for click counters across regions.";
   const repaired = repairSystemDesignAnswerCoverage(
-    "**Respuesta:** We'll use Redis as a central store for click counters across regions.",
+    original,
     "Give me a concise executive summary including why Redis alone is not enough.",
     "system_design",
   );
 
-  assert.match(repaired, /durable source of truth for click counters/i);
-  assert.match(repaired, /Redis only as a cache or fast path/i);
-  assert.doesNotMatch(repaired, /Redis as a central store/i);
+  assert.equal(repaired, original);
 });
 
-test("system design repair rewrites Redis strongly-consistent counter shortcuts", () => {
+test("system design semantic repair does not rewrite strongly-consistent counter shortcuts", () => {
+  const original = "**Respuesta:** We use Redis as a strongly consistent click counter across regions.";
   const repaired = repairSystemDesignAnswerCoverage(
-    "**Respuesta:** We use Redis as a strongly consistent click counter across regions.",
+    original,
     "Give me a concise executive summary including why Redis alone is not enough.",
     "system_design",
   );
 
-  assert.match(repaired, /durable counter store for strong consistency/i);
-  assert.match(repaired, /Redis only as a cache or fast path/i);
-  assert.doesNotMatch(repaired, /Redis as a strongly consistent click counter/i);
+  assert.equal(repaired, original);
 });
 
-test("system design repair rewrites Redis plus distributed-locking counter shortcuts", () => {
+test("system design semantic repair does not rewrite Redis plus distributed-locking shortcuts", () => {
+  const original = "**Respuesta:** We use a combination of Redis and a distributed locking system like ZooKeeper to handle strongly consistent click counters across regions.";
   const repaired = repairSystemDesignAnswerCoverage(
-    "**Respuesta:** We use a combination of Redis and a distributed locking system like ZooKeeper to handle strongly consistent click counters across regions.",
+    original,
     "Give me a concise executive summary including why Redis alone is not enough.",
     "system_design",
   );
 
-  assert.match(repaired, /durable counter store for strong consistency/i);
-  assert.match(repaired, /Redis only as a cache or fast path/i);
-  assert.doesNotMatch(repaired, /combination of Redis and a distributed locking system/i);
+  assert.equal(repaired, original);
 });
 
-test("system design repair rewrites Redis primary-store shortcuts", () => {
+test("system design semantic repair does not rewrite Redis primary-store shortcuts", () => {
+  const original = "**Respuesta:** We'd use leader-follower replication with Redis as the primary store.";
   const repaired = repairSystemDesignAnswerCoverage(
-    "**Respuesta:** We'd use leader-follower replication with Redis as the primary store.",
+    original,
     "Give me a concise executive summary including why Redis alone is not enough.",
     "system_design",
   );
 
-  assert.match(repaired, /durable counter store as the source of truth/i);
-  assert.match(repaired, /Redis only as a cache or fast path/i);
-  assert.doesNotMatch(repaired, /Redis as the primary store/i);
+  assert.equal(repaired, original);
 });
 
 test("structured answer json schema requires every payload property for strict providers", () => {

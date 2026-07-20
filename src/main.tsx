@@ -45,8 +45,6 @@ import {
   pruneRecentSpeech,
   reduceStealthState,
   repairLiveCodingAnswerCoverage,
-  repairSystemDesignAnswerCoverage,
-  repairTechnicalDebuggingAnswerCoverage,
   shouldRetryLiveCodingCompleteness,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
@@ -896,10 +894,6 @@ function App() {
           mode: context.activeMode === "live_coding" ? "coding" : "interview",
         })
         : `Generation failed: ${result.error ?? "unknown error"}`;
-      if (result.ok) {
-        text = repairSystemDesignAnswerCoverage(text, effectiveQuestion, context.activeMode);
-        text = repairTechnicalDebuggingAnswerCoverage(text, effectiveQuestion, context.activeMode);
-      }
       if (result.ok && liveSpokenOutput) {
         const compacted = compactLiveSpokenAnswer(text, {
           mode: context.activeMode,

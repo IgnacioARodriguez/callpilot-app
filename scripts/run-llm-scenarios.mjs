@@ -11,7 +11,7 @@ import { formatAnswerForDisplay, parseStructuredAnswerPayload } from "../src/cor
 import { assessAnswerGrounding } from "../src/core/answerGrounding.ts";
 import { detectQuestionIntent, extractLatestQuestionFocus } from "../src/core/liveConversation.ts";
 import { buildLiveCodingFollowUpPrompt } from "../src/core/liveCodingInteraction.ts";
-import { buildLiveCodingCompletenessRetryPrompt, repairTechnicalDebuggingAnswerCoverage, shouldRetryLiveCodingCompleteness } from "../src/core/answerRepair.ts";
+import { buildLiveCodingCompletenessRetryPrompt, shouldRetryLiveCodingCompleteness } from "../src/core/answerRepair.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 const { loadDotEnv } = require("../electron/env.cjs");
 const {
   createEvaluationRecord,
-  sha256Json,
+  summarizeEvaluationRecords,
 } = require("../tests/eval/evaluationContract.cjs");
 loadDotEnv(root);
 const electronBin = process.platform === "win32"
@@ -1261,18 +1261,7 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     mode: scenario.mode === "live_coding" ? "coding" : "interview",
     maxInterviewWords: scenario.category === "manual_interview_hard" ? 95 : 140,
   });
-  const preRepairText = text;
-  text = repairTechnicalDebuggingAnswerCoverage(text, scenario.userInput, scenario.mode);
-  const repairEvents = text !== preRepairText ? [{
-    type: "technical_debugging_answer_coverage",
-    cause: "post_format_answer_coverage",
-    stage: "final_render",
-    input_hash: sha256Json({ text: preRepairText, userInput: scenario.userInput, mode: scenario.mode }),
-    output_hash: sha256Json({ text, userInput: scenario.userInput, mode: scenario.mode }),
-    duration_ms: null,
-    result: "changed",
-    semantic: true,
-  }] : [];
+  const repairEvents = [];
   const modelText = rawText;
   const normalizeLatin = (value) => String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const lower = normalizeLatin(text);
@@ -1374,7 +1363,7 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     rawChars: rawText.length,
     renderedText: text,
     parsedOutput: structured,
-    recoveredText: text !== preRepairText ? text : null,
+    recoveredText: null,
     repairEvents,
     modelText,
     rawModelChecks,
@@ -1728,6 +1717,7 @@ const run = async () => {
       observabilitySummary: summarizeObservability(results),
       evaluationVersion: results[0]?.evaluationRecord?.evaluation_version || "callpilot-eval-result-v1",
       evaluationRecords: results.map((item) => item.evaluationRecord),
+      evaluationSummary: summarizeEvaluationRecords(results.map((item) => item.evaluationRecord)),
       results,
     };
     const qualityPassed = results.every((item) => item.metrics.qualityOk ?? item.metrics.ok);

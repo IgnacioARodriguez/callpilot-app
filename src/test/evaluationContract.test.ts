@@ -7,6 +7,7 @@ const {
   EVALUATION_VERSION,
   createEvaluationRecord,
   stableStringify,
+  summarizeEvaluationRecords,
   validateEvaluationRecord,
 } = require("../../tests/eval/evaluationContract.cjs");
 
@@ -60,4 +61,26 @@ test("evaluation contract keeps raw separate from recovered repairs", () => {
   const validation = validateEvaluationRecord(record);
   assert.equal(validation.ok, false);
   assert.match(validation.errors.join(","), /raw_overwritten_by_recovered/);
+});
+
+test("evaluation contract summary exposes semantic repair count", () => {
+  const clean = createEvaluationRecord({
+    scenario_id: "clean",
+    raw_model_pass: true,
+    recovered_pass: true,
+  });
+  const repaired = createEvaluationRecord({
+    scenario_id: "repaired",
+    raw_model_pass: false,
+    recovered_pass: true,
+    retry_count: 1,
+    repair_events: [{ type: "semantic_insert", stage: "final", result: "changed", semantic: true }],
+  });
+
+  const summary = summarizeEvaluationRecords([clean, repaired]);
+  assert.equal(summary.total, 2);
+  assert.equal(summary.raw_pass_count, 1);
+  assert.equal(summary.recovered_pass_count, 2);
+  assert.equal(summary.retry_count, 1);
+  assert.equal(summary.semantic_repair_count, 1);
 });

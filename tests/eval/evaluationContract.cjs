@@ -123,11 +123,37 @@ const validateEvaluationRecord = (record) => {
   return { ok: errors.length === 0, errors };
 };
 
+const summarizeEvaluationRecords = (records = []) => {
+  const safeRecords = Array.isArray(records) ? records : [];
+  const semanticRepairCount = safeRecords.reduce(
+    (sum, record) => sum + (record?.repair_events || []).filter((event) => event?.semantic).length,
+    0,
+  );
+  const parserRepairCount = safeRecords.reduce(
+    (sum, record) => sum + (record?.repair_events || []).filter((event) => /json|parse|parser|structured/i.test(event?.type || event?.stage || "")).length,
+    0,
+  );
+  const retryCount = safeRecords.reduce((sum, record) => sum + Number(record?.retry_count || 0), 0);
+  const rawPassCount = safeRecords.filter((record) => record?.raw_model_pass === true).length;
+  const recoveredPassCount = safeRecords.filter((record) => record?.recovered_pass === true).length;
+  return {
+    total: safeRecords.length,
+    raw_pass_count: rawPassCount,
+    recovered_pass_count: recoveredPassCount,
+    raw_pass_rate: safeRecords.length ? rawPassCount / safeRecords.length : null,
+    recovered_pass_rate: safeRecords.length ? recoveredPassCount / safeRecords.length : null,
+    retry_count: retryCount,
+    semantic_repair_count: semanticRepairCount,
+    parser_repair_count: parserRepairCount,
+  };
+};
+
 module.exports = {
   EVALUATION_VERSION,
   REQUIRED_FIELDS,
   createEvaluationRecord,
   sha256Json,
   stableStringify,
+  summarizeEvaluationRecords,
   validateEvaluationRecord,
 };
