@@ -43,6 +43,8 @@ observable behavior from external validation or holdout datasets.
 `evaluationRecord` into the shared deterministic and executable scorer outputs.
 Use it from runners when producing the unified result contract.
 
-## Pending
+## Judge
 
-- judge adapter.
+`judgeAdapter.cjs` defines the judge request/rubric contract without pretending
+to run a semantic judge. When a judge is required but no external judge provider
+and model are configured, it returns a blocked score instead of a pass.

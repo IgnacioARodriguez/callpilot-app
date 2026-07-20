@@ -1,5 +1,6 @@
 const { scoreDeterministicRecord } = require("./deterministicScorers.cjs");
 const { scoreExecutableRecord } = require("./executableScorers.cjs");
+const { scoreJudgeRecord } = require("./judgeAdapter.cjs");
 
 const expectationsFromDatasetCase = (datasetCase = {}) => {
   const deterministic = datasetCase?.expectations?.deterministic || {};
@@ -36,12 +37,15 @@ const scoreEvaluationRecordForCase = (record, datasetCase = {}) => {
   const executionResult = expectations.execution
     ? scoreExecutableRecord(record, expectations.execution)
     : { ok: true, skipped: true, error: "no_execution_contract" };
+  const judgeResult = scoreJudgeRecord(record, expectations.judge);
   return {
-    ok: deterministicResult.ok && (executionResult.skipped || executionResult.ok),
+    ok: deterministicResult.ok
+      && (executionResult.skipped || executionResult.ok)
+      && (judgeResult.skipped ? !judgeResult.blocked : judgeResult.ok),
     deterministic_scores: deterministicResult.checks,
     deterministic_failed: deterministicResult.failed,
     execution_scores: executionResult,
-    judge_scores: null,
+    judge_scores: judgeResult,
   };
 };
 
