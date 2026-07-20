@@ -30,12 +30,17 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   startNativelyTranscription: (input) => ipcRenderer.invoke("natively:start", input),
   sendNativelyAudio: (input) => ipcRenderer.invoke("natively:audio", input),
   stopNativelyTranscription: (input) => ipcRenderer.invoke("natively:stop", input),
+  startDeepgramTranscription: (input) => ipcRenderer.invoke("deepgram:start", input),
+  sendDeepgramAudio: (input) => ipcRenderer.invoke("deepgram:audio", input),
+  stopDeepgramTranscription: (input) => ipcRenderer.invoke("deepgram:stop", input),
   getCredentialStatus: () => ipcRenderer.invoke("credentials:status"),
   saveOpenAIKey: (apiKey) => ipcRenderer.invoke("credentials:save-openai-key", apiKey),
   saveNativelyKey: (apiKey) => ipcRenderer.invoke("credentials:save-natively-key", apiKey),
+  saveDeepgramKey: (apiKey) => ipcRenderer.invoke("credentials:save-deepgram-key", apiKey),
   saveNvidiaKey: (apiKey) => ipcRenderer.invoke("credentials:save-nvidia-key", apiKey),
   clearOpenAIKey: () => ipcRenderer.invoke("credentials:clear-openai-key"),
   clearNativelyKey: () => ipcRenderer.invoke("credentials:clear-natively-key"),
+  clearDeepgramKey: () => ipcRenderer.invoke("credentials:clear-deepgram-key"),
   clearNvidiaKey: () => ipcRenderer.invoke("credentials:clear-nvidia-key"),
   exportSessionFile: (session) => ipcRenderer.invoke("session:export-file", session),
   importSessionFile: () => ipcRenderer.invoke("session:import-file"),
@@ -101,6 +106,16 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on("natively:status", handler);
     return () => ipcRenderer.removeListener("natively:status", handler);
+  },
+  onDeepgramTranscript: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("deepgram:transcript", handler);
+    return () => ipcRenderer.removeListener("deepgram:transcript", handler);
+  },
+  onDeepgramStatus: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("deepgram:status", handler);
+    return () => ipcRenderer.removeListener("deepgram:status", handler);
   },
   onScreenContextPublished: (callback) => {
     const handler = (_event, payload) => callback(payload);

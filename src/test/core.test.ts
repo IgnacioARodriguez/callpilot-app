@@ -2544,6 +2544,22 @@ test("settings merge keeps defaults and normalizes blanks", () => {
   assert.equal(settings.liveAudioSource, "both");
 });
 
+test("live transcription settings accept Deepgram realtime provider", () => {
+  const settings = normalizeLiveTranscriptionSettings({
+    provider: "deepgram",
+    latencyPreset: "fast",
+    audioSource: "both",
+    language: "auto",
+  });
+  const plan = liveTranscriptionPlan(settings);
+
+  assert.equal(settings.provider, "deepgram");
+  assert.equal(plan.provider, "deepgram");
+  assert.equal(plan.engineLabel, "Deepgram realtime");
+  assert.equal(plan.requiresDesktopBridge, true);
+  assert.equal(plan.implemented, true);
+});
+
 test("settings and sessions accept Natively as an answer provider", () => {
   const settings = mergeAppSettings({ modelProvider: "natively", modelName: "default" });
   const session = createSessionSnapshot({

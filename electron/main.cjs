@@ -21,6 +21,7 @@ let codingWindow = null;
 let shortcutHealth = [];
 const ocrWorkers = new Map();
 const nativelyStreams = new Map();
+const deepgramStreams = new Map();
 const activeAnswerControllers = new Map();
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
@@ -111,6 +112,8 @@ const openAICompatibleModelsUrl = (chatUrl) => {
 };
 const nativelyTranscriptionUrl = () => (process.env.CALLPILOT_NATIVELY_STT_URL || "wss://api.natively.software/v1/transcribe").trim();
 const nativelyLLMUrl = () => (process.env.CALLPILOT_NATIVELY_LLM_URL || "https://api.natively.software/v1/chat/completions").trim();
+const deepgramTranscriptionUrl = () => (process.env.CALLPILOT_DEEPGRAM_STT_URL || "wss://api.deepgram.com/v1/listen").trim();
+const defaultDeepgramModel = () => (process.env.CALLPILOT_DEEPGRAM_MODEL || "nova-3").trim();
 const defaultNvidiaVisionModel = () => (process.env.CALLPILOT_NVIDIA_VISION_MODEL || settingsDefaults.visionModelName).trim();
 const isLikelyVisionModel = (modelName) => /vision|vlm|omni|ocr|image|cosmos|fuyu|deplot/i.test(String(modelName || ""));
 const supportedAudioMimeTypes = new Set([
@@ -297,13 +300,13 @@ const startSessionTrace = (options = {}) => {
     settings: (() => {
       const settings = readSettings();
       return {
-        modelProvider: settings.modelProvider,
-        modelName: settings.modelName,
-        liveTranscriptionProvider: settings.liveTranscriptionProvider,
-        liveLatencyPreset: settings.liveLatencyPreset,
-        liveAudioSource: settings.liveAudioSource,
-        preferredLanguage: settings.preferredLanguage,
-        activeMode: settings.activeMode,
+        modelProvider: options?.modelProvider || settings.modelProvider,
+        modelName: options?.modelName || settings.modelName,
+        liveTranscriptionProvider: options?.liveTranscriptionProvider || settings.liveTranscriptionProvider,
+        liveLatencyPreset: options?.liveLatencyPreset || settings.liveLatencyPreset,
+        liveAudioSource: options?.liveAudioSource || settings.liveAudioSource,
+        preferredLanguage: options?.preferredLanguage || settings.preferredLanguage,
+        activeMode: options?.activeMode || settings.activeMode,
       };
     })(),
     events: [],
@@ -375,6 +378,16 @@ const getStoredNativelyKey = () => {
   }
 };
 
+const getStoredDeepgramKey = () => {
+  const encrypted = readCredentials().deepgramApiKey;
+  if (!encrypted || typeof encrypted !== "string" || !safeStorage.isEncryptionAvailable()) return "";
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+  } catch {
+    return "";
+  }
+};
+
 const getStoredNvidiaKey = () => {
   const encrypted = readCredentials().nvidiaApiKey;
   if (!encrypted || typeof encrypted !== "string" || !safeStorage.isEncryptionAvailable()) return "";
@@ -388,20 +401,25 @@ const getStoredNvidiaKey = () => {
 const credentialStatus = () => {
   const hasOpenAIStoredKey = Boolean(getStoredOpenAIKey());
   const hasNativelyStoredKey = Boolean(getStoredNativelyKey());
+  const hasDeepgramStoredKey = Boolean(getStoredDeepgramKey());
   const hasNvidiaStoredKey = Boolean(getStoredNvidiaKey());
   const hasOpenAIEnvKey = Boolean(process.env.OPENAI_API_KEY);
   const hasNativelyEnvKey = Boolean(process.env.NATIVELY_API_KEY);
+  const hasDeepgramEnvKey = Boolean(process.env.DEEPGRAM_API_KEY || process.env.CALLPILOT_DEEPGRAM_API_KEY);
   const hasNvidiaEnvKey = Boolean(process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY);
   return {
     ok: true,
     hasOpenAIKey: hasOpenAIStoredKey || hasOpenAIEnvKey,
     hasNativelyKey: hasNativelyStoredKey || hasNativelyEnvKey,
+    hasDeepgramKey: hasDeepgramStoredKey || hasDeepgramEnvKey,
     hasNvidiaKey: hasNvidiaStoredKey || hasNvidiaEnvKey,
     hasOpenAIStoredKey,
     hasNativelyStoredKey,
+    hasDeepgramStoredKey,
     hasNvidiaStoredKey,
     hasOpenAIEnvKey,
     hasNativelyEnvKey,
+    hasDeepgramEnvKey,
     hasNvidiaEnvKey,
     encryptionAvailable: safeStorage.isEncryptionAvailable(),
   };
@@ -409,7 +427,7 @@ const credentialStatus = () => {
 
 const saveStoredOpenAIKey = (apiKey) => {
   if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, hasOpenAIKey: false, hasNativelyKey: Boolean(getStoredNativelyKey()), hasNvidiaKey: Boolean(getStoredNvidiaKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
+    return { ok: false, hasOpenAIKey: false, hasNativelyKey: Boolean(getStoredNativelyKey()), hasDeepgramKey: Boolean(getStoredDeepgramKey()), hasNvidiaKey: Boolean(getStoredNvidiaKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
   }
   const key = typeof apiKey === "string" ? apiKey.trim() : "";
   if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
@@ -422,7 +440,7 @@ const saveStoredOpenAIKey = (apiKey) => {
 
 const saveStoredNativelyKey = (apiKey) => {
   if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: false, hasNvidiaKey: Boolean(getStoredNvidiaKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
+    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: false, hasDeepgramKey: Boolean(getStoredDeepgramKey()), hasNvidiaKey: Boolean(getStoredNvidiaKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
   }
   const key = typeof apiKey === "string" ? apiKey.trim() : "";
   if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
@@ -433,9 +451,22 @@ const saveStoredNativelyKey = (apiKey) => {
   return { ...credentialStatus(), ok: true };
 };
 
+const saveStoredDeepgramKey = (apiKey) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: Boolean(getStoredNativelyKey()), hasDeepgramKey: false, hasNvidiaKey: Boolean(getStoredNvidiaKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
+  }
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
+  saveCredentials({
+    ...readCredentials(),
+    deepgramApiKey: safeStorage.encryptString(key).toString("base64"),
+  });
+  return { ...credentialStatus(), ok: true };
+};
+
 const saveStoredNvidiaKey = (apiKey) => {
   if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: Boolean(getStoredNativelyKey()), hasNvidiaKey: false, encryptionAvailable: false, error: "safe_storage_unavailable" };
+    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: Boolean(getStoredNativelyKey()), hasDeepgramKey: Boolean(getStoredDeepgramKey()), hasNvidiaKey: false, encryptionAvailable: false, error: "safe_storage_unavailable" };
   }
   const key = typeof apiKey === "string" ? apiKey.trim() : "";
   if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
@@ -456,6 +487,13 @@ const clearStoredOpenAIKey = () => {
 const clearStoredNativelyKey = () => {
   const credentials = readCredentials();
   delete credentials.nativelyApiKey;
+  saveCredentials(credentials);
+  return { ...credentialStatus(), ok: true };
+};
+
+const clearStoredDeepgramKey = () => {
+  const credentials = readCredentials();
+  delete credentials.deepgramApiKey;
   saveCredentials(credentials);
   return { ...credentialStatus(), ok: true };
 };
@@ -500,6 +538,120 @@ const stopAllNativelyStreams = () => {
   return streamIds;
 };
 
+const emitDeepgramStatus = (streamId, status, detail) => {
+  mainWindow?.webContents.send("deepgram:status", { streamId, status, detail });
+};
+
+const deepgramLanguageForPreference = (language) => {
+  if (language === "spanish") return "es";
+  if (language === "english") return "en";
+  return "multi";
+};
+
+const deepgramUrlForConfig = (config) => {
+  const url = new URL(deepgramTranscriptionUrl());
+  url.searchParams.set("model", config.model || defaultDeepgramModel());
+  url.searchParams.set("encoding", "linear16");
+  url.searchParams.set("sample_rate", String(config.sampleRate || 16000));
+  url.searchParams.set("channels", "1");
+  url.searchParams.set("interim_results", "true");
+  url.searchParams.set("smart_format", "true");
+  url.searchParams.set("endpointing", config.endpointingMs ? String(config.endpointingMs) : "300");
+  url.searchParams.set("utterance_end_ms", config.utteranceEndMs ? String(config.utteranceEndMs) : "1000");
+  if (config.language) url.searchParams.set("language", config.language);
+  return url.toString();
+};
+
+const stopDeepgramStream = (streamId) => {
+  const stream = deepgramStreams.get(streamId);
+  if (!stream) return { ok: true };
+  deepgramStreams.delete(streamId);
+  try {
+    stream.ws?.close();
+  } catch {}
+  return { ok: true };
+};
+
+const stopAllDeepgramStreams = () => {
+  const streamIds = [...deepgramStreams.keys()];
+  for (const streamId of streamIds) stopDeepgramStream(streamId);
+  return streamIds;
+};
+
+const openDeepgramStreamSocket = (streamId, config) => {
+  const WebSocketCtor = globalThis.WebSocket;
+  const ws = new WebSocketCtor(deepgramUrlForConfig(config), ["token", config.apiKey]);
+  const stream = {
+    ws,
+    queue: [],
+    connected: false,
+    closed: false,
+    config,
+  };
+  deepgramStreams.set(streamId, stream);
+
+  ws.binaryType = "arraybuffer";
+  ws.addEventListener("open", () => {
+    const active = deepgramStreams.get(streamId);
+    if (active?.ws !== ws) return;
+    active.connected = true;
+    active.closed = false;
+    for (const chunk of active.queue.splice(0)) ws.send(chunk);
+    emitDeepgramStatus(streamId, "connected", `Deepgram ${config.channel} stream connected`);
+  });
+  ws.addEventListener("message", async (event) => {
+    let raw = "";
+    if (typeof event.data === "string") raw = event.data;
+    else if (event.data instanceof ArrayBuffer) raw = Buffer.from(event.data).toString("utf8");
+    else if (event.data && typeof event.data.text === "function") raw = await event.data.text().catch(() => "");
+    if (!raw) return;
+    try {
+      const message = JSON.parse(raw);
+      if (message?.type === "Metadata" || message?.type === "SpeechStarted" || message?.type === "UtteranceEnd") {
+        appendTraceEvent("deepgram_stream_event", { streamId, eventType: message.type });
+        writeActiveSessionTrace("active");
+        return;
+      }
+      const alternative = message?.channel?.alternatives?.[0];
+      const text = typeof alternative?.transcript === "string" ? alternative.transcript.trim() : "";
+      if (!text) return;
+      const payload = {
+        streamId,
+        text,
+        isFinal: Boolean(message.is_final || message.speech_final),
+        confidence: typeof alternative.confidence === "number" ? alternative.confidence : 1,
+      };
+      appendTraceEvent("deepgram_transcript", {
+        streamId,
+        isFinal: payload.isFinal,
+        confidence: payload.confidence,
+        text: textSummary(payload.text, 120),
+      });
+      writeActiveSessionTrace("active");
+      mainWindow?.webContents.send("deepgram:transcript", payload);
+    } catch {
+      appendTraceEvent("deepgram_stream_malformed_event", { streamId, raw: textSummary(raw, 120) });
+      writeActiveSessionTrace("active");
+    }
+  });
+  ws.addEventListener("error", () => {
+    appendTraceEvent("deepgram_stream_error", { streamId, error: "websocket_error" });
+    writeActiveSessionTrace("active");
+    emitDeepgramStatus(streamId, "error", "Deepgram WebSocket error");
+  });
+  ws.addEventListener("close", (event) => {
+    const active = deepgramStreams.get(streamId);
+    if (!active || active.ws !== ws) return;
+    active.connected = false;
+    active.closed = true;
+    const detail = event?.reason ? String(event.reason).slice(0, 160) : "Deepgram stream closed";
+    appendTraceEvent("deepgram_stream_closed", { streamId, code: event?.code, reason: detail });
+    writeActiveSessionTrace("active");
+    emitDeepgramStatus(streamId, "closed", detail);
+  });
+  return stream;
+};
+
 const openNativelyStreamSocket = (streamId, config, existing = {}) => {
   const WebSocketCtor = globalThis.WebSocket;
   const ws = new WebSocketCtor(nativelyTranscriptionUrl());
@@ -540,6 +692,11 @@ const openNativelyStreamSocket = (streamId, config, existing = {}) => {
     try {
       const message = JSON.parse(raw);
       if (message?.error) {
+        appendTraceEvent("natively_stream_error", {
+          streamId,
+          error: String(message.error),
+        });
+        writeActiveSessionTrace("active");
         emitNativelyStatus(streamId, "error", String(message.error));
         if (terminalNativelyErrors.has(message.error)) {
           const active = nativelyStreams.get(streamId);
@@ -572,6 +729,8 @@ const openNativelyStreamSocket = (streamId, config, existing = {}) => {
     }
   });
   ws.addEventListener("error", () => {
+    appendTraceEvent("natively_stream_error", { streamId, error: "websocket_error" });
+    writeActiveSessionTrace("active");
     emitNativelyStatus(streamId, "error", "Natively WebSocket error");
   });
   ws.addEventListener("close", () => {
@@ -579,6 +738,8 @@ const openNativelyStreamSocket = (streamId, config, existing = {}) => {
     if (!active || active.ws !== ws) return;
     active.connected = false;
     active.closed = true;
+    appendTraceEvent("natively_stream_closed", { streamId });
+    writeActiveSessionTrace("active");
     emitNativelyStatus(streamId, "closed", "Natively stream closed");
   });
   return stream;
@@ -1948,10 +2109,13 @@ ipcMain.handle("stealth:reset-privacy", () => {
 ipcMain.handle("privacy:check", () => assessPrivacyState());
 ipcMain.handle("session:start", async (_event, options = {}) => {
   startSessionTrace(options);
-  const stoppedStreams = stopAllNativelyStreams();
+  const stoppedNativelyStreams = stopAllNativelyStreams();
+  const stoppedDeepgramStreams = stopAllDeepgramStreams();
   appendTraceEvent("live_transcription_runtime_reset", {
-    stoppedNativelyStreams: stoppedStreams.length,
-    streamIds: stoppedStreams,
+    stoppedNativelyStreams: stoppedNativelyStreams.length,
+    stoppedDeepgramStreams: stoppedDeepgramStreams.length,
+    nativelyStreamIds: stoppedNativelyStreams,
+    deepgramStreamIds: stoppedDeepgramStreams,
   });
   await createOverlayWindow();
   if (options.mode === "live_coding") {
@@ -1966,11 +2130,14 @@ ipcMain.handle("session:start", async (_event, options = {}) => {
 });
 ipcMain.handle("session:end", () => {
   mainWindow?.webContents.send("session:ended");
-  const stoppedStreams = stopAllNativelyStreams();
+  const stoppedNativelyStreams = stopAllNativelyStreams();
+  const stoppedDeepgramStreams = stopAllDeepgramStreams();
   appendTraceEvent("live_transcription_runtime_reset", {
     reason: "session_end",
-    stoppedNativelyStreams: stoppedStreams.length,
-    streamIds: stoppedStreams,
+    stoppedNativelyStreams: stoppedNativelyStreams.length,
+    stoppedDeepgramStreams: stoppedDeepgramStreams.length,
+    nativelyStreamIds: stoppedNativelyStreams,
+    deepgramStreamIds: stoppedDeepgramStreams,
   });
   closeOverlayWindow();
   closeCodingWindow();
@@ -2066,10 +2233,106 @@ ipcMain.handle("shortcuts:health", () => shortcutHealth.map((item) => ({ ...item
 ipcMain.handle("credentials:status", () => credentialStatus());
 ipcMain.handle("credentials:save-openai-key", (_event, apiKey) => saveStoredOpenAIKey(apiKey));
 ipcMain.handle("credentials:save-natively-key", (_event, apiKey) => saveStoredNativelyKey(apiKey));
+ipcMain.handle("credentials:save-deepgram-key", (_event, apiKey) => saveStoredDeepgramKey(apiKey));
 ipcMain.handle("credentials:save-nvidia-key", (_event, apiKey) => saveStoredNvidiaKey(apiKey));
 ipcMain.handle("credentials:clear-openai-key", () => clearStoredOpenAIKey());
 ipcMain.handle("credentials:clear-natively-key", () => clearStoredNativelyKey());
+ipcMain.handle("credentials:clear-deepgram-key", () => clearStoredDeepgramKey());
 ipcMain.handle("credentials:clear-nvidia-key", () => clearStoredNvidiaKey());
+ipcMain.handle("deepgram:start", async (_event, input) => {
+  const startedAt = Date.now();
+  const WebSocketCtor = globalThis.WebSocket;
+  if (typeof WebSocketCtor !== "function") {
+    appendTraceEvent("deepgram_stream_start_failed", { error: "websocket_unavailable" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "websocket_unavailable" };
+  }
+  const streamId = typeof input?.streamId === "string" && input.streamId.trim() ? input.streamId.trim() : `deepgram-${Date.now()}`;
+  stopDeepgramStream(streamId);
+  const apiKey = typeof input?.apiKey === "string" && input.apiKey.trim()
+    ? input.apiKey.trim()
+    : process.env.DEEPGRAM_API_KEY || process.env.CALLPILOT_DEEPGRAM_API_KEY || getStoredDeepgramKey();
+  if (!apiKey) {
+    appendTraceEvent("deepgram_stream_start_failed", { streamId, error: "missing_deepgram_api_key" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "missing_deepgram_api_key" };
+  }
+  const sampleRate = Number.isFinite(input?.sampleRate) ? Math.max(8000, Math.min(48000, Math.round(Number(input.sampleRate)))) : 16000;
+  const channel = input?.channel === "mic" ? "mic" : "system";
+  const language = deepgramLanguageForPreference(input?.language);
+  const latencyPreset = input?.latencyPreset === "accurate" ? "accurate" : input?.latencyPreset === "fast" ? "fast" : "balanced";
+  const endpointingMs = Number.isFinite(input?.endpointingMs)
+    ? Math.max(100, Math.min(3000, Math.round(Number(input.endpointingMs))))
+    : latencyPreset === "accurate" ? 700 : latencyPreset === "fast" ? 200 : 300;
+  const utteranceEndMs = Number.isFinite(input?.utteranceEndMs)
+    ? Math.max(500, Math.min(5000, Math.round(Number(input.utteranceEndMs))))
+    : latencyPreset === "accurate" ? 1400 : latencyPreset === "fast" ? 800 : 1000;
+  const model = typeof input?.modelName === "string" && input.modelName.trim() ? input.modelName.trim() : defaultDeepgramModel();
+  appendTraceEvent("deepgram_stream_started", {
+    streamId,
+    channel,
+    model,
+    sampleRate,
+    requestedLanguage: input?.language,
+    normalizedLanguage: language,
+    latencyPreset,
+    endpointingMs,
+    utteranceEndMs,
+    durationMs: Date.now() - startedAt,
+  });
+  writeActiveSessionTrace("active");
+  openDeepgramStreamSocket(streamId, { apiKey, sampleRate, channel, language, model, endpointingMs, utteranceEndMs });
+  return { ok: true, streamId };
+});
+ipcMain.handle("deepgram:audio", (_event, input) => {
+  const streamId = typeof input?.streamId === "string" ? input.streamId : "";
+  const rawAudio = input?.arrayBuffer;
+  const audioBuffer = rawAudio instanceof ArrayBuffer
+    ? Buffer.from(rawAudio)
+    : ArrayBuffer.isView(rawAudio)
+      ? Buffer.from(rawAudio.buffer, rawAudio.byteOffset, rawAudio.byteLength)
+      : Buffer.alloc(0);
+  if (audioBuffer.length === 0) {
+    appendTraceEvent("deepgram_audio_rejected", { streamId, error: "empty_audio_chunk" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "empty_audio_chunk" };
+  }
+  const stream = deepgramStreams.get(streamId);
+  if (!stream) {
+    appendTraceEvent("deepgram_audio_rejected", { streamId, error: "deepgram_stream_not_started" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "deepgram_stream_not_started" };
+  }
+  if (stream.closed) {
+    appendTraceEvent("deepgram_audio_rejected", { streamId, error: "deepgram_stream_closed" });
+    writeActiveSessionTrace("active");
+    return { ok: false, error: "deepgram_stream_closed" };
+  }
+  const queuedBefore = stream.queue.length;
+  if (stream.connected && stream.ws?.readyState === globalThis.WebSocket.OPEN) {
+    stream.ws.send(audioBuffer);
+  } else {
+    stream.queue.push(audioBuffer);
+    if (stream.queue.length > 500) stream.queue.shift();
+  }
+  appendTraceEvent("deepgram_audio_chunk", {
+    streamId,
+    bytes: audioBuffer.length,
+    connected: Boolean(stream.connected),
+    queuedBefore,
+    queuedAfter: stream.queue.length,
+  });
+  writeActiveSessionTrace("active");
+  return { ok: true };
+});
+ipcMain.handle("deepgram:stop", (_event, input) => {
+  const streamId = typeof input?.streamId === "string" ? input.streamId : "";
+  appendTraceEvent("deepgram_stop_requested", { streamId: streamId || "all" });
+  writeActiveSessionTrace("active");
+  if (streamId) return stopDeepgramStream(streamId);
+  stopAllDeepgramStreams();
+  return { ok: true };
+});
 ipcMain.handle("natively:start", async (_event, input) => {
   const startedAt = Date.now();
   const WebSocketCtor = globalThis.WebSocket;

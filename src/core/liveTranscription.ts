@@ -1,6 +1,6 @@
 import type { PreferredLanguage } from "./context.ts";
 
-export type LiveTranscriptionProvider = "browser" | "openai_realtime" | "natively" | "local";
+export type LiveTranscriptionProvider = "browser" | "openai_realtime" | "natively" | "deepgram" | "local";
 export type LiveLatencyPreset = "fast" | "balanced" | "accurate";
 export type LiveAudioSource = "microphone" | "system" | "both";
 
@@ -32,7 +32,7 @@ export const DEFAULT_LIVE_TRANSCRIPTION_SETTINGS: LiveTranscriptionSettings = {
   autoAnswerMinConfidence: 0.45,
 };
 
-const providers = new Set<LiveTranscriptionProvider>(["browser", "openai_realtime", "natively", "local"]);
+const providers = new Set<LiveTranscriptionProvider>(["browser", "openai_realtime", "natively", "deepgram", "local"]);
 const presets = new Set<LiveLatencyPreset>(["fast", "balanced", "accurate"]);
 const audioSources = new Set<LiveAudioSource>(["microphone", "system", "both"]);
 const languages = new Set<PreferredLanguage>(["english", "spanish", "auto"]);
@@ -88,6 +88,17 @@ export const liveTranscriptionPlan = (settings: LiveTranscriptionSettings): Live
       engineLabel: "Natively STT",
       expectedLatency: settings.latencyPreset === "fast" ? "low" : settings.latencyPreset === "accurate" ? "higher" : "medium",
       quality: "high",
+      requiresDesktopBridge: true,
+      implemented: true,
+    };
+  }
+  if (settings.provider === "deepgram") {
+    return {
+      provider: settings.provider,
+      latencyPreset: settings.latencyPreset,
+      engineLabel: "Deepgram realtime",
+      expectedLatency: settings.latencyPreset === "fast" ? "low" : settings.latencyPreset === "accurate" ? "medium" : "low",
+      quality: settings.latencyPreset === "accurate" ? "high" : "high",
       requiresDesktopBridge: true,
       implemented: true,
     };

@@ -240,12 +240,15 @@ function App() {
   const [autoAnswerMinConfidence, setAutoAnswerMinConfidence] = React.useState(0.45);
   const [sessionApiKey, setSessionApiKey] = React.useState("");
   const [nativelyApiKey, setNativelyApiKey] = React.useState("");
+  const [deepgramApiKey, setDeepgramApiKey] = React.useState("");
   const [nvidiaApiKey, setNvidiaApiKey] = React.useState("");
   const [hasStoredOpenAIKey, setHasStoredOpenAIKey] = React.useState(false);
   const [hasStoredNativelyKey, setHasStoredNativelyKey] = React.useState(false);
+  const [hasStoredDeepgramKey, setHasStoredDeepgramKey] = React.useState(false);
   const [hasStoredNvidiaKey, setHasStoredNvidiaKey] = React.useState(false);
   const [hasEnvOpenAIKey, setHasEnvOpenAIKey] = React.useState(false);
   const [hasEnvNativelyKey, setHasEnvNativelyKey] = React.useState(false);
+  const [hasEnvDeepgramKey, setHasEnvDeepgramKey] = React.useState(false);
   const [hasEnvNvidiaKey, setHasEnvNvidiaKey] = React.useState(false);
   const [settingsLoaded, setSettingsLoaded] = React.useState(false);
   const [credentialStatusLoaded, setCredentialStatusLoaded] = React.useState(false);
@@ -300,6 +303,12 @@ function App() {
   const localSegmentChunksRef = React.useRef<BlobPart[]>([]);
   const localSegmentTimerRef = React.useRef<number | null>(null);
   const nativelySessionsRef = React.useRef<Array<{
+    streamId: string;
+    context: AudioContext;
+    source: MediaStreamAudioSourceNode;
+    processor: ScriptProcessorNode;
+  }>>([]);
+  const deepgramSessionsRef = React.useRef<Array<{
     streamId: string;
     context: AudioContext;
     source: MediaStreamAudioSourceNode;
@@ -372,6 +381,7 @@ function App() {
   const privacyLabel = stealth.callPrivacyAllowed ? "Approved" : "Not approved";
   const hasOpenAITranscriptionKey = hasStoredOpenAIKey || hasEnvOpenAIKey || Boolean(sessionApiKey.trim());
   const hasNativelyTranscriptionKey = hasStoredNativelyKey || hasEnvNativelyKey || Boolean(nativelyApiKey.trim());
+  const hasDeepgramTranscriptionKey = hasStoredDeepgramKey || hasEnvDeepgramKey || Boolean(deepgramApiKey.trim());
   const hasNvidiaAnswerKey = hasStoredNvidiaKey || hasEnvNvidiaKey || Boolean(nvidiaApiKey.trim());
   const selectedAnswerModelKey = `${modelProvider}:${modelName || "default"}`;
   const answerWarmupChipClass = answerWarmupHealth.status === "ready"
@@ -385,6 +395,32 @@ function App() {
     if (speaker === "interviewer") return "Interviewer";
     return "Unknown";
   };
+
+  const applyCredentialStatus = React.useCallback((status: {
+    ok?: boolean;
+    hasOpenAIKey?: boolean;
+    hasNativelyKey?: boolean;
+    hasDeepgramKey?: boolean;
+    hasNvidiaKey?: boolean;
+    hasOpenAIStoredKey?: boolean;
+    hasNativelyStoredKey?: boolean;
+    hasDeepgramStoredKey?: boolean;
+    hasNvidiaStoredKey?: boolean;
+    hasOpenAIEnvKey?: boolean;
+    hasNativelyEnvKey?: boolean;
+    hasDeepgramEnvKey?: boolean;
+    hasNvidiaEnvKey?: boolean;
+    encryptionAvailable?: boolean;
+  }) => {
+    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
+    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
+    setHasStoredDeepgramKey(Boolean(status.hasDeepgramStoredKey ?? status.hasDeepgramKey));
+    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
+    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
+    setHasEnvDeepgramKey(Boolean(status.hasDeepgramEnvKey));
+    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+  }, []);
 
   const stripKnownTranscriptHistory = (text: string, speaker: TranscriptSpeaker): string => {
     let candidate = text.trim();
@@ -507,12 +543,7 @@ function App() {
 
     window.callpilotDesktop?.getCredentialStatus()
       .then((status) => {
-        setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
-        setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
-        setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
-        setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
-        setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
-        setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+        applyCredentialStatus(status);
         setCredentialMessage(status.encryptionAvailable ? "Encrypted key storage ready" : "Encrypted key storage unavailable");
       })
       .catch(() => {})
@@ -524,7 +555,7 @@ function App() {
         setShortcutStatus(failed.length === 0 ? `${health.length} shortcuts registered` : `${failed.length} shortcuts failed`);
       })
       .catch(() => {});
-  }, []);
+  }, [applyCredentialStatus]);
 
   React.useEffect(() => {
     window.callpilotDesktop?.saveSettings({
@@ -556,6 +587,12 @@ function App() {
       setLiveAssistStatus("Natively STT selected, but no Natively key is saved yet");
     }
   }, [hasNativelyTranscriptionKey, liveTranscriptionProvider]);
+
+  React.useEffect(() => {
+    if (!hasDeepgramTranscriptionKey && liveTranscriptionProvider === "deepgram") {
+      setLiveAssistStatus("Deepgram selected, but no Deepgram key is saved yet");
+    }
+  }, [hasDeepgramTranscriptionKey, liveTranscriptionProvider]);
 
   React.useEffect(() => {
     if (
@@ -595,6 +632,13 @@ function App() {
       void window.callpilotDesktop?.stopNativelyTranscription?.({ streamId: session.streamId });
     });
     nativelySessionsRef.current = [];
+    deepgramSessionsRef.current.forEach((session) => {
+      session.processor.disconnect();
+      session.source.disconnect();
+      void session.context.close().catch(() => {});
+      void window.callpilotDesktop?.stopDeepgramTranscription?.({ streamId: session.streamId });
+    });
+    deepgramSessionsRef.current = [];
   }, []);
 
   React.useEffect(() => {
@@ -1458,6 +1502,100 @@ function App() {
     };
   }, [ask, handleFinalTranscript, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence, preferredLanguage]);
 
+  React.useEffect(() => {
+    const unsubscribeTranscript = window.callpilotDesktop?.onDeepgramTranscript?.((payload) => {
+      const speaker: TranscriptSpeaker = payload.streamId.startsWith("mic-") ? "candidate" : "interviewer";
+      const normalized = stripKnownTranscriptHistory(normalizeTechnicalTranscript(payload.text), speaker);
+      if (!normalized) return;
+      const assembled = assembleTurn(turnAssemblerRef.current, {
+        speaker,
+        text: normalized,
+        isFinal: payload.isFinal,
+        timestamp: Date.now(),
+      });
+      if (assembled.action === "ignore") {
+        if (assembled.reason === "short_final_fragment") {
+          void window.callpilotDesktop?.recordSessionEvent?.("stt_short_final_ignored", {
+            provider: "deepgram",
+            streamId: payload.streamId,
+            speaker,
+            text: assembled.text,
+          });
+        }
+        return;
+      }
+      if (assembled.action === "publish_live") {
+        const liveText = assembled.text;
+        setDesktopStatus(`Deepgram partial: ${liveText.slice(0, 80)}`);
+        void window.callpilotDesktop?.publishLiveTranscript?.({
+          id: `live-${payload.streamId}`,
+          speaker,
+          text: liveText,
+          timestamp: Date.now(),
+        });
+        if (speaker === "interviewer" && autoAnswerEnabledRef.current) {
+          const now = Date.now();
+          const previousPartial = nativelyPartialStabilityRef.current[payload.streamId] ?? { text: "", timestamp: 0 };
+          const stability = assessPartialTurnStability(liveText, previousPartial.text, previousPartial.timestamp, now);
+          nativelyPartialStabilityRef.current[payload.streamId] = { text: liveText, timestamp: now };
+          const detection = detectQuestionIntent(liveText, preferredLanguage);
+          const previous = lastNativelyPartialAnswerRef.current;
+          const isNewEnough = speechSimilarity(previous.text, detection.normalizedText) < 0.82 || now - previous.timestamp > 8000;
+          void window.callpilotDesktop?.recordSessionEvent?.("autoanswer_partial_decision", {
+            provider: "deepgram",
+            streamId: payload.streamId,
+            speaker,
+            stability,
+            detection,
+            isNewEnough,
+            cooldownMs: liveSettings.autoAnswerCooldownMs,
+            minConfidence: liveSettings.autoAnswerMinConfidence,
+          });
+          if (
+            stability.stable
+            && isNewEnough
+            && shouldAutoAnswer(detection, now, lastAutoAnsweredAtRef.current, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence)
+          ) {
+            lastAutoAnsweredAtRef.current = now;
+            lastNativelyPartialAnswerRef.current = { text: detection.normalizedText, timestamp: now };
+            setLiveAssistStatus(`Auto answering stable partial (${detection.reason})`);
+            void ask(detection.normalizedText);
+          } else if (detection.shouldDispatch) {
+            setLiveAssistStatus(`Transcribing (${stability.reason})`);
+          }
+        }
+        return;
+      }
+      delete nativelyPartialStabilityRef.current[payload.streamId];
+      if (assembled.action === "fold_final") {
+        void window.callpilotDesktop?.publishLiveTranscript?.({
+          id: `live-${payload.streamId}`,
+          speaker,
+          text: assembled.draftText,
+          timestamp: Date.now(),
+        });
+        void window.callpilotDesktop?.recordSessionEvent?.("stt_final_fragment_folded", {
+          provider: "deepgram",
+          streamId: payload.streamId,
+          speaker,
+          text: assembled.text,
+          draftText: assembled.draftText,
+        });
+        setDesktopStatus("Deepgram final fragment folded and published to live draft");
+        return;
+      }
+      handleFinalTranscript(assembled.text, "stt", speaker);
+      setDesktopStatus("Deepgram transcribed audio");
+    });
+    const unsubscribeStatus = window.callpilotDesktop?.onDeepgramStatus?.((payload) => {
+      if (payload.detail) setDesktopStatus(payload.detail);
+    });
+    return () => {
+      unsubscribeTranscript?.();
+      unsubscribeStatus?.();
+    };
+  }, [ask, handleFinalTranscript, liveSettings.autoAnswerCooldownMs, liveSettings.autoAnswerMinConfidence, preferredLanguage]);
+
   const stopLiveRecording = React.useCallback(() => {
     liveContinueRef.current = false;
     if (localSegmentTimerRef.current !== null) {
@@ -1488,6 +1626,13 @@ function App() {
       void window.callpilotDesktop?.stopNativelyTranscription?.({ streamId: session.streamId });
     });
     nativelySessionsRef.current = [];
+    deepgramSessionsRef.current.forEach((session) => {
+      session.processor.disconnect();
+      session.source.disconnect();
+      void session.context.close().catch(() => {});
+      void window.callpilotDesktop?.stopDeepgramTranscription?.({ streamId: session.streamId });
+    });
+    deepgramSessionsRef.current = [];
     setIsDictating(false);
     setLiveAssistStatus("Live assist idle");
   }, []);
@@ -2092,6 +2237,75 @@ function App() {
     }
   };
 
+  const startDeepgramListening = async () => {
+    if (!window.callpilotDesktop?.startDeepgramTranscription || !window.callpilotDesktop?.sendDeepgramAudio) {
+      setDesktopStatus("Desktop transcription bridge is unavailable");
+      setLiveAssistStatus("Deepgram requires desktop mode");
+      return false;
+    }
+    if (!hasDeepgramTranscriptionKey) {
+      setDesktopStatus("Deepgram needs an API key saved first");
+      setLiveAssistStatus("No Deepgram key for live transcription");
+      return false;
+    }
+    const AudioContextCtor = window.AudioContext;
+    if (!AudioContextCtor) {
+      setDesktopStatus("AudioContext is unavailable");
+      return false;
+    }
+    try {
+      const channels = await requestLiveAudioStreams();
+      liveStreamsRef.current = channels.map((channel) => channel.stream);
+      const started: string[] = [];
+      for (const [index, channel] of channels.entries()) {
+        const context = new AudioContextCtor();
+        const source = context.createMediaStreamSource(channel.stream);
+        const processor = context.createScriptProcessor(4096, 1, 1);
+        const streamId = `${channel.speaker === "candidate" ? "mic" : "system"}-${Date.now()}-${index}`;
+        const deepgramChannel = channel.speaker === "candidate" ? "mic" : "system";
+        const startResult = await window.callpilotDesktop.startDeepgramTranscription({
+          streamId,
+          channel: deepgramChannel,
+          sampleRate: 16000,
+          language: preferredLanguage,
+          latencyPreset: liveLatencyPreset,
+          modelName: "nova-3",
+          apiKey: deepgramApiKey,
+        });
+        if (!startResult.ok) {
+          throw new Error(startResult.error ?? "deepgram_start_failed");
+        }
+        processor.onaudioprocess = (event) => {
+          event.outputBuffer.getChannelData(0).fill(0);
+          const input = event.inputBuffer.getChannelData(0);
+          const resampled = resampleMono(input, context.sampleRate, 16000);
+          const energy = audioEnergy(resampled);
+          if (channel.speaker === "interviewer" && energy.peak > 0.018 && Date.now() - lastSystemAudioSignalAtRef.current > 3000) {
+            lastSystemAudioSignalAtRef.current = Date.now();
+            setDesktopStatus("Computer audio signal detected");
+          }
+          const speaker = channel.speaker === "candidate" ? "candidate" : "interviewer";
+          if (!shouldSendNativelyFrame(speaker, energy)) return;
+          const pcm = floatToLinear16(resampled);
+          void window.callpilotDesktop?.sendDeepgramAudio?.({ streamId, arrayBuffer: pcm });
+        };
+        source.connect(processor);
+        processor.connect(context.destination);
+        deepgramSessionsRef.current.push({ streamId, context, source, processor });
+        started.push(channel.label);
+      }
+      setIsDictating(true);
+      setDesktopStatus("Deepgram PCM streaming started");
+      setLiveAssistStatus(autoAnswerEnabled ? `Listening with Deepgram (${started.join(" + ")}): auto answer on` : `Listening with Deepgram (${started.join(" + ")}): auto answer off`);
+      return true;
+    } catch (error) {
+      stopLiveRecording();
+      setDesktopStatus(error instanceof Error ? `Deepgram failed: ${error.message}` : "Deepgram failed");
+      setIsDictating(false);
+      return false;
+    }
+  };
+
   const toggleDictation = async (forceStart = false) => {
     if (isDictating && !forceStart) {
       stopLiveRecording();
@@ -2119,6 +2333,10 @@ function App() {
     }
     if (liveTranscriptionProvider === "natively") {
       await startNativelyListening();
+      return;
+    }
+    if (liveTranscriptionProvider === "deepgram") {
+      await startDeepgramListening();
       return;
     }
 
@@ -2210,7 +2428,32 @@ function App() {
     applyInterviewSetup(selectedSetup);
     autoAnswerEnabledRef.current = false;
     setAutoAnswerEnabled(false);
-    const result = await window.callpilotDesktop.startSession({ mode: selectedSetup === "live_coding" ? "live_coding" : "technical_qa" });
+    const sessionMode = selectedSetup === "live_coding" ? "live_coding" : "technical_qa";
+    await window.callpilotDesktop.saveSettings?.({
+      activeMode: sessionMode,
+      preferredLanguage,
+      defaultCodingLanguage: codingLanguage,
+      answerVerbosity,
+      modelProvider,
+      modelName,
+      ollamaBaseUrl,
+      transcriptionModelName,
+      liveTranscriptionProvider,
+      liveLatencyPreset,
+      liveAudioSource,
+      autoAnswerCooldownMs,
+      autoAnswerMinConfidence,
+    }).catch(() => undefined);
+    const result = await window.callpilotDesktop.startSession({
+      mode: sessionMode,
+      activeMode: sessionMode,
+      preferredLanguage,
+      modelProvider,
+      modelName,
+      liveTranscriptionProvider,
+      liveLatencyPreset,
+      liveAudioSource,
+    });
     if (result.ok) {
       await window.callpilotDesktop.recordSessionEvent?.("evidence_embedder_warmup_state", evidenceEmbedderWarmupRef.current).catch(() => undefined);
       await toggleDictation(true);
@@ -2221,7 +2464,25 @@ function App() {
     } else {
       setDesktopStatus(`Overlay failed: ${result.error ?? "unknown"}`);
     }
-  }, [applyInterviewSetup, resetSessionRuntimeContext, selectedSetup, toggleDictation]);
+  }, [
+    activeMode,
+    answerVerbosity,
+    applyInterviewSetup,
+    autoAnswerCooldownMs,
+    autoAnswerMinConfidence,
+    codingLanguage,
+    liveAudioSource,
+    liveLatencyPreset,
+    liveTranscriptionProvider,
+    modelName,
+    modelProvider,
+    ollamaBaseUrl,
+    preferredLanguage,
+    resetSessionRuntimeContext,
+    selectedSetup,
+    toggleDictation,
+    transcriptionModelName,
+  ]);
 
   const stopMicRecording = () => {
     mediaRecorderRef.current?.stop();
@@ -2440,14 +2701,10 @@ function App() {
     const credential = await window.callpilotDesktop?.getCredentialStatus?.().catch(() => undefined);
     const hasKey = Boolean(credential?.hasOpenAIKey || sessionApiKey.trim());
     const hasNativelyKey = Boolean(credential?.hasNativelyKey || nativelyApiKey.trim());
+    const hasDeepgramKey = Boolean(credential?.hasDeepgramKey || deepgramApiKey.trim());
     const hasNvidiaKey = Boolean(credential?.hasNvidiaKey || nvidiaApiKey.trim());
     if (credential) {
-      setHasStoredOpenAIKey(Boolean(credential.hasOpenAIStoredKey ?? credential.hasOpenAIKey));
-      setHasStoredNativelyKey(Boolean(credential.hasNativelyStoredKey ?? credential.hasNativelyKey));
-      setHasStoredNvidiaKey(Boolean(credential.hasNvidiaStoredKey ?? credential.hasNvidiaKey));
-      setHasEnvOpenAIKey(Boolean(credential.hasOpenAIEnvKey));
-      setHasEnvNativelyKey(Boolean(credential.hasNativelyEnvKey));
-      setHasEnvNvidiaKey(Boolean(credential.hasNvidiaEnvKey));
+      applyCredentialStatus(credential);
       setCredentialMessage(credential.encryptionAvailable ? "Encrypted key storage ready" : "Encrypted key storage unavailable");
     }
     checks.push({
@@ -2461,6 +2718,13 @@ function App() {
       detail: hasNativelyKey
         ? "Natively key is saved. PCM/WebSocket streaming is available for controlled STT testing."
         : "No Natively key found. Add it here only for STT testing.",
+    });
+    checks.push({
+      label: "Deepgram STT",
+      status: hasDeepgramKey ? "ok" : "warn",
+      detail: hasDeepgramKey
+        ? "Deepgram key is available. Nova-3 realtime WebSocket streaming can be used for English, Spanish, or multilingual calls."
+        : "No Deepgram key found. Save one or set DEEPGRAM_API_KEY/CALLPILOT_DEEPGRAM_API_KEY before launch.",
     });
     checks.push({
       label: "NVIDIA answers",
@@ -2505,8 +2769,10 @@ function App() {
       setLiveTranscriptionProvider("browser");
     }
 
-    const recommendation = hasNvidiaKey
-      ? "Recommended: NVIDIA for answer tests, Local Whisper or Natively for transcription."
+    const recommendation = hasDeepgramKey
+      ? "Recommended: Deepgram realtime for transcription, with your selected answer provider for responses."
+      : hasNvidiaKey
+      ? "Recommended: NVIDIA for answer tests, Deepgram or Local Whisper for transcription."
       : hasNativelyKey
       ? "Recommended: use Natively next as a controlled STT test; keep Local Whisper/OpenAI available as fallback while we compare quality."
       : hasKey
@@ -2520,7 +2786,7 @@ function App() {
 
     setAutoChecks(checks);
     setAutoCheckStatus("Checks complete");
-  }, [browserSpeechRuntimeError, liveAudioSource, liveTranscriptionProvider, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, sessionApiKey]);
+  }, [applyCredentialStatus, browserSpeechRuntimeError, deepgramApiKey, liveAudioSource, liveTranscriptionProvider, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, sessionApiKey]);
 
   React.useEffect(() => {
     if (modelProvider === "ollama") {
@@ -2915,12 +3181,7 @@ function App() {
       return;
     }
     const status = await window.callpilotDesktop.saveOpenAIKey(sessionApiKey);
-    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
-    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
-    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
-    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
-    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
-    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    applyCredentialStatus(status);
     setCredentialMessage(status.ok ? "OpenAI key saved encrypted on this device" : `Could not save key: ${status.error ?? "unknown"}`);
     if (status.ok) setSessionApiKey("");
   };
@@ -2928,12 +3189,7 @@ function App() {
   const clearStoredKey = async () => {
     if (!window.callpilotDesktop?.clearOpenAIKey) return;
     const status = await window.callpilotDesktop.clearOpenAIKey();
-    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
-    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
-    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
-    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
-    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
-    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    applyCredentialStatus(status);
     setCredentialMessage(status.ok ? "Stored OpenAI key cleared" : `Could not clear key: ${status.error ?? "unknown"}`);
   };
 
@@ -2943,12 +3199,7 @@ function App() {
       return;
     }
     const status = await window.callpilotDesktop.saveNativelyKey(nativelyApiKey);
-    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
-    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
-    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
-    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
-    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
-    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    applyCredentialStatus(status);
     setCredentialMessage(status.ok ? "Natively key saved encrypted on this device" : `Could not save Natively key: ${status.error ?? "unknown"}`);
     if (status.ok) {
       setNativelyApiKey("");
@@ -2965,13 +3216,30 @@ function App() {
   const clearStoredNativelyKey = async () => {
     if (!window.callpilotDesktop?.clearNativelyKey) return;
     const status = await window.callpilotDesktop.clearNativelyKey();
-    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
-    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
-    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
-    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
-    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
-    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    applyCredentialStatus(status);
     setCredentialMessage(status.ok ? "Stored Natively key cleared" : `Could not clear Natively key: ${status.error ?? "unknown"}`);
+  };
+
+  const saveDeepgramSessionKey = async () => {
+    if (!window.callpilotDesktop?.saveDeepgramKey) {
+      setCredentialMessage("Deepgram key storage requires desktop mode");
+      return;
+    }
+    const status = await window.callpilotDesktop.saveDeepgramKey(deepgramApiKey);
+    applyCredentialStatus(status);
+    setCredentialMessage(status.ok ? "Deepgram key saved encrypted on this device" : `Could not save Deepgram key: ${status.error ?? "unknown"}`);
+    if (status.ok) {
+      setDeepgramApiKey("");
+      setLiveTranscriptionProvider("deepgram");
+      setLiveAssistStatus("Live transcription switched to Deepgram");
+    }
+  };
+
+  const clearStoredDeepgramKey = async () => {
+    if (!window.callpilotDesktop?.clearDeepgramKey) return;
+    const status = await window.callpilotDesktop.clearDeepgramKey();
+    applyCredentialStatus(status);
+    setCredentialMessage(status.ok ? "Stored Deepgram key cleared" : `Could not clear Deepgram key: ${status.error ?? "unknown"}`);
   };
 
   const saveNvidiaSessionKey = async () => {
@@ -2980,12 +3248,7 @@ function App() {
       return;
     }
     const status = await window.callpilotDesktop.saveNvidiaKey(nvidiaApiKey);
-    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
-    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
-    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
-    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
-    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
-    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    applyCredentialStatus(status);
     setCredentialMessage(status.ok ? "NVIDIA key saved encrypted on this device" : `Could not save NVIDIA key: ${status.error ?? "unknown"}`);
     if (status.ok) {
       setNvidiaApiKey("");
@@ -3000,12 +3263,7 @@ function App() {
   const clearStoredNvidiaKey = async () => {
     if (!window.callpilotDesktop?.clearNvidiaKey) return;
     const status = await window.callpilotDesktop.clearNvidiaKey();
-    setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
-    setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
-    setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
-    setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
-    setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
-    setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    applyCredentialStatus(status);
     setCredentialMessage(status.ok ? "Stored NVIDIA key cleared" : `Could not clear NVIDIA key: ${status.error ?? "unknown"}`);
   };
 
@@ -3371,10 +3629,23 @@ function App() {
                 <select value={liveTranscriptionProvider} onChange={(event) => setLiveTranscriptionProvider(event.target.value as LiveTranscriptionProvider)}>
                   <option value="browser">Browser live</option>
                   <option value="openai_realtime" disabled={!hasOpenAITranscriptionKey}>OpenAI live chunks</option>
+                  <option value="deepgram">Deepgram realtime</option>
                   <option value="natively">Natively STT testing</option>
                   <option value="local">Local Whisper</option>
                 </select>
               </label>
+              <label>
+                Deepgram API key
+                <small>Realtime streaming STT key. Stored encrypted when desktop key storage is available.</small>
+                <input type="password" value={deepgramApiKey} onChange={(event) => setDeepgramApiKey(event.target.value)} placeholder="Optional if DEEPGRAM_API_KEY is set before launch" />
+              </label>
+              <div className="button-row">
+                <button onClick={saveDeepgramSessionKey} disabled={!deepgramApiKey.trim()}>Save Deepgram key</button>
+                <button onClick={clearStoredDeepgramKey} disabled={!hasStoredDeepgramKey}>Clear Deepgram key</button>
+                <span className={hasDeepgramTranscriptionKey ? "helper good" : "helper"}>
+                  {hasStoredDeepgramKey ? "Stored Deepgram key available" : hasEnvDeepgramKey ? "Deepgram key loaded from environment" : "No Deepgram key found"}
+                </span>
+              </div>
               <label>
                 Natively API key
                 <small>Temporary testing key for improving transcription quality. Stored encrypted when desktop key storage is available.</small>
@@ -3390,6 +3661,11 @@ function App() {
               {liveTranscriptionProvider === "natively" && (
                 <div className="setting-note">
                   <span>Natively uses PCM/WebSocket streaming for lower-latency transcription testing. Keep Local Whisper or OpenAI available as fallback while we compare quality.</span>
+                </div>
+              )}
+              {liveTranscriptionProvider === "deepgram" && (
+                <div className="setting-note">
+                  <span>Deepgram streams PCM over WebSocket with Nova-3, interim results, and English, Spanish, or multilingual recognition.</span>
                 </div>
               )}
               <label>

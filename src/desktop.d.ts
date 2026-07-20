@@ -56,12 +56,15 @@ export interface CredentialStatus {
   ok: boolean;
   hasOpenAIKey: boolean;
   hasNativelyKey: boolean;
+  hasDeepgramKey: boolean;
   hasNvidiaKey: boolean;
   hasOpenAIStoredKey?: boolean;
   hasNativelyStoredKey?: boolean;
+  hasDeepgramStoredKey?: boolean;
   hasNvidiaStoredKey?: boolean;
   hasOpenAIEnvKey?: boolean;
   hasNativelyEnvKey?: boolean;
+  hasDeepgramEnvKey?: boolean;
   hasNvidiaEnvKey?: boolean;
   encryptionAvailable: boolean;
   error?: string;
@@ -137,7 +140,16 @@ declare global {
       recognizeScreenText: (input: { path: string; language?: OcrLanguage | "auto" | "english" | "spanish" }) => Promise<OcrResult>;
       analyzeScreenshot: (input: { path: string; modelName: string; provider?: "openai" | "nvidia"; apiKey?: string; nvidiaApiKey?: string }) => Promise<ScreenAnalysisResult>;
       publishScreenContext: (payload: PublishScreenContextInput) => Promise<PublishScreenContextResult>;
-      startSession: (options?: { mode?: AssistantModeId }) => Promise<{ ok: boolean; error?: string }>;
+      startSession: (options?: {
+        mode?: AssistantModeId;
+        modelProvider?: string;
+        modelName?: string;
+        liveTranscriptionProvider?: LiveTranscriptionProvider;
+        liveLatencyPreset?: LiveLatencyPreset;
+        liveAudioSource?: LiveAudioSource;
+        preferredLanguage?: "english" | "spanish" | "auto";
+        activeMode?: AssistantModeId;
+      }) => Promise<{ ok: boolean; error?: string }>;
       endSession: () => Promise<{ ok: boolean; error?: string; tracePath?: string }>;
       getSessionTraceStatus: () => Promise<{ ok: boolean; active: boolean; id?: string; path?: string; eventCount?: number; startedAt?: string; updatedAt?: string }>;
       recordSessionEvent: (type: string, payload?: Record<string, unknown>) => Promise<{ ok: boolean }>;
@@ -168,12 +180,27 @@ declare global {
       }) => Promise<{ ok: boolean; streamId?: string; error?: string }>;
       sendNativelyAudio: (input: { streamId: string; arrayBuffer: ArrayBuffer }) => Promise<{ ok: boolean; error?: string }>;
       stopNativelyTranscription: (input?: { streamId?: string }) => Promise<{ ok: boolean; error?: string }>;
+      startDeepgramTranscription: (input: {
+        streamId: string;
+        channel: "system" | "mic";
+        sampleRate: number;
+        language: "english" | "spanish" | "auto";
+        latencyPreset?: LiveLatencyPreset;
+        modelName?: string;
+        apiKey?: string;
+        endpointingMs?: number;
+        utteranceEndMs?: number;
+      }) => Promise<{ ok: boolean; streamId?: string; error?: string }>;
+      sendDeepgramAudio: (input: { streamId: string; arrayBuffer: ArrayBuffer }) => Promise<{ ok: boolean; error?: string }>;
+      stopDeepgramTranscription: (input?: { streamId?: string }) => Promise<{ ok: boolean; error?: string }>;
       getCredentialStatus: () => Promise<CredentialStatus>;
       saveOpenAIKey: (apiKey: string) => Promise<CredentialStatus>;
       saveNativelyKey: (apiKey: string) => Promise<CredentialStatus>;
+      saveDeepgramKey: (apiKey: string) => Promise<CredentialStatus>;
       saveNvidiaKey: (apiKey: string) => Promise<CredentialStatus>;
       clearOpenAIKey: () => Promise<CredentialStatus>;
       clearNativelyKey: () => Promise<CredentialStatus>;
+      clearDeepgramKey: () => Promise<CredentialStatus>;
       clearNvidiaKey: () => Promise<CredentialStatus>;
       exportSessionFile: (session: SavedSession) => Promise<SessionFileResult>;
       importSessionFile: () => Promise<SessionFileResult>;
@@ -192,6 +219,8 @@ declare global {
       onLiveTranscript: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onNativelyTranscript: (callback: (payload: { streamId: string; text: string; isFinal: boolean; confidence: number }) => void) => () => void;
       onNativelyStatus: (callback: (payload: { streamId: string; status: string; detail?: string }) => void) => () => void;
+      onDeepgramTranscript: (callback: (payload: { streamId: string; text: string; isFinal: boolean; confidence: number }) => void) => () => void;
+      onDeepgramStatus: (callback: (payload: { streamId: string; status: string; detail?: string }) => void) => () => void;
       onScreenContextPublished: (callback: (payload: PublishScreenContextInput) => void) => () => void;
     };
   }

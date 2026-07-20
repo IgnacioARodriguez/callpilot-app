@@ -66,7 +66,7 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   const overlay = read("src/overlay/OverlayApp.tsx");
   const codingOverlay = read("src/overlay/CodingOverlayApp.tsx");
 
-  for (const needle of ["session:start", "session:end", "session:trace-status", "answer:request", "answer:manual-request", "answer:headline", "answer:detail-chunk", "answer:structured", "answer:status", "transcript:message"]) {
+  for (const needle of ["session:start", "session:end", "session:trace-status", "answer:request", "answer:manual-request", "answer:headline", "answer:detail-chunk", "answer:structured", "answer:status", "transcript:message", "deepgram:start", "deepgram:audio", "deepgram:stop", "deepgram:transcript", "deepgram:status"]) {
     assert.match(`${main}\n${preload}`, new RegExp(needle.replace(":", ":")));
   }
   assert.match(overlay, /cp-overlay/);
@@ -206,11 +206,45 @@ test("acceptance: session lifecycle stops stale live transcription streams", () 
   const endBody = main.slice(sessionEnd, traceEvent);
 
   assert.match(main, /const stopAllNativelyStreams = \(\) =>/);
+  assert.match(main, /const stopAllDeepgramStreams = \(\) =>/);
   assert.match(startBody, /startSessionTrace\(options\)[\s\S]*stopAllNativelyStreams\(\)/);
+  assert.match(startBody, /stopAllDeepgramStreams\(\)/);
   assert.match(startBody, /live_transcription_runtime_reset/);
   assert.match(endBody, /mainWindow\?\.webContents\.send\("session:ended"\)/);
   assert.match(endBody, /stopAllNativelyStreams\(\)/);
+  assert.match(endBody, /stopAllDeepgramStreams\(\)/);
   assert.match(endBody, /reason: "session_end"/);
+});
+
+test("acceptance: Deepgram realtime STT uses the production live audio path", () => {
+  const main = read("electron/main.cjs");
+  const preload = read("electron/preload.cjs");
+  const app = read("src/main.tsx");
+  const liveTranscription = read("src/core/liveTranscription.ts");
+
+  assert.match(liveTranscription, /"deepgram"/);
+  assert.match(liveTranscription, /engineLabel:\s*"Deepgram realtime"/);
+  assert.match(main, /const deepgramUrlForConfig = \(config\) =>/);
+  assert.match(main, /wss:\/\/api\.deepgram\.com\/v1\/listen/);
+  assert.match(main, /interim_results", "true"/);
+  assert.match(main, /language", config\.language/);
+  assert.match(main, /new WebSocketCtor\(deepgramUrlForConfig\(config\), \["token", config\.apiKey\]\)/);
+  assert.match(main, /appendTraceEvent\("deepgram_audio_chunk"/);
+  assert.match(main, /appendTraceEvent\("deepgram_transcript"/);
+  assert.match(main, /credentials:save-deepgram-key/);
+  assert.match(main, /credentials:clear-deepgram-key/);
+  assert.match(preload, /startDeepgramTranscription/);
+  assert.match(preload, /sendDeepgramAudio/);
+  assert.match(preload, /onDeepgramTranscript/);
+  assert.match(app, /startDeepgramListening/);
+  assert.match(app, /requestLiveAudioStreams\(\)/);
+  assert.match(app, /resampleMono\(input, context\.sampleRate, 16000\)/);
+  assert.match(app, /sendDeepgramAudio/);
+  assert.match(app, /onDeepgramTranscript/);
+  assert.match(app, /provider: "deepgram"/);
+  assert.match(app, /<option value="deepgram">Deepgram realtime<\/option>/);
+  assert.match(app, /saveDeepgramSessionKey/);
+  assert.match(app, /hasDeepgramTranscriptionKey/);
 });
 
 test("acceptance: Natively partial auto-answer waits for turn stability", () => {
