@@ -44,6 +44,7 @@ const uiNoisePatterns = [
 
 const technicalSignalPatterns = [
   /\b(given|return|determine|valid|invalid|constraints?|examples?|input|output|expected|edge cases?)\b/i,
+  /\b(debe|deberia|deberÃ­a|tiene que|retornar|devolver|devuelve|retorna|nombre del usuario|usuario|requisito|esperado|entrada|salida)\b/i,
   /\b(linked list|binary tree|bst|binary search tree|tree|node|root|left|right|subtree|odd|even|indices)\b/i,
   /\b(hash ?map|set|stack|queue|heap|graph|array|string|matrix|pointer|recursion|bounds?|invariant)\b/i,
   /\b(o\([^)]+\)|complexity|time|space|constant|linear|logarithmic)\b/i,

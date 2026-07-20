@@ -298,6 +298,26 @@ test("prompt builder tells live coding to prefer current screen over stale prior
 
   assert.match(prompt.system, /current screen_context shows a different problem/i);
   assert.match(prompt.system, /refer to the visible function and variables/i);
+  assert.match(prompt.system, /current_live_coding_solution is continuity context only/i);
+  assert.match(prompt.system, /partial code, a function stub, a TODO, a failing test, or an inline requirement/i);
+});
+
+test("live coding prompt treats visible code without a full statement as bounded evidence", () => {
+  const screenContext = classifyScreenText([
+    "def hello():",
+    "    return \"hello\"",
+    "debe retornar el nombre del usuario",
+  ].join("\n"));
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english", screenContext }),
+    "user_request: The candidate pressed Answer. task: Use visible coding context.",
+  );
+  const screenSection = prompt.user.match(/<screen_context>\n([\s\S]*?)\n<\/screen_context>/)?.[1] ?? "";
+
+  assert.match(screenSection, /def hello/);
+  assert.match(screenSection, /nombre del usuario/i);
+  assert.match(prompt.system, /operate on that visible code with bounded assumptions/i);
+  assert.match(prompt.system, /never invent a new unrelated practice problem/i);
 });
 
 test("prompt builder prioritizes local code issues from fresh live coding transcript", () => {
@@ -727,6 +747,68 @@ test("live coding follow-up prompt carries previous solution code past screen fr
   assert.match(prompt.user, /Remember each value's index/);
   assert.match(prompt.user, /handle duplicates/i);
   assert.doesNotMatch(prompt.user.match(/<previous_assistant_answers>\n([\s\S]*?)\n<\/previous_assistant_answers>/)?.[1] ?? "", /earlier solution/i);
+});
+
+test("live coding screenshot update keeps explicit solution continuity but prioritizes visible edits", () => {
+  const previous: CodingAnswerPayload = {
+    version: "1",
+    answerNeeded: true,
+    responseType: "initial_solution",
+    problem: {
+      title: "Greeting",
+      summary: "Return a greeting.",
+      language: "Python",
+      functionSignature: "def hello(name):",
+      constraints: [],
+    },
+    solution: {
+      approachSteps: ["Return a string from the visible function."],
+      code: "def hello(name):\n    # Return the original greeting.\n    return \"hello\"",
+      complexity: { time: "O(1)", space: "O(1)", rationale: "No input growth." },
+      edgeCases: [],
+      invariants: [],
+    },
+    narration: { spokenAnswer: "Use the visible function and update the return value.", currentStep: "Initial solution" },
+    tests: [],
+    patch: { kind: "none", code: null },
+  };
+  const transcript = new TranscriptBuffer();
+  transcript.append("Previous assistant solved a different placeholder exercise.", "manual", 950_000, "assistant");
+  const screenContext = classifyScreenText([
+    "def nombre_usuario(usuario):",
+    "    return \"hello\"",
+    "debe retornar el nombre del usuario",
+  ].join("\n"));
+  screenContext.capturedAt = 1_000_000;
+  const userInput = [
+    "user_request: The candidate pressed Answer. There may not be a clean question mark in the transcript.",
+    "task: Use the latest transcript and visible coding context to provide the next useful coding help, solution, explanation, or correction.",
+    "visible_screen: def nombre_usuario(usuario):",
+    "    return \"hello\"",
+    "debe retornar el nombre del usuario",
+    "current_live_coding_solution:",
+    `title: ${previous.problem.title}`,
+    `language: ${previous.problem.language}`,
+    "code:",
+    previous.solution.code,
+    "follow_up_rule: Preserve the working parts of this solution and return the complete updated solution.code.",
+  ].join("\n");
+  const prompt = buildPrompt(createGlobalContext({
+    activeMode: "live_coding",
+    preferredLanguage: "english",
+    transcript: transcript.snapshot(),
+    screenContext,
+  }), userInput);
+  const latestActionable = prompt.user.match(/<latest_actionable_input>\n([\s\S]*?)\n<\/latest_actionable_input>/)?.[1] ?? "";
+  const previousAnswers = prompt.user.match(/<previous_assistant_answers>\n([\s\S]*?)\n<\/previous_assistant_answers>/)?.[1] ?? "";
+  const screenSection = prompt.user.match(/<screen_context>\n([\s\S]*?)\n<\/screen_context>/)?.[1] ?? "";
+
+  assert.match(latestActionable, /current_live_coding_solution/);
+  assert.match(latestActionable, /def hello\(name\)/);
+  assert.match(screenSection, /def nombre_usuario\(usuario\)/);
+  assert.match(screenSection, /debe retornar el nombre del usuario/i);
+  assert.equal(previousAnswers.trim(), "");
+  assert.match(prompt.system, /visible function names, visible variables, and latest requested changes override older solution text/i);
 });
 
 test("structured follow-up coding answers include patch and change narration", () => {
