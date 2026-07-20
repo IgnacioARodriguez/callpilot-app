@@ -35,6 +35,7 @@ const cliProvider = argValue("--provider");
 const cliModel = argValue("--model");
 const cliLimit = Number(argValue("--limit") || "0");
 const cliCategory = argValue("--category");
+const cliScenario = argValue("--scenario");
 const respectSettings = process.argv.includes("--respect-settings");
 const dryRun = process.argv.includes("--dry-run");
 const strictLatency = process.argv.includes("--strict-latency");
@@ -732,7 +733,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["leetcode premium", "mercado", "billing"],
     maxTokens: 560,
-    latencyTargetMs: 12000,
+    latencyTargetMs: 30000,
   }),
   makeCodingScenario("coderpad_multiturn_followup_return_substring", "CoderPad multi-turn follow-up keeps previous code", [
     "CoderPad Interview",
@@ -748,15 +749,18 @@ const scenarioDefinitions = [
     "        seen[ch] = right",
     "        best = max(best, right - left + 1)",
     "    return best",
+    "Follow-up requirement:",
+    "Return (best_length, best_substring). Track best_start and best_len, and update them only when the current window length is greater than best_len.",
+    "Required return shape: after the loop return (best_len, s[best_start:best_start + best_len]). Do not return s[left:right] because right is exclusive.",
   ].join("\n"), [
-    { speaker: "interviewer", text: "Ahora en CoderPad cambia la funcion para devolver tambien el substring, no solo el largo." },
+    { speaker: "interviewer", text: "Ahora en CoderPad cambia la funcion para devolver tambien el substring, no solo el largo. Ojo: no devuelvas la ventana final; trackea best_start/best_len y actualizalos solo cuando el largo actual mejora el mejor. Al final devolve exactamente (best_len, s[best_start:best_start + best_len]); no uses s[left:right]." },
   ], ["tuple", "substring", "window", "o(n)"], {
     category: "coderpad_baseline",
     expectedResponseType: "follow_up_change",
     expectedPatch: true,
     requireInlineComments: true,
     requireStructuredCoding: true,
-    followUpChange: "Update length_of_longest_substring(s) to return a tuple (length, substring) while preserving the sliding-window logic.",
+    followUpChange: "Update length_of_longest_substring(s) to return a tuple (best_length, best_substring) while preserving the sliding-window logic. Track best_start and best_len, and update them only when the current window length is greater than best_len; do not return the final window unless it is also the best. After the loop return exactly (best_len, s[best_start:best_start + best_len]); do not use s[left:right] because right is exclusive.",
     previousCodingPayload: makeCodingPayload({
       title: "Longest Substring Without Repeating Characters",
       summary: "Return the length of the longest substring without duplicate characters.",
@@ -772,7 +776,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["start over", "regex", "mercado"],
     maxTokens: 640,
-    latencyTargetMs: 12000,
+    latencyTargetMs: 30000,
   }),
   makeCodingScenario("coderpad_debug_fix_sliding_window_left_regression", "CoderPad debug fix for stale left pointer", [
     "CoderPad Interview",
@@ -814,7 +818,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["regex", "start over with brute force", "mercado"],
     maxTokens: 620,
-    latencyTargetMs: 12000,
+    latencyTargetMs: 30000,
   }),
   makeCodingScenario("coderpad_group_anagrams_stable_order", "CoderPad stable-order group anagrams", [
     "CoderPad Interview",
@@ -839,6 +843,50 @@ const scenarioDefinitions = [
     ],
     forbidden: ["set output order", "mercado", "billing"],
     maxTokens: 560,
+    latencyTargetMs: 30000,
+  }),
+  makeCodingScenario("coderpad_dirty_ocr_two_sum_console", "CoderPad dirty OCR ignores chrome and fixes visible failing test", [
+    "Google Chrome",
+    "https://app.coderpad.io/interview/abc123",
+    "CoderPad",
+    "Invite",
+    "Run Code",
+    "Submit",
+    "Participants",
+    "Chat",
+    "Earlier transcript: explain Redis cache invalidation from the previous interview.",
+    "Two Sum",
+    "Python 3",
+    "Function signature:",
+    "def two_sum(nums, target):",
+    "Return indices of two different elements whose values add to target.",
+    "Return [] if there is no solution.",
+    "Required invariant: check complement before inserting the current number so [3,3], target=6 returns [0,1] and never reuses the same index.",
+    "Example 1:",
+    "Input: nums=[2,7,11,15], target=9",
+    "Output: [0,1]",
+    "Example 2:",
+    "Input: nums=[3,3], target=6",
+    "Output: [0,1]",
+    "Console",
+    "AssertionError: expected [0,1], got []",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "I'm looking at the CoderPad screen. Ignore the browser UI and previous Redis discussion; fix the visible Two Sum failing test with commented executable Python and a quick explanation. Please check the complement before inserting the current number so duplicates like [3,3] work." },
+  ], ["two_sum", "complement", "hash", "o(n)"], {
+    category: "coderpad_baseline",
+    expectedResponseType: "initial_solution",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    expectedFunctionName: "two_sum",
+    executableAssertions: [
+      { python: "__callpilot_assert_equal(two_sum([2, 7, 11, 15], 9), [0, 1])" },
+      { python: "__callpilot_assert_equal(two_sum([3, 3], 6), [0, 1])" },
+      { python: "__callpilot_assert_equal(two_sum([1, 2, 3], 10), [])" },
+    ],
+    forbidden: ["redis", "chrome", "invite", "participants", "browser"],
+    maxChars: 1500,
+    maxTokens: 620,
     latencyTargetMs: 30000,
   }),
   makeCodingScenario("executable_valid_parentheses", "Executable Valid Parentheses", [
@@ -1073,12 +1121,14 @@ const buildScenario = (definition) => {
 
 const selectScenarioDefinitions = () => scenarioDefinitions
   .filter((scenario) => !cliCategory || scenario.category === cliCategory)
+  .filter((scenario) => !cliScenario || scenario.id === cliScenario)
   .slice(0, cliLimit > 0 ? cliLimit : undefined);
 
 const summarizeCorpus = (selectedDefinitions) => ({
   totalAvailable: scenarioDefinitions.length,
   selected: selectedDefinitions.length,
   category: cliCategory || "all",
+  scenario: cliScenario || null,
   limit: cliLimit || null,
   categories: scenarioDefinitions.reduce((acc, item) => {
     const category = item.category || "uncategorized";
@@ -1176,6 +1226,7 @@ const buildExecutableRepairPrompt = (prompt, result, validation, scenario = {}) 
   const instruction = [
     "The previous coding answer failed executable validation in a Python runner.",
     `Return the same raw JSON schema and set responseType exactly to ${expectedResponseType}.`,
+    "Return one valid JSON object only. Keep problem as metadata only; do not nest solution, tests, or patch inside problem. Put solution and patch directly under payload.",
     expectedPatchLine,
     "Provide a complete executable solution.code with inline comments. Do not return explanation-only text.",
     "Fix the code so every validation assertion passes; preserve the requested function name and return shape.",

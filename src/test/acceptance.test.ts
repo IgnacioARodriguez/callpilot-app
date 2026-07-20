@@ -390,6 +390,7 @@ test("acceptance: LLM quality runner has a broad scenario corpus", () => {
     assert.match(runner, new RegExp(`category:\\s*"${category}"|category:\\s*options\\.category\\s*\\|\\|\\s*"${category}"`));
   }
   assert.match(runner, /--category/);
+  assert.match(runner, /--scenario/);
   assert.match(runner, /--limit/);
   assert.match(runner, /--dry-run/);
   assert.match(runner, /forbiddenTermsAbsent/);
@@ -398,6 +399,7 @@ test("acceptance: LLM quality runner has a broad scenario corpus", () => {
   assert.match(runner, /codingInlineComments/);
   assert.match(runner, /runPythonAssertions/);
   assert.match(runner, /codingExecutableAssertions/);
+  assert.match(runner, /coderpad_dirty_ocr_two_sum_console/);
   assert.match(runner, /executable_valid_parentheses/);
   assert.match(runner, /executable_two_sum/);
   assert.match(runner, /executable_rotate_matrix/);

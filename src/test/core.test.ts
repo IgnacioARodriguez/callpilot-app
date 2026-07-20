@@ -2385,6 +2385,53 @@ test("screen focus keeps coding text ahead of video player chrome", () => {
   assert.equal(classifyScreenText(focus).kind, "coding_problem");
 });
 
+test("screen focus extracts CoderPad problem from dirty browser OCR", () => {
+  const dirtyOcr = [
+    "Google Chrome",
+    "https://app.coderpad.io/interview/abc123",
+    "CoderPad",
+    "Invite",
+    "Run Code",
+    "Submit",
+    "Participants",
+    "Chat",
+    "Earlier transcript: explain Redis cache invalidation from the previous interview.",
+    "Two Sum",
+    "Python 3",
+    "Write a function def two_sum(nums, target):",
+    "Given an integer array nums and an integer target, return indices of the two numbers such that they add up to target.",
+    "Example 1:",
+    "Input: nums = [2,7,11,15], target = 9",
+    "Output: [0,1]",
+    "Constraints:",
+    "2 <= nums.length <= 10^4",
+    "Console",
+    "AssertionError: expected [0,1], got []",
+  ].join("\n");
+  const focus = extractTechnicalScreenFocus(dirtyOcr);
+  const context = classifyScreenText(dirtyOcr);
+
+  assert.equal(context.kind, "coding_problem");
+  assert.match(focus, /Two Sum/);
+  assert.match(focus, /def two_sum/);
+  assert.match(focus, /AssertionError: expected \[0,1\], got \[\]/);
+  assert.doesNotMatch(focus, /Google Chrome|app\.coderpad\.io|Run Code|Submit|Participants|Redis/);
+});
+
+test("screen focus keeps CoderPad failing test lines despite UI labels", () => {
+  const focus = extractTechnicalScreenFocus([
+    "CoderPad hidden tests are failing for abba and tmmzuxt.",
+    "Execution Output",
+    "Failed: expected 2 actual 3",
+    "Run Code",
+    "Reset Code",
+  ].join("\n"));
+
+  assert.match(focus, /hidden tests are failing/);
+  assert.match(focus, /expected 2 actual 3/);
+  assert.doesNotMatch(focus, /Run Code|Reset Code|Execution Output/);
+});
+
 test("OCR helpers normalize language and clean extracted text", () => {
   assert.equal(normalizeOcrLanguage("spanish"), "spa");
   assert.equal(normalizeOcrLanguage("english"), "eng");

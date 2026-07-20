@@ -27,13 +27,19 @@ export const createEmptyScreenContext = (capturedAt = Date.now()): ScreenContext
   capturedAt,
 });
 
+const exactUiNoisePatterns = [
+  /^\s*(?:coderpad|run code|submit|reset code|invite|instructions|interview pad|execution output|console|stdin|stdout|timer|settings|participants?|chat)\s*$/i,
+  /^\s*(?:file|edit|view|history|bookmarks|profiles?|window|help)\s*$/i,
+];
+
 const uiNoisePatterns = [
   /\b(video player|viewing replay|facebook logo|yellow button|sign up|signup|interviewing\.io|callpilot e2e video player)\b/i,
   /\b(location|purpose|key features|top-left corner|bottom of the screen|top-right corner)\b/i,
   /\bthe image shows|screenshot of|the purpose of this image|features of the image\b/i,
   /\bvision summary|secondary; ignore if it conflicts with ocr|ignoredui\b/i,
   /\bplayback|controls|button reads|title:\s*viewing replay\b/i,
-  /\b(coderpad|run code|submit|reset code|invite|instructions|interview pad|execution output)\b/i,
+  /\b(address bar|browser chrome|google chrome|new tab|reload|bookmark|extensions?|zoom\s*\d+%|https?:\/\/)\b/i,
+  /^\s*(?:earlier|previous|old|stale)\s+(?:transcript|conversation|question|answer)\s*:/i,
 ];
 
 const technicalSignalPatterns = [
@@ -49,8 +55,13 @@ const technicalSignalPatterns = [
 const hasTechnicalSignal = (line: string): boolean =>
   technicalSignalPatterns.some((pattern) => pattern.test(line));
 
-const isUiNoise = (line: string): boolean =>
-  uiNoisePatterns.some((pattern) => pattern.test(line));
+const isUiNoise = (line: string): boolean => {
+  if (exactUiNoisePatterns.some((pattern) => pattern.test(line))) return true;
+  const looksLikeUiNoise = uiNoisePatterns.some((pattern) => pattern.test(line));
+  if (!looksLikeUiNoise) return false;
+  const hasCriticalCoderPadSignal = /\b(failing|failed|assert|expected|actual|traceback|error|exception|def|class|return|input|output|constraints?|examples?)\b/i.test(line);
+  return !hasCriticalCoderPadSignal;
+};
 
 export const extractTechnicalScreenFocus = (visibleText: string, maxLines = 32): string => {
   const lines = visibleText
