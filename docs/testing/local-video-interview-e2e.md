@@ -30,6 +30,10 @@ The next layer is `test:e2e:desktop-video-interview:smoke`. It reuses the same m
 
 ## Per-Video Configuration
 
+The existing local MP4 and any manifests produced from earlier iterations are
+development fixtures only. They have already influenced implementation and must
+not be used as validation or holdout evidence.
+
 There is intentionally no universal checkpoint schedule. Each interview video has different pacing, screen layout, silence, problem timing, and follow-up timing. The analyzer therefore writes:
 
 - `manifest.json`: the exact checkpoints selected for that MP4.
@@ -99,10 +103,26 @@ Deprecated compatibility keys still work for older local configs: `execution.stt
 
 ## Commands
 
+Known development fixture workflow:
+
 ```powershell
 $env:CALLPILOT_E2E_VIDEO="C:\Users\Asus\Downloads\videoplayback.mp4"
 npm run analyze:local-video-interview
 ```
+
+External validation/holdout workflow:
+
+```powershell
+$env:CALLPILOT_EVAL_VALIDATION_DIR="D:\callpilot-eval\validation"
+node tests/local-video-analysis/analyzeLocalVideo.cjs --split=validation --dataset=backend-interviews-v1 --source-id=interview-001 --video="D:\callpilot-eval\validation\interview-001\interview.mp4"
+```
+
+```powershell
+npm run build
+node tests/e2e/video-interview/localVideoInterviewRunner.cjs --split=validation --dataset-dir="D:\callpilot-eval\validation" --manifest="D:\callpilot-eval\validation\interview-001\<analysis-run>\manifest.json"
+```
+
+Use `CALLPILOT_EVAL_HOLDOUT_DIR` and `--split=holdout` for holdout. The path must be outside this repository, and the manifest must contain `evaluation_dataset` metadata generated during ingestion.
 
 ```powershell
 $env:CALLPILOT_E2E_VIDEO_CONFIG="C:\Projects\callpilot-v0\callpilot-app\.cache\local-video-analysis\<run-id>\video-config.template.json"

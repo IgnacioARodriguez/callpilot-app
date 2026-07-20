@@ -3,6 +3,14 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const electronBin = require("electron");
+const {
+  cliDatasetOptions,
+  explicitSplitRoot,
+  metadataFromInputs,
+  normalizeSplit,
+  sourceIdFromPath,
+  writeDatasetReadme,
+} = require("../eval/datasetPolicy.cjs");
 
 const root = path.resolve(__dirname, "..", "..");
 const defaultVideo = process.env.CALLPILOT_E2E_VIDEO || "";
@@ -29,7 +37,17 @@ const configVideoPath = typeof videoConfig.video_path === "string" ? videoConfig
 const selectedVideoPath = argValue("--video", defaultVideo || configVideoPath);
 const videoPath = selectedVideoPath ? path.resolve(selectedVideoPath) : "";
 const runId = argValue("--run-id", `analysis-${stamp()}`);
-const outDir = path.resolve(argValue("--out", path.join(root, ".cache", "local-video-analysis", runId)));
+const datasetOptions = cliDatasetOptions(process.argv);
+const evalSplit = normalizeSplit(datasetOptions.split);
+const evalSourceId = datasetOptions.sourceId || sourceIdFromPath(selectedVideoPath || configVideoPath);
+const evalSplitRoot = evalSplit === "development"
+  ? ""
+  : explicitSplitRoot({ split: evalSplit, datasetDir: datasetOptions.datasetDir });
+if (evalSplit !== "development") writeDatasetReadme(evalSplitRoot);
+const defaultOutDir = evalSplit === "development"
+  ? path.join(root, ".cache", "local-video-analysis", runId)
+  : path.join(evalSplitRoot, evalSourceId, runId);
+const outDir = path.resolve(argValue("--out", defaultOutDir));
 const frameStepMs = numberSetting(argValue("--frame-step-ms", process.env.E2E_LOCAL_VIDEO_FRAME_STEP_MS || analysisConfig.frame_step_ms), 30000);
 const maxFrames = numberSetting(argValue("--max-frames", process.env.E2E_LOCAL_VIDEO_MAX_FRAMES || analysisConfig.max_frames), 24);
 const maxCheckpoints = numberSetting(argValue("--max-checkpoints", process.env.E2E_LOCAL_VIDEO_MAX_CHECKPOINTS || analysisConfig.max_checkpoints), 5);
@@ -437,6 +455,18 @@ const main = async () => {
   };
   manifest.artifacts.video_config_template_path = writeVideoConfigTemplate(manifest);
   const manifestPath = path.join(outDir, "manifest.json");
+  manifest.evaluation_dataset = metadataFromInputs({
+    root,
+    split: evalSplit,
+    dataset: datasetOptions.dataset,
+    sourceId: evalSourceId,
+    sourceType: "mp4",
+    videoPath,
+    manifestPath,
+    configPath,
+    datasetDir: datasetOptions.datasetDir,
+  });
+  manifest.evaluation_dataset.content_hash = manifest.video.sha256;
   manifest.artifacts.review_html_path = writeReviewHtml(manifestPath, manifest);
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   writeMarkdownSummary(manifestPath, manifest);
@@ -449,6 +479,10 @@ const main = async () => {
     frames: frames.length,
     checkpointCandidates: manifest.checkpoint_candidates.length,
     checkpoints: manifest.checkpoints.length,
+    dataset: manifest.evaluation_dataset.dataset,
+    split: manifest.evaluation_dataset.split,
+    sourceId: manifest.evaluation_dataset.source_id,
+    fixtureClass: manifest.evaluation_dataset.fixture_class,
     outDir,
   }, null, 2)}\n`);
 };

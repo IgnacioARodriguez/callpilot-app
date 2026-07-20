@@ -2,6 +2,10 @@
 
 Controlled local harness for a real software engineering/live-coding interview MP4.
 
+The MP4 and manifests already used during development are development fixtures.
+They are useful for regression debugging, but they are not validation or holdout.
+Use the external dataset flags below before evaluating unseen material.
+
 ## Run
 
 ```powershell
@@ -31,6 +35,25 @@ Then run:
 $env:CALLPILOT_E2E_VIDEO_CONFIG="C:\Projects\callpilot-v0\callpilot-app\.cache\local-video-analysis\<run-id>\video-config.template.json"
 npm run test:e2e:local-video-interview
 ```
+
+## External Datasets
+
+Validation and holdout MP4s must live outside this repository. The runners enforce
+that policy before spending provider calls.
+
+```powershell
+$env:CALLPILOT_EVAL_VALIDATION_DIR="D:\callpilot-eval\validation"
+node tests/local-video-analysis/analyzeLocalVideo.cjs --split=validation --dataset=backend-interviews-v1 --source-id=interview-001 --video="D:\callpilot-eval\validation\interview-001\interview.mp4"
+```
+
+```powershell
+npm run build
+node tests/e2e/video-interview/localVideoInterviewRunner.cjs --split=validation --dataset-dir="D:\callpilot-eval\validation" --manifest="D:\callpilot-eval\validation\interview-001\<analysis-run>\manifest.json"
+```
+
+For holdout, use `CALLPILOT_EVAL_HOLDOUT_DIR` and `--split=holdout`. Do not inspect
+holdout raw recordings, transcripts, screenshots, expected answers, or executable
+tests while implementing fixes.
 
 By default `E2E_MAX_REAL_CALLS` is treated as `0`, so provider calls are skipped and recorded as blocked. Set an explicit budget for a real run:
 

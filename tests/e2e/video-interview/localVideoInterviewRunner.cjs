@@ -4,6 +4,10 @@ const http = require("node:http");
 const path = require("node:path");
 const electronBin = require("electron");
 const { loadDotEnv } = require("../../../electron/env.cjs");
+const {
+  assertManifestAllowedForEvaluation,
+  cliDatasetOptions,
+} = require("../../eval/datasetPolicy.cjs");
 
 const root = path.resolve(__dirname, "..", "..", "..");
 loadDotEnv(root);
@@ -30,6 +34,7 @@ const selectedIds = () => (argValue("--checkpoints", process.env.E2E_LOCAL_VIDEO
 const videoConfigPath = argValue("--config", process.env.CALLPILOT_E2E_VIDEO_CONFIG || "");
 const videoConfig = readJsonIfPresent(videoConfigPath);
 const executionConfig = videoConfig.execution && typeof videoConfig.execution === "object" ? videoConfig.execution : {};
+const datasetOptions = cliDatasetOptions(process.argv);
 const runId = argValue("--run-id", `run-${stamp()}`);
 const runDir = path.resolve(argValue("--out", path.join(tmpRoot, runId)));
 const videoPath = path.resolve(argValue("--video", process.env.CALLPILOT_E2E_VIDEO || videoConfig.video_path || ""));
@@ -183,14 +188,25 @@ const loadOrCreateManifest = () => {
   if (manifestArg) {
     const manifestPath = path.resolve(manifestArg);
     ensure(fs.existsSync(manifestPath), `Manifest not found: ${manifestPath}`);
-    return { manifestPath, manifest: JSON.parse(fs.readFileSync(manifestPath, "utf8")) };
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const datasetMetadata = assertManifestAllowedForEvaluation({
+      root,
+      manifest,
+      manifestPath,
+      requested: { ...datasetOptions, configPath: videoConfigPath },
+    });
+    return { manifestPath, manifest, datasetMetadata };
   }
   ensure(videoPath && fs.existsSync(videoPath), "Set CALLPILOT_E2E_VIDEO or pass --video=C:\\path\\interview.mp4");
   fs.mkdirSync(analysisRoot, { recursive: true });
   const result = spawnSync(process.execPath, [
     path.join(root, "tests", "local-video-analysis", "analyzeLocalVideo.cjs"),
     `--video=${videoPath}`,
-    `--out=${path.join(analysisRoot, runId)}`,
+    ...(datasetOptions.split === "development" ? [`--out=${path.join(analysisRoot, runId)}`] : []),
+    `--split=${datasetOptions.split}`,
+    ...(datasetOptions.dataset ? [`--dataset=${datasetOptions.dataset}`] : []),
+    ...(datasetOptions.datasetDir ? [`--dataset-dir=${path.resolve(datasetOptions.datasetDir)}`] : []),
+    ...(datasetOptions.sourceId ? [`--source-id=${datasetOptions.sourceId}`] : []),
     ...(videoConfigPath ? [`--config=${path.resolve(videoConfigPath)}`] : []),
   ], {
     cwd: root,
@@ -201,7 +217,15 @@ const loadOrCreateManifest = () => {
     throw new Error(`Manifest analysis failed (${result.status}).\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`);
   }
   const parsed = JSON.parse(result.stdout);
-  return { manifestPath: parsed.manifestPath, manifest: JSON.parse(fs.readFileSync(parsed.manifestPath, "utf8")) };
+  const manifestPath = parsed.manifestPath;
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const datasetMetadata = assertManifestAllowedForEvaluation({
+    root,
+    manifest,
+    manifestPath,
+    requested: { ...datasetOptions, configPath: videoConfigPath },
+  });
+  return { manifestPath, manifest, datasetMetadata };
 };
 
 const selectCheckpoints = (manifest) => {
@@ -755,6 +779,7 @@ const writeMarkdownReport = (reportPath, report) => {
     `Generated: ${report.generated_at}`,
     `Mode: ${report.methodology.mode}`,
     `Manifest: ${report.manifest_path}`,
+    `Dataset: ${report.evaluation_dataset?.dataset || "unknown"} (${report.evaluation_dataset?.split || "development"})`,
     `Real calls: ${report.cost_guard.real_calls}/${report.cost_guard.max_real_calls}`,
     "",
     "## Transcription",
@@ -799,7 +824,7 @@ const writeMarkdownReport = (reportPath, report) => {
 
 const main = async () => {
   fs.mkdirSync(runDir, { recursive: true });
-  const { manifestPath, manifest } = loadOrCreateManifest();
+  const { manifestPath, manifest, datasetMetadata } = loadOrCreateManifest();
   const checkpoints = selectCheckpoints(manifest);
   const audioSegments = prepareAudioSegments(manifest, checkpoints);
 
@@ -807,6 +832,7 @@ const main = async () => {
     generated_at: new Date().toISOString(),
     runner: "tests/e2e/video-interview/localVideoInterviewRunner.cjs",
     manifest_path: manifestPath,
+    evaluation_dataset: datasetMetadata,
     run_dir: runDir,
     methodology: {
       mode: "controlled_local_mp4_e2e",
