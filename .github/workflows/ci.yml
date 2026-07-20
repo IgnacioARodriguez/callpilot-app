@@ -27,6 +27,9 @@ jobs:
       - name: Check protected test assets
         run: npm run test:protected-assets
 
+      - name: Check eval dataset policy
+        run: npm run test:eval-datasets
+
       - name: Run tests
         run: npm test
 

@@ -16,6 +16,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --experimental-strip-types --test \"src/test/*.test.ts\"",
     "test:protected-assets": "node scripts/check-protected-test-assets.mjs",
+    "test:eval-datasets": "node scripts/check-eval-datasets.mjs",
     "test:e2e:subset": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=all",
     "test:e2e:full": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=all",
     "test:e2e:coding-objective": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=coding-objective-smoke",

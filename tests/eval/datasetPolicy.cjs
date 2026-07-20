@@ -130,7 +130,36 @@ const assertManifestAllowedForEvaluation = ({ root, manifest, manifestPath, requ
   if (metadata.split !== "development" && metadata.fixture_class !== "external_evaluation_source") {
     throw new Error(`${metadata.split} evaluation source is not marked as external.`);
   }
+  if (metadata.split !== "development" && !metadata.content_hash && !manifest?.video?.sha256) {
+    throw new Error(`${metadata.split} manifest must include a stable content hash.`);
+  }
   return metadata;
+};
+
+const validateManifestSet = ({ root, entries, env = process.env }) => {
+  const checked = [];
+  const sourceSplits = new Map();
+  for (const entry of entries) {
+    const manifest = entry.manifest;
+    const manifestPath = entry.manifestPath;
+    const requested = {
+      split: entry.split,
+      datasetDir: entry.datasetDir,
+      dataset: entry.dataset,
+      sourceId: entry.sourceId,
+    };
+    const metadata = assertManifestAllowedForEvaluation({ root, manifest, manifestPath, requested, env });
+    const sourceKey = metadata.source_id || manifest?.video?.sha256 || metadata.source_path;
+    if (sourceKey) {
+      const existing = sourceSplits.get(sourceKey);
+      if (existing && existing !== metadata.split) {
+        throw new Error(`Source "${sourceKey}" is assigned to multiple splits: ${existing}, ${metadata.split}. Split by complete interview/session.`);
+      }
+      sourceSplits.set(sourceKey, metadata.split);
+    }
+    checked.push({ manifestPath, metadata });
+  }
+  return checked;
 };
 
 const cliDatasetOptions = (argv = process.argv, env = process.env) => ({
@@ -167,5 +196,6 @@ module.exports = {
   mergeManifestMetadata,
   normalizeSplit,
   sourceIdFromPath,
+  validateManifestSet,
   writeDatasetReadme,
 };
