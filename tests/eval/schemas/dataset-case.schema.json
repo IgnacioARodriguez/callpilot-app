@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "callpilot-eval-case-v1",
+  "title": "CallPilot evaluation dataset case",
+  "type": "object",
+  "required": [
+    "case_version",
+    "case_id",
+    "dataset",
+    "split",
+    "source_id",
+    "source_type",
+    "content_hash",
+    "input",
+    "expectations"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "case_version": { "const": "callpilot-eval-case-v1" },
+    "case_id": { "type": "string", "minLength": 1 },
+    "dataset": { "type": "string", "minLength": 1 },
+    "split": { "enum": ["development", "validation", "holdout"] },
+    "source_id": { "type": "string", "minLength": 1 },
+    "source_type": { "type": "string", "minLength": 1 },
+    "content_hash": { "type": "string", "minLength": 16 },
+    "fixture_class": { "type": "string" },
+    "parent_case_id": { "type": "string" },
+    "mutation": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "version": { "const": "callpilot-eval-mutation-v1" },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "input": {
+      "type": "object",
+      "required": ["checkpoint_id", "timestamp_ms", "available_until_ms"],
+      "additionalProperties": true,
+      "properties": {
+        "action": { "type": "string" },
+        "checkpoint_id": { "type": "string", "minLength": 1 },
+        "timestamp_ms": { "type": "number", "minimum": 0 },
+        "available_until_ms": { "type": "number", "minimum": 0 },
+        "video_path": { "type": ["string", "null"] },
+        "manifest_path": { "type": ["string", "null"] },
+        "config_path": { "type": ["string", "null"] },
+        "source_frame_path": { "type": ["string", "null"] },
+        "visual_context_expected": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "expectations": {
+      "type": "object",
+      "required": ["deterministic", "execution", "judge"],
+      "additionalProperties": true,
+      "properties": {
+        "deterministic": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "execution": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        },
+        "judge": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

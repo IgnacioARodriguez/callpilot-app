@@ -7,6 +7,9 @@ Evaluation splits are enforced by `tests/eval/datasetPolicy.cjs`.
 ```text
 tests/eval/
   schemas/
+    dataset-case.schema.json
+    evaluation-record.schema.json
+    video-manifest.schema.json
   datasets/
     development/
     validation/

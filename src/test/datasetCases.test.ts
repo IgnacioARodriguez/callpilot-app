@@ -108,3 +108,15 @@ test("dataset case validation rejects future evidence and missing hashes", () =>
   assert.match(result.errors.join(","), /missing:content_hash/);
   assert.match(result.errors.join(","), /invalid:future_evidence/);
 });
+
+test("dataset case schema documents the generated case contract", () => {
+  const schemaPath = path.join(root, "tests", "eval", "schemas", "dataset-case.schema.json");
+  const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
+
+  assert.equal(schema.$id, "callpilot-eval-case-v1");
+  assert.deepEqual(schema.properties.split.enum, ["development", "validation", "holdout"]);
+  assert.ok(schema.required.includes("case_id"));
+  assert.ok(schema.properties.input.required.includes("available_until_ms"));
+  assert.ok(schema.properties.expectations.required.includes("deterministic"));
+  assert.equal(schema.properties.mutation.properties.version.const, "callpilot-eval-mutation-v1");
+});
