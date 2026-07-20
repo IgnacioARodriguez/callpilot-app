@@ -738,7 +738,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["leetcode premium", "mercado", "billing"],
     maxTokens: 560,
-    latencyTargetMs: 30000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("coderpad_multiturn_followup_return_substring", "CoderPad multi-turn follow-up keeps previous code", [
     "CoderPad Interview",
@@ -781,7 +781,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["start over", "regex", "mercado"],
     maxTokens: 640,
-    latencyTargetMs: 30000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("coderpad_debug_fix_sliding_window_left_regression", "CoderPad debug fix for stale left pointer", [
     "CoderPad Interview",
@@ -823,7 +823,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["regex", "start over with brute force", "mercado"],
     maxTokens: 620,
-    latencyTargetMs: 30000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("coderpad_group_anagrams_stable_order", "CoderPad stable-order group anagrams", [
     "CoderPad Interview",
@@ -848,7 +848,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["set output order", "mercado", "billing"],
     maxTokens: 560,
-    latencyTargetMs: 30000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("coderpad_dirty_ocr_two_sum_console", "CoderPad dirty OCR ignores chrome and fixes visible failing test", [
     "Google Chrome",
@@ -892,7 +892,7 @@ const scenarioDefinitions = [
     forbidden: ["redis", "chrome", "invite", "participants", "browser"],
     maxChars: 1500,
     maxTokens: 620,
-    latencyTargetMs: 30000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("executable_valid_parentheses", "Executable Valid Parentheses", [
     "CoderPad Interview",
@@ -927,7 +927,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["regex", "mercado", "billing"],
     maxTokens: 560,
-    latencyTargetMs: 30000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("executable_two_sum", "Executable Two Sum", [
     "CoderPad Interview",
@@ -954,7 +954,7 @@ const scenarioDefinitions = [
     ],
     forbidden: ["mercado", "billing"],
     maxTokens: 560,
-    latencyTargetMs: 30000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("executable_rotate_matrix", "Executable Rotate Matrix", [
     "CoderPad Interview",
@@ -1006,7 +1006,7 @@ const scenarioDefinitions = [
     forbidden: ["database", "redis", "mercado"],
     maxChars: 1750,
     maxTokens: 760,
-    latencyTargetMs: 14000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("executable_dijkstra_shortest_path", "Executable Dijkstra shortest path", [
     "CoderPad Interview",
@@ -1040,7 +1040,7 @@ const scenarioDefinitions = [
     forbidden: ["bfs only", "unweighted", "mercado"],
     maxChars: 1900,
     maxTokens: 700,
-    latencyTargetMs: 14000,
+    latencyTargetMs: 12000,
   }),
   makeCodingScenario("coding_contract_matrix_rotate_in_place", "Matrix rotate in-place commented code", "def rotate(matrix):\n    n = len(matrix)\n    return [[matrix[n-1-j][i] for j in range(n)] for i in range(n)]", [
     { speaker: "interviewer", text: "Esto crea una matriz nueva. Hacelo in-place con O(1) extra space." },
