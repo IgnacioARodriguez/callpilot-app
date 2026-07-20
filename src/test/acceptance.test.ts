@@ -406,6 +406,12 @@ test("acceptance: LLM quality runner has a broad scenario corpus", () => {
   assert.match(runner, /expectedFunctionName/);
   assert.match(runner, /codingExpectedFunctionName/);
   assert.match(pkg, /verify:llm-executable-code/);
+  assert.match(runner, /buildScenarioObservability/);
+  assert.match(runner, /observabilitySummary/);
+  assert.match(runner, /answeredQuestion/);
+  assert.match(runner, /contextUsed/);
+  assert.match(runner, /contextIgnored/);
+  assert.match(runner, /executableOk/);
   assert.match(runner, /buildLiveCodingFollowUpPrompt/);
   assert.match(runner, /liveSpokenOutput/);
   assert.match(runner, /scenario\.mode === "live_coding" \? true : !liveSpokenOutput/);

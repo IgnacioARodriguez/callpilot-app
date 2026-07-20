@@ -847,12 +847,17 @@ const scenarioDefinitions = [
     "Implement def is_valid(s):",
     "Return True if s contains valid parentheses/brackets/braces, False otherwise.",
     "Characters are only brackets: (), [], {}.",
+    "Required algorithm:",
+    "pairs = {')': '(', ']': '[', '}': '{'}",
+    "If char is in pairs.values(), it is an opening bracket: push it.",
+    "If char is in pairs, it is a closing bracket: stack must be non-empty and stack.pop() must equal pairs[char].",
+    "Return len(stack) == 0 after scanning all chars.",
     "Examples:",
     "'()[]{}' -> True",
     "'(]' -> False",
     "'([)]' -> False",
   ].join("\n"), [
-    { speaker: "interviewer", text: "Implement is_valid(s) for Valid Parentheses. I need executable Python with comments, a simple explanation, complexity, and runnable tests." },
+    { speaker: "interviewer", text: "Implement is_valid(s) for Valid Parentheses. Important: pairs keys are closing brackets, pairs values are opening brackets, so push openings and pop on closings. I need executable Python with comments, a simple explanation, complexity, and runnable tests." },
   ], ["stack", "map", "o(n)", "false"], {
     category: "executable_code",
     expectedResponseType: "initial_solution",
@@ -1153,6 +1158,11 @@ const executableAssertionsForResult = (scenario, result) => {
   return runPythonAssertions(payload?.solution?.code || "", scenario.executableAssertions);
 };
 
+const compactText = (value, maxChars = 240) => String(value || "")
+  .replace(/\s+/g, " ")
+  .trim()
+  .slice(0, maxChars);
+
 const buildExecutableRepairPrompt = (prompt, result, validation, scenario = {}) => {
   const payload = codingPayloadFromResult(result);
   const failedCode = payload?.solution?.code || String(result?.text || "").slice(0, 3000);
@@ -1319,6 +1329,61 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
   };
 };
 
+const buildScenarioObservability = (scenario, metrics, response) => {
+  const trace = scenario.prompt.debug.answerContextTrace || {};
+  const screenContext = scenario.context.screenContext;
+  const transcriptTurns = scenario.context.transcript?.messages || [];
+  const lastTranscriptTurn = transcriptTurns.at(-1);
+  const lastTranscriptSpeaker = lastTranscriptTurn?.role || lastTranscriptTurn?.speaker || lastTranscriptTurn?.source || "unknown";
+  const selectedEvidence = scenario.prompt.debug.selectedEvidence || [];
+  const coding = metrics.codingContract;
+  return {
+    scenarioId: scenario.id,
+    responseType: coding?.responseType || metrics.structured || null,
+    answeredQuestion: metrics.questionDetection?.normalizedText || compactText(scenario.userInput),
+    questionIntent: {
+      shouldDispatch: metrics.questionDetection?.shouldDispatch,
+      confidence: metrics.questionDetection?.confidence,
+      reason: metrics.questionDetection?.reason,
+    },
+    contextUsed: {
+      mode: scenario.mode,
+      screenKind: screenContext?.kind || "none",
+      screenConfidence: screenContext?.confidence ?? 0,
+      screenFocus: compactText(screenContext?.summary || screenContext?.visibleText),
+      lastTranscriptTurn: lastTranscriptTurn
+        ? compactText(`${lastTranscriptSpeaker}: ${lastTranscriptTurn.text}`)
+        : "",
+      includedSections: scenario.prompt.debug.includedSections,
+      selectedEvidenceLabels: selectedEvidence.map((item) => item.label || item.source).filter(Boolean),
+    },
+    contextIgnored: {
+      omittedSections: scenario.prompt.debug.omittedSections,
+      forbiddenPresent: metrics.forbiddenPresent,
+      missingMustUseDiagnostics: metrics.missingMustUseDiagnostics,
+      staleCutoffMs: trace.freshnessCutoff ?? null,
+    },
+    coding: coding ? {
+      codePresent: coding.codeChars > 0,
+      codeChars: coding.codeChars,
+      patchKind: coding.patchKind || "none",
+      patchChars: coding.patchChars,
+      hasInlineComments: coding.hasInlineComments,
+      executableAssertions: coding.executableAssertions,
+    } : null,
+    validation: {
+      qualityOk: metrics.qualityOk,
+      latencyOk: metrics.latencyOk,
+      latencyMs: metrics.latencyMs,
+      failedChecks: Object.entries(metrics.qualityChecks || {})
+        .filter(([, ok]) => ok === false)
+        .map(([key]) => key),
+      providerOk: metrics.checks?.providerOk ?? Boolean(response?.ok),
+      requestId: response?.requestId || "",
+    },
+  };
+};
+
 const runScenario = async ({ client, settings, provider, modelName, scenario }) => {
   const preflightDetection = detectQuestionIntent(scenario.userInput, scenario.context.preferredLanguage);
   if (scenario.expectedDispatch === false) {
@@ -1381,15 +1446,31 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
     })})`);
   }
   const elapsedMs = Math.round(performance.now() - started);
+  const metrics = scoreAnswer(scenario, result, elapsedMs);
+  const observability = buildScenarioObservability(scenario, metrics, result);
   return {
     id: scenario.id,
     label: scenario.label,
     mode: scenario.mode,
     promptDebug: scenario.prompt.debug,
-    metrics: scoreAnswer(scenario, result, elapsedMs),
+    observability,
+    metrics,
     response: result,
   };
 };
+
+const summarizeObservability = (results) => results.map((result) => ({
+  id: result.id,
+  ok: result.metrics.qualityOk ?? result.metrics.ok,
+  answeredQuestion: result.observability?.answeredQuestion || "",
+  responseType: result.observability?.responseType || null,
+  screenKind: result.observability?.contextUsed?.screenKind || "none",
+  patchKind: result.observability?.coding?.patchKind || null,
+  codePresent: result.observability?.coding?.codePresent ?? false,
+  executableOk: result.observability?.coding?.executableAssertions?.ok ?? null,
+  failedChecks: result.observability?.validation?.failedChecks || [],
+  latencyMs: result.metrics.latencyMs,
+}));
 
 const run = async () => {
   const selectedForDryRun = selectScenarioDefinitions();
@@ -1490,6 +1571,7 @@ const run = async () => {
         coldToWarmDeltaMs: coldProbe.metrics.latencyMs - (results.find((item) => item.id === "technical_question_direct")?.metrics.latencyMs ?? coldProbe.metrics.latencyMs),
       },
       corpus: summarizeCorpus(selectedDefinitions),
+      observabilitySummary: summarizeObservability(results),
       results,
     };
     const qualityPassed = results.every((item) => item.metrics.qualityOk ?? item.metrics.ok);
