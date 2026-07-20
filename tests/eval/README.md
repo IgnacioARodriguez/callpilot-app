@@ -56,4 +56,11 @@ Ingestion also writes `dataset.jsonl` next to the manifest. That file contains
 one versioned evaluation case per checkpoint and is safe to feed to future
 runners/scorers without copying raw media into the repository.
 
+Offline scoring can apply the shared deterministic, executable, and judge
+contracts to an existing record file or report:
+
+```powershell
+node scripts/score-eval-records.mjs --cases="D:\callpilot-eval\validation\interview-001\<analysis-run>\dataset.jsonl" --records="D:\callpilot-eval\validation\reports\run.json"
+```
+
 The existing MP4/manifests generated during earlier iterations are always development fixtures. They must not be used as validation or holdout evidence.

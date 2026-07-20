@@ -28,6 +28,7 @@ const expectationsFromDatasetCase = (datasetCase = {}) => {
       available_until_ms: input.available_until_ms,
     },
     execution,
+    judge: datasetCase?.expectations?.judge || null,
   };
 };
 

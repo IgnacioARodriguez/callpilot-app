@@ -18,6 +18,7 @@
     "test:protected-assets": "node scripts/check-protected-test-assets.mjs",
     "test:eval-datasets": "node scripts/check-eval-datasets.mjs",
     "generate:eval-mutations": "node scripts/generate-eval-mutations.mjs",
+    "score:eval-records": "node scripts/score-eval-records.mjs",
     "test:e2e:subset": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=all",
     "test:e2e:ci-development": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=coding-objective-smoke",
     "test:e2e:release-gate": "node scripts/check-eval-release-gate.mjs",
