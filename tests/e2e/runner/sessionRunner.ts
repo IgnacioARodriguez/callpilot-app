@@ -48,6 +48,7 @@ interface CodingTurn {
 interface CodingScenario {
   scenarioId: string;
   language: string;
+  expected_function?: string;
   starter_code?: string;
   screen_context?: string;
   expected_behavior?: string;
@@ -220,11 +221,79 @@ const scenarioWithSource = <T extends { scenarioId: string }>(
 ): Array<T & { fixturePath: string; sourceKey: string }> =>
   (scenarios ?? []).map((scenario) => ({ ...scenario, fixturePath, sourceKey }));
 
+const builtinCodingScenarios = (): Array<CodingScenario & { fixturePath: string; sourceKey: string }> => [{
+  scenarioId: "coderpad_longest_substring_multiturn",
+  language: "python",
+  expected_function: "length_of_longest_substring",
+  fixturePath: "builtin:coderpad_longest_substring_multiturn",
+  sourceKey: "builtin_coderpad",
+  starter_code: [
+    "def length_of_longest_substring(s):",
+    "    # Write your solution here",
+    "    pass",
+  ].join("\n"),
+  screen_context: [
+    "CoderPad",
+    "Longest Substring Without Repeating Characters",
+    "Python 3",
+    "Function signature:",
+    "def length_of_longest_substring(s):",
+    "Return the length of the longest substring without repeating characters.",
+    "Examples:",
+    "abcabcbb -> 3",
+    "bbbbb -> 1",
+    "Run Code",
+  ].join("\n"),
+  expected_behavior: "Maintain executable Python code, keep the function name, and carry prior behavior through follow-up changes.",
+  turns: [
+    {
+      turnId: 1,
+      prompt_transcript: "Implement length_of_longest_substring(s) in Python for CoderPad. I need commented code visible and an easy explanation next to it.",
+      expected_behavior: "Return an integer length using a sliding window.",
+      test_cases: [
+        "def _cp_len(value):",
+        "    return value[0] if isinstance(value, tuple) else value",
+        "assert _cp_len(length_of_longest_substring('abcabcbb')) == 3",
+        "assert _cp_len(length_of_longest_substring('bbbbb')) == 1",
+        "assert _cp_len(length_of_longest_substring('')) == 0",
+      ].join("\n"),
+    },
+    {
+      turnId: 2,
+      prompt_transcript: "CoderPad hidden tests are dirty: abba and tmmzuxt are failing in some submissions. Update the existing solution so left never moves backward. Keep the code and explanation.",
+      expected_behavior: "Preserve the integer return shape and fix the sliding-window left pointer invariant.",
+      test_cases: [
+        "assert _cp_len(length_of_longest_substring('abba')) == 2",
+        "assert _cp_len(length_of_longest_substring('tmmzuxt')) == 5",
+        "assert _cp_len(length_of_longest_substring('pwwkew')) == 3",
+      ].join("\n"),
+    },
+    {
+      turnId: 3,
+      prompt_transcript: "Follow-up: update the existing function code now to return both the length and one substring as a tuple (length, substring). Preserve all previous edge cases. For empty input return (0, ''). Track best_start and best_len as you scan; do not slice with the final left/right after the loop.",
+      expected_behavior: "Update the same function to return (length, substring), preserve previous cases, handle empty input, and track the best window explicitly.",
+      test_cases: [
+        "length, sub = length_of_longest_substring('abcabcbb')",
+        "assert length == 3 and len(sub) == 3 and len(set(sub)) == 3 and sub in 'abcabcbb'",
+        "assert length_of_longest_substring('bbbbb') == (1, 'b')",
+        "assert length_of_longest_substring('') == (0, '')",
+        "length, sub = length_of_longest_substring('tmmzuxt')",
+        "assert length == 5 and len(sub) == 5 and len(set(sub)) == 5 and sub in 'tmmzuxt'",
+      ].join("\n"),
+    },
+  ],
+  critical_failure_categories: ["missing_code", "wrong_function_name", "lost_followup_state", "python_execution_failure"],
+  notes: "Built-in CoderPad baseline kept outside protected fixture assets.",
+}];
+
 const loadCodingScenarios = (): Array<CodingScenario & { fixturePath: string; sourceKey: string }> =>
-  loadTextBatchFixtures().flatMap(({ path: fixturePath, fixture }) => [
-    ...scenarioWithSource(fixturePath, fixture.live_coding_evolutivo, "live_coding_evolutivo"),
-    ...scenarioWithSource(fixturePath, fixture.live_coding_adversarial, "live_coding_adversarial"),
-  ]);
+  [
+    ...loadTextBatchFixtures().flatMap(({ path: fixturePath, fixture }) => [
+      ...scenarioWithSource(fixturePath, fixture.live_coding_evolutivo, "live_coding_evolutivo"),
+      ...scenarioWithSource(fixturePath, fixture.live_coding_adversarial, "live_coding_adversarial"),
+    ]),
+    ...builtinCodingScenarios(),
+  ];
 
 const systemDesignToInterviewScenario = (
   scenario: SystemDesignScenario & { fixturePath: string; sourceKey: string },
@@ -494,7 +563,51 @@ const forbiddenVisionMentions = (answerText: string, forbiddenItems: string[]): 
   });
 };
 
-const extractPythonCode = (text: string): string => {
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const expectedPythonFunctionName = (scenario: CodingScenario): string | null => {
+  if (scenario.expected_function?.trim()) return scenario.expected_function.trim();
+  const functionFromStarter = scenario.starter_code?.match(/\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/)?.[1];
+  if (functionFromStarter) return functionFromStarter;
+  const functionFromScreen = scenario.screen_context?.match(/\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/)?.[1];
+  if (functionFromScreen) return functionFromScreen;
+  return scenario.scenarioId === "coding_evol_two_sum" ? "two_sum" : null;
+};
+
+const definesExpectedPythonFunction = (code: string, scenario: CodingScenario): boolean => {
+  const expectedFunction = expectedPythonFunctionName(scenario);
+  if (!expectedFunction) return true;
+  return new RegExp(`\\bdef\\s+${escapeRegExp(expectedFunction)}\\s*\\(`).test(code);
+};
+
+const makeCodingPayloadFromCode = (scenario: CodingScenario, code: string) => ({
+  version: "1",
+  answerNeeded: true,
+  responseType: "solution",
+  problem: {
+    title: scenario.screen_context?.split(/\r?\n/).find((line) => line.trim() && !/coderpad|python|function signature|run code/i.test(line))?.trim()
+      || scenario.scenarioId,
+    summary: scenario.expected_behavior || scenario.turns[0]?.expected_behavior || "Live coding exercise",
+    language: scenario.language === "javascript" ? "JavaScript" : "Python",
+    functionSignature: expectedPythonFunctionName(scenario) ? `def ${expectedPythonFunctionName(scenario)}(...)` : null,
+    constraints: [],
+  },
+  solution: {
+    approachSteps: ["Preserve prior passing behavior while applying the latest follow-up."],
+    code,
+    complexity: { time: "", space: "", rationale: "" },
+    edgeCases: [],
+    invariants: [],
+  },
+  narration: {
+    spokenAnswer: "Current live coding solution carried from the previous turn.",
+    currentStep: "Update the existing solution for the latest interviewer request.",
+  },
+  tests: [],
+  patch: { kind: "none", code: null },
+});
+
+const extractPythonCode = (text: string, expectedFunction?: string | null): string => {
   const jsonCandidates = [
     text.trim(),
     text.match(/```json\s*([\s\S]*?)```/i)?.[1]?.trim() ?? "",
@@ -509,11 +622,14 @@ const extractPythonCode = (text: string): string => {
   const fencedBlocks = [...text.matchAll(/```(?:python|py)\s*([\s\S]*?)```/gi)]
     .map((match) => match[1]?.trim() ?? "")
     .filter(Boolean);
-  const exactFunctionBlock = fencedBlocks.find((block) => /\bdef\s+two_sum\s*\(/.test(block));
+  const expectedFunctionPattern = expectedFunction
+    ? new RegExp(`\\bdef\\s+${escapeRegExp(expectedFunction)}\\s*\\(`)
+    : /\bdef\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/;
+  const exactFunctionBlock = fencedBlocks.find((block) => expectedFunctionPattern.test(block));
   if (exactFunctionBlock) return exactFunctionBlock;
   const fenced = fencedBlocks[0];
   if (fenced) return fenced;
-  const defIndex = text.search(/\bdef\s+two_sum\s*\(/);
+  const defIndex = text.search(expectedFunctionPattern);
   if (defIndex >= 0) return text.slice(defIndex).replace(/\*\*[\s\S]*$/m, "").trim();
   return "";
 };
@@ -1072,6 +1188,9 @@ const makeCodingSession = (
   const now = Date.now();
   const firstTurn = scenario.turns[0]?.prompt_transcript ?? "Solve Two Sum in Python.";
   const selectedTurns = scenario.turns.slice(0, Math.max(1, turnCount));
+  const expectedFunction = expectedPythonFunctionName(scenario);
+  const previousAnswer = assistantAnswers.filter((answer) => answer.trim()).at(-1) ?? "";
+  const previousCode = previousAnswer ? extractPythonCode(previousAnswer, expectedFunction) : "";
   const messages = selectedTurns.flatMap((turn, index) => {
     const interviewerMessage = {
       id: `turn-${now}-${turn.turnId}-interviewer`,
@@ -1095,7 +1214,7 @@ const makeCodingSession = (
   const screenText = [
     scenario.screen_context,
     scenario.starter_code ? `Starter code:\n${scenario.starter_code}` : "",
-    scenario.scenarioId === "coding_evol_two_sum" ? [
+    !scenario.screen_context && scenario.scenarioId === "coding_evol_two_sum" ? [
       "Two Sum",
       "Python function signature:",
       "def two_sum(nums, target):",
@@ -1121,7 +1240,11 @@ const makeCodingSession = (
     resumeText: "",
     starStories: "",
     jobDescription: "Live coding interview. Keep code correct and concise.",
-    notes: "Preserve the exact function name two_sum. In Spanish, 'sin que explote' means handle no-solution gracefully without crashing; do not intentionally raise.",
+    notes: [
+      expectedFunction ? `Preserve the exact function name ${expectedFunction}.` : "Preserve the requested function name.",
+      "In Spanish, 'sin que explote' means handle no-solution gracefully without crashing; do not intentionally raise.",
+      "For CoderPad/live coding, keep commented executable code visible and place a simple explanation beside it. Follow-ups must update the existing code without losing prior behavior.",
+    ].join(" "),
     profile: "",
     targetUseCase: "live coding interview",
     preferredLanguage: scenario.language === "python" ? "spanish" : "english",
@@ -1130,7 +1253,8 @@ const makeCodingSession = (
     modelProvider: provider,
     modelName,
     question: selectedTurns.at(-1)?.prompt_transcript ?? firstTurn,
-    answer: "",
+    answer: previousAnswer,
+    codingPayload: previousCode ? makeCodingPayloadFromCode(scenario, previousCode) : null,
   };
 };
 
@@ -1999,7 +2123,7 @@ const runRealCoding = async (): Promise<RunResult[]> => {
     const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
     const tracePath = endSession?.tracePath || traceStatus?.path || "";
     const failed = answer.events.find((event) => event.type === "status" && event.payload?.status === "failed");
-    const code = extractPythonCode(answer.answerText);
+    const code = extractPythonCode(answer.answerText, expectedPythonFunctionName(scenario));
     const requiresCode = codingTurnRequiresCode(scenario.turns[0]);
     const execution = code
       ? runPythonAssertions(code, assertions)
@@ -2011,7 +2135,7 @@ const runRealCoding = async (): Promise<RunResult[]> => {
       answerNonEmpty: answer.answerText.trim().length > 40,
       structuredSchemaValid: answer.structuredValidation.ok,
       codeBlockFound: requiresCode ? Boolean(code) : true,
-      definesExpectedFunction: !requiresCode || scenario.scenarioId !== "coding_evol_two_sum" || /\bdef\s+two_sum\s*\(/.test(code),
+      definesExpectedFunction: !requiresCode || definesExpectedPythonFunction(code, scenario),
       hasAccumulatedAssertions: assertions.length >= 2,
       pythonExecutionPassed: execution.ok,
       didNotTimeout: !execution.timedOut,
@@ -2130,7 +2254,7 @@ const runRealCodingTurn = async (
     const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
     const tracePath = endSession?.tracePath || traceStatus?.path || "";
     const failed = answer.events.find((event) => event.type === "status" && event.payload?.status === "failed");
-    const code = extractPythonCode(answer.answerText);
+    const code = extractPythonCode(answer.answerText, expectedPythonFunctionName(scenario));
     const requiresCode = codingTurnRequiresCode(scenario.turns[turnCount - 1]);
     const execution = code && assertions.length > 0
       ? runPythonAssertions(code, assertions)
@@ -2142,7 +2266,7 @@ const runRealCodingTurn = async (
       answerNonEmpty: answer.answerText.trim().length > 40,
       structuredSchemaValid: answer.structuredValidation.ok,
       codeBlockFound: requiresCode ? Boolean(code) : true,
-      definesExpectedFunction: !code || scenario.scenarioId !== "coding_evol_two_sum" || /\bdef\s+two_sum\s*\(/.test(code),
+      definesExpectedFunction: !code || definesExpectedPythonFunction(code, scenario),
       accumulatedTranscriptHasExpectedTurns: session.transcript.messages.filter((message) => message.speaker === "interviewer").length === turnCount,
       pythonExecutionPassed: execution.ok,
       didNotTimeout: !execution.timedOut,

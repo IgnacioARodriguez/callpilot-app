@@ -385,13 +385,56 @@ test("acceptance: LLM quality runner has a broad scenario corpus", () => {
   const scenarioLikeEntries = (runner.match(/(?:id:\s*"|makeTechnicalScenario\("|makeBehavioralScenario\("|makeCodingScenario\(")/g) ?? []).length;
 
   assert.ok(scenarioLikeEntries >= 50, `expected at least 50 LLM scenarios, found ${scenarioLikeEntries}`);
-  for (const category of ["technical", "background", "followup", "candidate_error", "no_answer", "coding", "coding_followup"]) {
+  for (const category of ["technical", "background", "followup", "candidate_error", "no_answer", "coding", "coding_followup", "adversarial_spanish", "coding_contract", "coderpad_baseline"]) {
     assert.match(runner, new RegExp(`category:\\s*"${category}"|category:\\s*options\\.category\\s*\\|\\|\\s*"${category}"`));
   }
   assert.match(runner, /--category/);
   assert.match(runner, /--limit/);
   assert.match(runner, /--dry-run/);
   assert.match(runner, /forbiddenTermsAbsent/);
+  assert.match(runner, /expectedResponseType/);
+  assert.match(runner, /codingPatchExpected/);
+  assert.match(runner, /codingInlineComments/);
+  assert.match(runner, /runPythonAssertions/);
+  assert.match(runner, /codingExecutableAssertions/);
+  assert.match(runner, /buildLiveCodingFollowUpPrompt/);
+  assert.match(runner, /liveSpokenOutput/);
+  assert.match(runner, /scenario\.mode === "live_coding" \? true : !liveSpokenOutput/);
+});
+
+test("acceptance: CoderPad multi-turn E2E validates executable code per turn", () => {
+  const runner = read("tests/e2e/runner/sessionRunner.ts");
+  const pkg = read("package.json");
+
+  assert.match(runner, /coderpad_longest_substring_multiturn/);
+  assert.match(runner, /expected_function:\s*"length_of_longest_substring"/);
+  assert.match(runner, /expectedPythonFunctionName/);
+  assert.match(runner, /definesExpectedPythonFunction/);
+  assert.match(runner, /extractPythonCode\(answer\.answerText,\s*expectedPythonFunctionName\(scenario\)\)/);
+  assert.match(runner, /runPythonAssertions\(code,\s*assertions\)/);
+  assert.match(runner, /current.*tuple|return both the length and one substring/s);
+  assert.match(pkg, /test:e2e:coderpad-multiturn/);
+});
+
+test("acceptance: live coding controls separate exercise reset from full session reset", () => {
+  const app = read("src/main.tsx");
+  const resetExerciseStart = app.indexOf("const resetLiveCodingExercise");
+  const resetExerciseEnd = app.indexOf("const resetFullSession", resetExerciseStart);
+  const resetExerciseBody = app.slice(resetExerciseStart, resetExerciseEnd);
+  const resetFullStart = app.indexOf("const resetFullSession");
+  const resetFullEnd = app.indexOf("const handleFinalTranscript", resetFullStart);
+  const resetFullBody = app.slice(resetFullStart, resetFullEnd);
+
+  assert.ok(resetExerciseStart > 0, "New exercise reset helper must exist");
+  assert.ok(resetFullStart > 0, "New session reset helper must exist");
+  assert.match(resetExerciseBody, /setCurrentCodingPayload\(null\)/);
+  assert.doesNotMatch(resetExerciseBody, /setResumeText\(""\)/);
+  assert.doesNotMatch(resetExerciseBody, /setJobDescription\(""\)/);
+  assert.match(resetFullBody, /resetSessionRuntimeContext\(\)/);
+  assert.match(resetFullBody, /setResumeText\(""\)/);
+  assert.match(resetFullBody, /setJobDescription\(""\)/);
+  assert.match(app, />\s*New exercise\s*</);
+  assert.match(app, />\s*New session\s*</);
 });
 
 test("acceptance: live coding prompt includes problem, solution intent, and coding screen context", () => {

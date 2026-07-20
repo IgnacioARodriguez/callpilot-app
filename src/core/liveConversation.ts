@@ -79,7 +79,7 @@ const isGuardrailOnlyDirective = (text: string): boolean =>
   /^(?:do not|don't|avoid|no inventes|no inventar|sin inventar)\b/i.test(stripSpeakerPrefix(text));
 
 const shouldPreserveWholeDirective = (text: string): boolean =>
-  /^(?:final change:\s*)?(?:design|give me|start by|make it|push back|change the scale)\b/i.test(stripSpeakerPrefix(text));
+  /^(?:final change:\s*)?(?:design|implement|write|solve|fix|update|change|give me|start by|make it|push back|change the scale)\b/i.test(stripSpeakerPrefix(text));
 
 const needsRecentDesignContext = (text: string): boolean =>
   /\b(executive summary|final (?:[\w -]+\s+)?design|final summary)\b/i.test(stripSpeakerPrefix(text));

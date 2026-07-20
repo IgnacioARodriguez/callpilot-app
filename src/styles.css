@@ -766,6 +766,26 @@ pre {
   min-width: 170px;
 }
 
+.follow-up-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.follow-up-change input {
+  min-height: 40px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17202a;
+  padding: 9px 11px;
+}
+
+.follow-up-change button {
+  white-space: nowrap;
+}
+
 .setup-card-list {
   display: grid;
   gap: 10px;

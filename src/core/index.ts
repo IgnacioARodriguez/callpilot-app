@@ -35,8 +35,13 @@ export {
   buildLiveCodingCompletenessRetryPrompt,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
+  repairTechnicalDebuggingAnswerCoverage,
   shouldRetryLiveCodingCompleteness,
 } from "./answerRepair.ts";
+export {
+  buildLiveCodingFollowUpPrompt,
+  compactLiveSpokenAnswer,
+} from "./liveCodingInteraction.ts";
 export { classifyScreenText, createEmptyScreenContext, extractTechnicalScreenFocus, type ScreenContext, type ScreenKind } from "./screenContext.ts";
 export {
   cleanOcrText,

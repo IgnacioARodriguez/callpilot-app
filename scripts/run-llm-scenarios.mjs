@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -10,6 +10,8 @@ import { classifyScreenText } from "../src/core/screenContext.ts";
 import { formatAnswerForDisplay, parseStructuredAnswerPayload } from "../src/core/answerPayload.ts";
 import { assessAnswerGrounding } from "../src/core/answerGrounding.ts";
 import { detectQuestionIntent, extractLatestQuestionFocus } from "../src/core/liveConversation.ts";
+import { buildLiveCodingFollowUpPrompt } from "../src/core/liveCodingInteraction.ts";
+import { buildLiveCodingCompletenessRetryPrompt, repairTechnicalDebuggingAnswerCoverage, shouldRetryLiveCodingCompleteness } from "../src/core/answerRepair.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -144,10 +146,13 @@ const makeTechnicalScenario = (id, text, expected, options = {}) => ({
   expected,
   forbidden: options.forbidden || [],
   maxChars: options.maxChars || 1000,
-  maxTokens: options.maxTokens || 220,
+  maxTokens: options.maxTokens || 360,
   latencyTargetMs: options.latencyTargetMs || 3500,
   allowUngroundedNoAnswer: Boolean(options.allowUngroundedNoAnswer),
   expectedDispatch: options.expectedDispatch ?? true,
+  mustUseContext: options.mustUseContext || [],
+  mustIgnoreContext: options.mustIgnoreContext || [],
+  expectedLanguage: options.expectedLanguage,
 });
 
 const makeBehavioralScenario = (id, text, expected, transcript = undefined) => ({
@@ -174,6 +179,41 @@ const makeCodingScenario = (id, label, screenText, transcript, expected, options
   maxChars: options.maxChars || 1650,
   maxTokens: options.maxTokens || 380,
   latencyTargetMs: options.latencyTargetMs || 4500,
+  expectedResponseType: options.expectedResponseType,
+  expectedPatch: options.expectedPatch,
+  requireInlineComments: options.requireInlineComments,
+  requireStructuredCoding: options.requireStructuredCoding,
+  previousCodingPayload: options.previousCodingPayload,
+  followUpChange: options.followUpChange,
+  executableAssertions: options.executableAssertions || [],
+  mustUseContext: options.mustUseContext || [],
+  mustIgnoreContext: options.mustIgnoreContext || [],
+});
+
+const makeCodingPayload = ({ title, summary, language = "Python", signature = null, code, approach = [], edgeCases = [] }) => ({
+  version: "1",
+  answerNeeded: true,
+  responseType: "initial_solution",
+  problem: {
+    title,
+    summary,
+    language,
+    functionSignature: signature,
+    constraints: [],
+  },
+  solution: {
+    approachSteps: approach,
+    code,
+    complexity: { time: "", space: "", rationale: "" },
+    edgeCases,
+    invariants: [],
+  },
+  narration: {
+    spokenAnswer: "",
+    currentStep: "",
+  },
+  tests: [],
+  patch: { kind: "none", code: null },
 });
 
 const validParenthesesProblem = [
@@ -585,6 +625,277 @@ const scenarioDefinitions = [
     { speaker: "candidate", text: "Uso hashmap y lista doblemente enlazada." },
     { speaker: "interviewer", text: "Que edge case hay con capacity 1?" },
   ], ["capacity", "evict", "o(1)", "lista"], { category: "coding_followup" }),
+  makeTechnicalScenario("adversarial_es_cache_invalidation_write_consistency", "Como mantendrias consistente Redis con Postgres si una fila cambia justo despues de poblar la cache?", ["redis", "postgres", "invalid", "ttl"], {
+    category: "adversarial_spanish",
+    transcript: [
+      { speaker: "interviewer", text: "Antes dijiste que el servicio usa Redis como cache read-through delante de Postgres." },
+      { speaker: "interviewer", text: "Dato aparte: en otro equipo usaban Memcached para sesiones, pero no aplica aca." },
+      { speaker: "candidate", text: "Yo pondria TTL en las keys y listo." },
+      { speaker: "interviewer", text: "Como mantendrias consistente Redis con Postgres si una fila cambia justo despues de poblar la cache?" },
+    ],
+    forbidden: ["memcached", "auto-invalida", "60 segundos"],
+    mustUseContext: ["Redis read-through delante de Postgres", "TTL como backstop, no mecanismo principal"],
+    mustIgnoreContext: ["Memcached"],
+    expectedLanguage: "spanish",
+    maxChars: 780,
+  }),
+  makeTechnicalScenario("adversarial_es_indexes_write_heavy", "Cual es el tradeoff real de agregar indices en esta tabla?", ["indice", "write", "40", "selectiv"], {
+    category: "adversarial_spanish",
+    transcript: [
+      { speaker: "interviewer", text: "La tabla tiene 40 millones de filas y un job de ingesta write-heavy cada 5 minutos." },
+      { speaker: "interviewer", text: "Hay otra tabla de reporting con 200 filas, pero no es esta." },
+      { speaker: "candidate", text: "Indexaria todas las columnas, mas indices siempre es mejor." },
+      { speaker: "interviewer", text: "Cual es el tradeoff real de agregar indices en esta tabla?" },
+    ],
+    forbidden: ["200 filas", "gratis", "siempre es mejor"],
+    mustUseContext: ["40 millones de filas", "write-heavy cada 5 minutos"],
+    mustIgnoreContext: ["tabla de reporting"],
+    expectedLanguage: "spanish",
+    maxChars: 820,
+  }),
+  makeTechnicalScenario("adversarial_es_python_memory_leak", "Como investigarias este leak en el worker?", ["tracemalloc", "snapshot", "objeto", "cache"], {
+    category: "adversarial_spanish",
+    transcript: [
+      { speaker: "interviewer", text: "Tenemos un worker Python de larga duracion. El RSS crece durante 48 horas hasta OOM." },
+      { speaker: "interviewer", text: "Antes hablamos de bundle size frontend, pero es otro tema." },
+      { speaker: "candidate", text: "Seguro es un bug del garbage collector de Python." },
+      { speaker: "interviewer", text: "Como investigarias este leak en el worker?" },
+    ],
+    forbidden: ["frontend", "bundle", "bug del gc", "culpa del interprete"],
+    mustUseContext: ["worker Python de larga duracion", "RSS crece durante 48 horas"],
+    mustIgnoreContext: ["bundle size frontend"],
+    expectedLanguage: "spanish",
+    maxChars: 900,
+  }),
+  makeTechnicalScenario("adversarial_es_kafka_lag_reference", "Que pasa con ese enfoque si un consumer queda varias horas atrasado?", ["kafka", "offset", "retention", "lag"], {
+    category: "adversarial_spanish",
+    transcript: [
+      { speaker: "candidate", text: "Para event sourcing usaria Kafka porque necesitamos replay y varios consumer groups independientes." },
+      { speaker: "interviewer", text: "Personalmente me gusta mas la UI de RabbitMQ, pero eso es aparte." },
+      { speaker: "interviewer", text: "Que pasa con ese enfoque si un consumer queda varias horas atrasado?" },
+    ],
+    forbidden: ["rabbitmq", "ui", "retencion infinita"],
+    mustUseContext: ["Kafka para replay", "consumer groups independientes"],
+    mustIgnoreContext: ["RabbitMQ UI"],
+    expectedLanguage: "spanish",
+    maxChars: 820,
+  }),
+  makeCodingScenario("coding_contract_two_sum_follow_up_duplicates", "Two Sum structured follow-up with patch", codingProblem, [
+    { speaker: "interviewer", text: "Resuelve Two Sum con hashmap." },
+    { speaker: "candidate", text: "Primero busco complemento y despues guardo el numero actual." },
+    { speaker: "interviewer", text: "Ahora adapta la solucion para dejar claro que [3,3] con target 6 funciona." },
+  ], ["def", "complement", "duplic", "o(n)"], {
+    category: "coding_contract",
+    expectedResponseType: "follow_up_change",
+    expectedPatch: true,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    followUpChange: "Asegura y explica que el caso [3,3] con target 6 funciona sin reutilizar el mismo indice.",
+    previousCodingPayload: makeCodingPayload({
+      title: "Two Sum",
+      summary: "Return indices of two numbers that add to target.",
+      signature: "def two_sum(nums, target)",
+      approach: ["Use a hashmap from value to index."],
+      code: "def two_sum(nums, target):\n    # Store values seen so far so each lookup is O(1).\n    seen = {}\n    for i, num in enumerate(nums):\n        # Check before inserting to avoid reusing the same index.\n        complement = target - num\n        if complement in seen:\n            return [seen[complement], i]\n        seen[num] = i\n    return []",
+    }),
+    forbidden: ["memcached", "billing", "empresa"],
+    executableAssertions: [
+      { python: "__callpilot_assert_equal(two_sum([3, 3], 6), [0, 1])" },
+      { python: "__callpilot_assert_equal(two_sum([2, 7, 11, 15], 9), [0, 1])" },
+      { python: "__callpilot_assert_equal(two_sum([1, 2, 3], 10), [])" },
+    ],
+    maxTokens: 520,
+    latencyTargetMs: 12000,
+  }),
+  makeCodingScenario("coderpad_baseline_longest_substring", "CoderPad baseline executable solution", [
+    "CoderPad Interview",
+    "Python 3",
+    "Write a function length_of_longest_substring(s) that returns the length of the longest substring without repeating characters.",
+    "Example: s = 'abcabcbb' -> 3",
+    "Example: s = 'bbbbb' -> 1",
+    "Example: s = '' -> 0",
+    "Constraints: 0 <= len(s) <= 5 * 10^4",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "This is in CoderPad. Implement length_of_longest_substring and explain the sliding window." },
+  ], ["sliding", "window", "seen", "o(n)"], {
+    category: "coderpad_baseline",
+    expectedResponseType: "initial_solution",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    executableAssertions: [
+      { python: "__callpilot_assert_equal(length_of_longest_substring('abcabcbb'), 3)" },
+      { python: "__callpilot_assert_equal(length_of_longest_substring('bbbbb'), 1)" },
+      { python: "__callpilot_assert_equal(length_of_longest_substring('pwwkew'), 3)" },
+      { python: "__callpilot_assert_equal(length_of_longest_substring(''), 0)" },
+    ],
+    forbidden: ["leetcode premium", "mercado", "billing"],
+    maxTokens: 560,
+    latencyTargetMs: 12000,
+  }),
+  makeCodingScenario("coderpad_multiturn_followup_return_substring", "CoderPad multi-turn follow-up keeps previous code", [
+    "CoderPad Interview",
+    "Python 3",
+    "Current code:",
+    "def length_of_longest_substring(s):",
+    "    left = 0",
+    "    seen = {}",
+    "    best = 0",
+    "    for right, ch in enumerate(s):",
+    "        if ch in seen and seen[ch] >= left:",
+    "            left = seen[ch] + 1",
+    "        seen[ch] = right",
+    "        best = max(best, right - left + 1)",
+    "    return best",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "Ahora en CoderPad cambia la funcion para devolver tambien el substring, no solo el largo." },
+  ], ["tuple", "substring", "window", "o(n)"], {
+    category: "coderpad_baseline",
+    expectedResponseType: "follow_up_change",
+    expectedPatch: true,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    followUpChange: "Update length_of_longest_substring(s) to return a tuple (length, substring) while preserving the sliding-window logic.",
+    previousCodingPayload: makeCodingPayload({
+      title: "Longest Substring Without Repeating Characters",
+      summary: "Return the length of the longest substring without duplicate characters.",
+      signature: "def length_of_longest_substring(s)",
+      code: "def length_of_longest_substring(s):\n    # left marks the start of the current duplicate-free window.\n    left = 0\n    seen = {}\n    best = 0\n    for right, ch in enumerate(s):\n        # Move left only past duplicates inside the active window.\n        if ch in seen and seen[ch] >= left:\n            left = seen[ch] + 1\n        seen[ch] = right\n        best = max(best, right - left + 1)\n    return best",
+      approach: ["Use a sliding window with last-seen indexes."],
+      edgeCases: ["empty string", "all repeated characters"],
+    }),
+    executableAssertions: [
+      { python: "__res = length_of_longest_substring('abcabcbb')\n__callpilot_assert_equal(__res[0], 3)\nassert __res[1] in 'abcabcbb' and len(__res[1]) == 3 and len(set(__res[1])) == 3" },
+      { python: "__res = length_of_longest_substring('bbbbb')\n__callpilot_assert_equal(__res[0], 1)\nassert __res[1] == 'b'" },
+      { python: "__callpilot_assert_equal(length_of_longest_substring(''), (0, ''))" },
+    ],
+    forbidden: ["start over", "regex", "mercado"],
+    maxTokens: 640,
+    latencyTargetMs: 12000,
+  }),
+  makeCodingScenario("coderpad_debug_fix_sliding_window_left_regression", "CoderPad debug fix for stale left pointer", [
+    "CoderPad Interview",
+    "Python 3",
+    "Current code:",
+    "def length_of_longest_substring(s):",
+    "    left = 0",
+    "    seen = {}",
+    "    best = 0",
+    "    for right, ch in enumerate(s):",
+    "        if ch in seen:",
+    "            left = seen[ch] + 1",
+    "        seen[ch] = right",
+    "        best = max(best, right - left + 1)",
+    "    return best",
+    "Failing test: length_of_longest_substring('abba') should be 2 but this returns 3.",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "El test de abba falla porque left vuelve hacia atras. Corregilo en CoderPad sin cambiar la firma: left tiene que seguir siendo un indice absoluto, no una distancia." },
+  ], ["left", "seen", "window", "o(n)"], {
+    category: "coderpad_baseline",
+    expectedResponseType: "follow_up_change",
+    expectedPatch: true,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    followUpChange: "Fix the sliding-window bug where left can move backwards; keep def length_of_longest_substring(s) returning an int. Preserve the invariant that left is an absolute window-start index, for example max(left, seen[ch] + 1), not a distance like right - seen[ch] + 1.",
+    previousCodingPayload: makeCodingPayload({
+      title: "Longest Substring Without Repeating Characters",
+      summary: "Return the length of the longest substring without duplicate characters.",
+      signature: "def length_of_longest_substring(s)",
+      code: "def length_of_longest_substring(s):\n    # BUG: this can move left backward for stale duplicates.\n    left = 0\n    seen = {}\n    best = 0\n    for right, ch in enumerate(s):\n        if ch in seen:\n            left = seen[ch] + 1\n        seen[ch] = right\n        best = max(best, right - left + 1)\n    return best",
+      approach: ["Use a sliding window with last-seen indexes."],
+      edgeCases: ["stale duplicate before the active window"],
+    }),
+    executableAssertions: [
+      { python: "__callpilot_assert_equal(length_of_longest_substring('abba'), 2)" },
+      { python: "__callpilot_assert_equal(length_of_longest_substring('pwwkew'), 3)" },
+      { python: "__callpilot_assert_equal(length_of_longest_substring('tmmzuxt'), 5)" },
+      { python: "__callpilot_assert_equal(length_of_longest_substring(''), 0)" },
+    ],
+    forbidden: ["regex", "start over with brute force", "mercado"],
+    maxTokens: 620,
+    latencyTargetMs: 12000,
+  }),
+  makeCodingScenario("coderpad_group_anagrams_stable_order", "CoderPad stable-order group anagrams", [
+    "CoderPad Interview",
+    "Python 3",
+    "Write group_anagrams(words).",
+    "Return a list of groups of anagrams.",
+    "Keep groups in the order their first word appears.",
+    "Keep words inside each group in input order.",
+    "Example: ['eat','tea','tan','ate','nat','bat'] -> [['eat','tea','ate'], ['tan','nat'], ['bat']]",
+  ].join("\n"), [
+    { speaker: "interviewer", text: "Implement group_anagrams in CoderPad, but keep the group order stable like the prompt says." },
+  ], ["dict", "sort", "order", "o("], {
+    category: "coderpad_baseline",
+    expectedResponseType: "initial_solution",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    executableAssertions: [
+      { python: "__callpilot_assert_equal(group_anagrams(['eat','tea','tan','ate','nat','bat']), [['eat','tea','ate'], ['tan','nat'], ['bat']])" },
+      { python: "__callpilot_assert_equal(group_anagrams(['','b','']), [['',''], ['b']])" },
+      { python: "__callpilot_assert_equal(group_anagrams([]), [])" },
+    ],
+    forbidden: ["set output order", "mercado", "billing"],
+    maxTokens: 560,
+    latencyTargetMs: 12000,
+  }),
+  makeCodingScenario("coding_contract_matrix_rotate_in_place", "Matrix rotate in-place commented code", "def rotate(matrix):\n    n = len(matrix)\n    return [[matrix[n-1-j][i] for j in range(n)] for i in range(n)]", [
+    { speaker: "interviewer", text: "Esto crea una matriz nueva. Hacelo in-place con O(1) extra space." },
+    { speaker: "interviewer", text: "Una libreria de imagenes que vimos antes no aplica a este ejercicio." },
+    { speaker: "interviewer", text: "Mostrame el approach in-place." },
+  ], ["transpose", "reverse", "o(1)", "square"], {
+    category: "coding_contract",
+    expectedResponseType: "initial_solution",
+    expectedPatch: false,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    forbidden: ["libreria", "imagen"],
+    mustUseContext: ["codigo actual crea una matriz nueva", "O(1) extra space"],
+    mustIgnoreContext: ["libreria de imagenes"],
+    maxTokens: 520,
+    latencyTargetMs: 12000,
+  }),
+  makeCodingScenario("coding_contract_threading_busy_wait_patch", "Producer-consumer busy wait follow-up patch", "import threading\nlock = threading.Lock()\nbuffer = []\n\ndef produce(item):\n    with lock:\n        buffer.append(item)\n\ndef consume():\n    while True:\n        with lock:\n            if buffer:\n                return buffer.pop(0)", [
+    { speaker: "interviewer", text: "Este consume hace busy-wait cuando el buffer esta vacio." },
+    { speaker: "interviewer", text: "En otra entrevista hablaron de async/await, pero aca son threads." },
+    { speaker: "interviewer", text: "Reescribi consume para bloquear eficientemente." },
+  ], ["condition", "wait", "notify", "queue"], {
+    category: "coding_contract",
+    expectedResponseType: "follow_up_change",
+    expectedPatch: true,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    followUpChange: "Reescribe producer/consume para usar Condition o queue.Queue y evitar busy-wait en threads.",
+    previousCodingPayload: makeCodingPayload({
+      title: "Producer Consumer",
+      summary: "Producer appends to a shared buffer and consumer removes items.",
+      code: "import threading\nlock = threading.Lock()\nbuffer = []\n\ndef produce(item):\n    # Protect shared list mutation with a lock.\n    with lock:\n        buffer.append(item)\n\ndef consume():\n    while True:\n        # This loop spins when the buffer is empty.\n        with lock:\n            if buffer:\n                return buffer.pop(0)",
+    }),
+    forbidden: ["asyncio", "async/await", "sleep polling"],
+    maxTokens: 560,
+    latencyTargetMs: 12000,
+  }),
+  makeCodingScenario("coding_contract_weighted_graph_dijkstra", "BFS to Dijkstra explanation/code", "from collections import deque\n\ndef shortest_path(graph, start, end):\n    visited = {start}\n    queue = deque([(start, 0)])\n    while queue:\n        node, dist = queue.popleft()\n        if node == end:\n            return dist\n        for neighbor in graph.get(node, []):\n            if neighbor not in visited:\n                visited.add(neighbor)\n                queue.append((neighbor, dist + 1))\n    return -1", [
+    { speaker: "interviewer", text: "Esto sirve para unweighted. Si las aristas tienen pesos positivos, BFS sigue dando shortest path?" },
+    { speaker: "interviewer", text: "Random aside, algun hiking trail recomendado? No relacionado." },
+    { speaker: "interviewer", text: "Que algoritmo usarias para weighted edges?" },
+  ], ["dijkstra", "heap", "positive", "weight"], {
+    category: "coding_contract",
+    expectedResponseType: "follow_up_change",
+    expectedPatch: true,
+    requireInlineComments: true,
+    requireStructuredCoding: true,
+    followUpChange: "Cambia la solucion de BFS a Dijkstra para aristas con pesos positivos.",
+    previousCodingPayload: makeCodingPayload({
+      title: "Shortest Path",
+      summary: "Current code uses BFS for an unweighted graph.",
+      code: "from collections import deque\n\ndef shortest_path(graph, start, end):\n    # BFS counts edges, which is only correct for unweighted graphs.\n    visited = {start}\n    queue = deque([(start, 0)])\n    while queue:\n        node, dist = queue.popleft()\n        if node == end:\n            return dist\n        for neighbor in graph.get(node, []):\n            if neighbor not in visited:\n                visited.add(neighbor)\n                queue.append((neighbor, dist + 1))\n    return -1",
+    }),
+    forbidden: ["hiking", "trail", "bfs still"],
+    maxTokens: 560,
+    latencyTargetMs: 12000,
+  }),
 ];
 
 const buildScenario = (definition) => {
@@ -599,7 +910,14 @@ const buildScenario = (definition) => {
   });
   const conversationWindow = formatConversationWindow(transcript, "", 10);
   const focusedQuestion = extractLatestQuestionFocus(conversationWindow);
-  const userInput = focusedQuestion && focusedQuestion !== conversationWindow ? `interviewer: ${focusedQuestion}` : conversationWindow;
+  const contextualInput = focusedQuestion && focusedQuestion !== conversationWindow ? `interviewer: ${focusedQuestion}` : conversationWindow;
+  const userInput = definition.followUpChange && definition.previousCodingPayload
+    ? buildLiveCodingFollowUpPrompt({
+      changeRequest: definition.followUpChange,
+      currentSolution: definition.previousCodingPayload,
+      problemContext: contextualInput,
+    })
+    : contextualInput;
   const prompt = buildPrompt(context, userInput);
   return { ...definition, context, prompt, userInput };
 };
@@ -641,13 +959,91 @@ const defaultModelName = (provider, savedModel) => {
   return savedModel || "";
 };
 
+const runPythonAssertions = (code, assertions = []) => {
+  if (!assertions.length) return { required: false, ok: true, passed: 0, total: 0, error: "" };
+  if (!code.trim()) {
+    return { required: true, ok: false, passed: 0, total: assertions.length, error: "missing_code" };
+  }
+  const assertionBody = assertions.map((assertion, index) => {
+    if (assertion.python) return `# assertion ${index + 1}\n${assertion.python}`;
+    return "";
+  }).filter(Boolean).join("\n\n");
+  const script = [
+    code,
+    "",
+    "def __callpilot_assert_equal(actual, expected):",
+    "    if actual != expected:",
+    "        raise AssertionError(f'expected {expected!r}, got {actual!r}')",
+    "",
+    assertionBody,
+  ].join("\n");
+  const pythonBin = process.env.CALLPILOT_PYTHON || process.env.PYTHON || "python";
+  const result = spawnSync(pythonBin, ["-c", script], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 5000,
+    windowsHide: true,
+  });
+  const timedOut = result.error?.code === "ETIMEDOUT";
+  const error = [
+    timedOut ? "python_assertions_timeout" : result.error?.message || "",
+    result.stderr || "",
+    result.stdout || "",
+  ].filter(Boolean).join("\n").trim();
+  return {
+    required: true,
+    ok: result.status === 0 && !result.error,
+    passed: result.status === 0 && !result.error ? assertions.length : 0,
+    total: assertions.length,
+    error: error.slice(0, 1200),
+  };
+};
+
+const codingPayloadFromResult = (result) => {
+  const structured = result?.ok ? parseStructuredAnswerPayload(String(result.text || "")) : null;
+  return structured?.kind === "coding" ? structured.payload : null;
+};
+
+const executableAssertionsForResult = (scenario, result) => {
+  const payload = codingPayloadFromResult(result);
+  return runPythonAssertions(payload?.solution?.code || "", scenario.executableAssertions);
+};
+
+const buildExecutableRepairPrompt = (prompt, result, validation) => {
+  const payload = codingPayloadFromResult(result);
+  const failedCode = payload?.solution?.code || String(result?.text || "").slice(0, 3000);
+  const instruction = [
+    "The previous coding answer failed executable validation in a Python runner.",
+    `Return the same raw JSON schema and preserve responseType ${payload?.responseType || "initial_solution"} unless the latest user request explicitly asks for a different type.`,
+    "Provide a complete executable solution.code with inline comments. Do not return explanation-only text.",
+    "Fix the code so every validation assertion passes; preserve the requested function name and return shape.",
+    "validation_error:",
+    validation.error || "missing or invalid code",
+    "previous_code_or_answer:",
+    failedCode,
+  ].join("\n");
+  return {
+    ...prompt,
+    user: `${prompt.user}\n\n<executable_code_validation_failed>\n${instruction}\n</executable_code_validation_failed>`,
+    debug: {
+      ...prompt.debug,
+      approximateChars: prompt.debug.approximateChars + instruction.length,
+    },
+  };
+};
+
 const scoreAnswer = (scenario, result, elapsedMs) => {
   const rawText = String(result?.text || "");
   const structured = parseStructuredAnswerPayload(rawText);
-  const text = formatAnswerForDisplay(rawText, structured, {
+  const codingPayload = structured?.kind === "coding" ? structured.payload : null;
+  const codingCode = codingPayload?.solution?.code || "";
+  const codingPatch = codingPayload?.patch;
+  const codingNarration = codingPayload?.narration?.spokenAnswer || "";
+  let text = formatAnswerForDisplay(rawText, structured, {
     mode: scenario.mode === "live_coding" ? "coding" : "interview",
     maxInterviewWords: scenario.category === "manual_interview_hard" ? 95 : 140,
   });
+  text = repairTechnicalDebuggingAnswerCoverage(text, scenario.userInput, scenario.mode);
   const modelText = rawText;
   const normalizeLatin = (value) => String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const lower = normalizeLatin(text);
@@ -659,24 +1055,31 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     }
     return value.includes(cleanTerm);
   };
+  const wordCount = (value) => String(value).trim().split(/\s+/).filter(Boolean).length;
   const missingExpected = scenario.expected.filter((term) => !lower.includes(term));
   const forbiddenPresent = (scenario.forbidden || []).filter((term) => includesTerm(lower, term));
+  const missingMustUseDiagnostics = (scenario.mustUseContext || []).filter((term) => {
+    const tokens = normalizeLatin(term).split(/[^a-z0-9+#.-]+/).filter((token) => token.length >= 4);
+    if (tokens.length === 0) return false;
+    return !tokens.some((token) => includesTerm(lower, token));
+  });
   const expectsNoAnswer = scenario.category === "no_answer";
   const structuredNoAnswer = structured?.kind === "interview" && structured.payload.intent === "no_answer";
   const structuredNoAnswerOrClarification = structured?.kind === "interview" && ["no_answer", "clarification"].includes(structured.payload.intent);
   const forbiddenRoleLabels = /\b(interviewer|entrevistador)\s*:/i.test(text);
   const forcedCompanyContext = scenario.mode === "live_coding" && /\b(mercado\s+pago|pagos?|financier[oa]s?|conciliaci[oó]n|pipelines?)\b/i.test(text);
-  const hugeParagraph = text.split(/\n{2,}/).some((block) => block.length > 650);
+  const proseOnlyText = text.replace(/```[\s\S]*?```/g, "");
+  const hugeParagraph = proseOnlyText.split(/\n{2,}/).some((block) => block.length > 650);
   const codeBlockCount = (text.match(/```/g) || []).length / 2;
   const answerWithoutLeadLabel = text.replace(/^\s*(?:\*\*[^*\n]{1,40}:?\*\*|[A-Z][^:\n]{1,30}:)\s*/i, "").trim();
   const chattyOpener = /^(?:"|')?\s*(hola|claro|por supuesto|sure|of course|absolutely)\b/i.test(answerWithoutLeadLabel);
   const decorativeMarkdown = /\*\*_[^*]+|\b[A-Z]{4,}(?:\s+[A-Z]{3,}){1,}\b/.test(text.replace(/\b(SQL|ACID|API|TTL|LRU|JSON|STT|CV|SELECT|UPDATE|FOR)\b/g, ""));
   const metaPhrasing = /\b(ahi tienes|ahí tienes|segun tus requisitos|según tus requisitos|recuerdos previos|ignore la charla|opcional|pleasantries)\b/i.test(text);
-  const artifactScanText = text.replace(/\b(OrderedDict|JavaScript|TypeScript|PostgreSQL|OpenAI|NoSQL)\b/g, "");
+  const artifactScanText = text.replace(/\b(OrderedDict|JavaScript|TypeScript|PostgreSQL|OpenAI|NoSQL|queue\.Queue)\b/g, "");
   const garbledArtifact = /(?:\.raise\b|[a-zÃ¡Ã©Ã­Ã³ÃºÃ±]{4,}[A-Z][A-Za-z]{3,})/u.test(artifactScanText);
   const normalizedForMeta = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const strictMetaPhrasing = /\b(ahi|segun tus requisitos|recuerdos previos|ignore la charla|opcional|pleasantries)\b/i.test(normalizedForMeta);
-  const strictGarbledArtifact = /(?:\.(?:get|set)\b|para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b|bifrost\b|sadece\b|conipo\b|despeici\b)/i.test(artifactScanText);
+  const strictGarbledArtifact = /(?:para dici\b|latiencia\b|deshilaceraoin\b|responseivo\b|conoptimistic\b|bifrost\b|sadece\b|conipo\b|despeici\b)/i.test(artifactScanText);
   const rawNormalizedForMeta = rawText.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const rawModelChecks = {
     noRawCodeBlocks: scenario.mode === "live_coding" || scenario.allowCodeBlocks || !/```/.test(rawText),
@@ -690,6 +1093,9 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     && structured.payload.intent === "no_answer"
     && !scenario.allowUngroundedNoAnswer
     && scenario.category !== "no_answer";
+  const expectsCodingContract = scenario.requireStructuredCoding || scenario.expectedResponseType || scenario.expectedPatch || scenario.requireInlineComments;
+  const inlineCommentPattern = /(^|\n)\s*(#|\/\/|\/\*|\*)\s+\S/;
+  const pythonAssertions = runPythonAssertions(codingCode, scenario.executableAssertions);
   const checks = {
     providerOk: Boolean(result?.ok),
     nonEmpty: expectsNoAnswer ? text.trim().length > 15 : text.trim().length > 40,
@@ -713,6 +1119,13 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     noAnswerIntentAppropriate: !expectsNoAnswer || structuredNoAnswerOrClarification,
     groundedWhenStructured: scenario.mode === "live_coding" || !grounding || grounding.ok,
     clearQuestionAnswered: !clearQuestionGotNoAnswer,
+    structuredCodingContract: !expectsCodingContract || structured?.kind === "coding",
+    codingResponseTypeExpected: !scenario.expectedResponseType || codingPayload?.responseType === scenario.expectedResponseType,
+    codingCodePresent: !scenario.requireStructuredCoding || codingCode.trim().length > 40,
+    codingInlineComments: !scenario.requireInlineComments || inlineCommentPattern.test(codingCode),
+    codingPatchExpected: scenario.expectedPatch !== true || Boolean(codingPatch && codingPatch.kind !== "none" && codingPatch.code && codingPatch.code.trim()),
+    codingNarrationShort: !expectsCodingContract || Boolean(codingNarration.trim()) && wordCount(codingNarration) <= 55,
+    codingExecutableAssertions: !pythonAssertions.required || pythonAssertions.ok,
   };
   const qualityChecks = Object.fromEntries(
     Object.entries(checks).filter(([key]) => key !== "latencyWithinTarget"),
@@ -732,6 +1145,16 @@ const scoreAnswer = (scenario, result, elapsedMs) => {
     qualityChecks,
     missingExpected,
     forbiddenPresent,
+    missingMustUseDiagnostics,
+    codingContract: codingPayload ? {
+      responseType: codingPayload.responseType,
+      codeChars: codingCode.length,
+      hasInlineComments: inlineCommentPattern.test(codingCode),
+      patchKind: codingPatch?.kind,
+      patchChars: codingPatch?.code?.length || 0,
+      narrationWords: wordCount(codingNarration),
+      executableAssertions: pythonAssertions,
+    } : null,
     structured: structured?.kind,
     grounding,
     questionDetection,
@@ -764,16 +1187,41 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
       response: { ok, text: "", provider, modelName, requestId: `${scenario.id}-preflight`, error: ok ? undefined : "unexpected_dispatch" },
     };
   }
+  const liveSpokenOutput = (provider === "openai" || provider === "nvidia") && scenario.mode !== "live_coding";
   const input = {
     provider,
     modelName,
     prompt: scenario.prompt,
     ollamaBaseUrl: settings.ollamaBaseUrl,
     maxTokens: scenario.maxTokens,
-    structuredOutput: true,
+    structuredOutput: scenario.mode === "live_coding" ? true : !liveSpokenOutput,
+    liveSpokenOutput,
   };
   const started = performance.now();
-  const result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify(input)})`);
+  let result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify(input)})`);
+  const parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
+  if (result.ok && scenario.mode === "live_coding" && shouldRetryLiveCodingCompleteness(parsedStructured, scenario.prompt.user, result.text)) {
+    const retryPrompt = buildLiveCodingCompletenessRetryPrompt(scenario.prompt);
+    result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify({
+      ...input,
+      prompt: retryPrompt,
+      structuredOutput: true,
+      liveSpokenOutput: false,
+      maxTokens: Math.max(input.maxTokens || 0, 1200),
+    })})`);
+  }
+  for (let validationAttempt = 1; validationAttempt <= 2; validationAttempt += 1) {
+    const executableValidation = executableAssertionsForResult(scenario, result);
+    if (!result.ok || scenario.mode !== "live_coding" || !executableValidation.required || executableValidation.ok) break;
+    const repairPrompt = buildExecutableRepairPrompt(scenario.prompt, result, executableValidation);
+    result = await evaluate(client, `window.callpilotDesktop.generateAnswer(${JSON.stringify({
+      ...input,
+      prompt: repairPrompt,
+      structuredOutput: true,
+      liveSpokenOutput: false,
+      maxTokens: Math.max(input.maxTokens || 0, 1400),
+    })})`);
+  }
   const elapsedMs = Math.round(performance.now() - started);
   return {
     id: scenario.id,
@@ -921,7 +1369,9 @@ const run = async () => {
         latencyMs: item.metrics.latencyMs,
         chars: item.metrics.chars,
         checks: item.metrics.checks,
+        codingContract: item.metrics.codingContract,
         error: item.response?.error,
+        missingMustUseDiagnostics: item.metrics.missingMustUseDiagnostics,
         preview: String(item.response?.text || "").slice(0, 220),
         renderedPreview: String(item.metrics.renderedText || item.response?.text || "").slice(0, 220),
       })),

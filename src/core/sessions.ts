@@ -2,6 +2,7 @@ import type { PreferredLanguage } from "./context.ts";
 import type { AssistantModeId } from "./modes.ts";
 import type { ModelProvider } from "./modelClient.ts";
 import type { TranscriptSnapshot } from "./transcriptBuffer.ts";
+import { parseCodingAnswerPayload, type CodingAnswerPayload } from "./answerPayload.ts";
 
 export interface SavedSession {
   id: string;
@@ -26,12 +27,13 @@ export interface SavedSession {
   modelName: string;
   question: string;
   answer: string;
+  codingPayload: CodingAnswerPayload | null;
 }
 
-type OptionalBriefFields = "companyName" | "roleTitle" | "resumeText" | "starStories" | "jobDescription";
+type OptionalSessionFields = "companyName" | "roleTitle" | "resumeText" | "starStories" | "jobDescription" | "codingPayload";
 
-export type SessionDraft = Omit<SavedSession, "id" | "title" | "createdAt" | "updatedAt" | OptionalBriefFields> &
-  Partial<Pick<SavedSession, OptionalBriefFields>> & {
+export type SessionDraft = Omit<SavedSession, "id" | "title" | "createdAt" | "updatedAt" | OptionalSessionFields> &
+  Partial<Pick<SavedSession, OptionalSessionFields>> & {
   id?: string;
   title?: string;
   createdAt?: string;
@@ -66,6 +68,7 @@ export const createSessionSnapshot = (draft: SessionDraft, now = new Date()): Sa
     resumeText: draft.resumeText ?? "",
     starStories: draft.starStories ?? "",
     jobDescription: draft.jobDescription ?? "",
+    codingPayload: draft.codingPayload ?? null,
     title: draft.title?.trim() || makeSessionTitle(base),
   };
 };
@@ -109,6 +112,7 @@ export const sanitizeSessionImport = (value: unknown): SavedSession | null => {
     modelName: typeof value.modelName === "string" ? value.modelName : "",
     question: typeof value.question === "string" ? value.question : "",
     answer: typeof value.answer === "string" ? value.answer : "",
+    codingPayload: parseCodingAnswerPayload(value.codingPayload, { allowEmpty: true }),
   });
 };
 

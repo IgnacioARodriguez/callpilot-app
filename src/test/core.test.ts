@@ -57,9 +57,12 @@ import {
   parseSessionJson,
   parseStructuredAnswerPayload,
   buildLiveCodingCompletenessRetryPrompt,
+  buildLiveCodingFollowUpPrompt,
+  compactLiveSpokenAnswer,
   reduceStealthState,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
+  repairTechnicalDebuggingAnswerCoverage,
   resetStealthState,
   serializeSession,
   shouldRetryLiveCodingCompleteness,
@@ -78,6 +81,7 @@ import {
   withRetry,
   createSseParseState,
   parseSseChunk,
+  type CodingAnswerPayload,
 } from "../core/index.ts";
 
 test("fixed modes are available", () => {
@@ -633,6 +637,221 @@ test("structured coding answers parse and render code block", () => {
   assert.match(rendered, /O\(n\)/);
 });
 
+test("live coding display keeps solution code even when user did not ask for code", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "initial_solution",
+      problem: { title: "Two Sum", summary: "Find two indices", language: "Python", functionSignature: null, constraints: [] },
+      solution: {
+        approachSteps: ["Use a hash map."],
+        code: "def two_sum(nums, target):\n    # Track values we have already seen.\n    seen = {}\n    return []",
+        complexity: { time: "O(n)", space: "O(n)", rationale: "One pass." },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "I will use a hash map so each lookup is constant time.", currentStep: "Explain invariant." },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  const rendered = structured ? formatAnswerForDisplay(JSON.stringify(structured), structured, { mode: "coding" }) : "";
+  const compacted = compactLiveSpokenAnswer(rendered, { mode: "live_coding", userInput: "interviewer: solve two sum" });
+
+  assert.match(rendered, /def two_sum/);
+  assert.match(compacted.text, /def two_sum/);
+  assert.match(compacted.text, /Track values/);
+  assert.match(compacted.text, /I will use a hash map/);
+});
+
+test("live coding prompt requires commented solution code without expanding narration", () => {
+  const prompt = buildPrompt(createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english" }), "interviewer: solve two sum");
+  const liveCoding = MODES.find((mode) => mode.id === "live_coding");
+
+  assert.match(liveCoding?.systemPromptFragment ?? "", /solution\.code/i);
+  assert.match(liveCoding?.systemPromptFragment ?? "", /inline comments/i);
+  assert.doesNotMatch(liveCoding?.systemPromptFragment ?? "", /only when requested/i);
+  assert.match(prompt.system, /narration\.spokenAnswer/i);
+  assert.match(prompt.system, /short/i);
+});
+
+test("structured prompt examples use concrete enum values instead of pipe-separated placeholders", () => {
+  const codingPrompt = buildPrompt(createGlobalContext({ activeMode: "live_coding" }), "interviewer: solve two sum");
+  const technicalPrompt = buildPrompt(createGlobalContext({ activeMode: "technical_qa" }), "interviewer: what is cache invalidation?");
+
+  assert.doesNotMatch(codingPrompt.user, /"responseType":"initial_solution\|/);
+  assert.doesNotMatch(technicalPrompt.user, /"intent":"technical_qa\|/);
+  assert.match(codingPrompt.user, /choose exactly one of: initial_solution/i);
+  assert.match(technicalPrompt.user, /choose exactly one of: technical_qa/i);
+});
+
+test("live coding follow-up prompt carries previous solution code past screen freshness cutoff", () => {
+  const previous: CodingAnswerPayload = {
+    version: "1",
+    answerNeeded: true,
+    responseType: "initial_solution",
+    problem: { title: "Two Sum", summary: "Return indices for target sum.", language: "Python", functionSignature: "def two_sum(nums, target)", constraints: [] },
+    solution: {
+      approachSteps: ["Use a hash map."],
+      code: "def two_sum(nums, target):\n    # Remember each value's index.\n    seen = {}\n    return []",
+      complexity: { time: "O(n)", space: "O(n)", rationale: "One pass." },
+      edgeCases: ["no pair"],
+      invariants: ["seen contains prior values"],
+    },
+    narration: { spokenAnswer: "I will use a hash map for one-pass lookup.", currentStep: "Initial solution" },
+    tests: [],
+    patch: { kind: "none", code: null },
+  };
+  const transcript = new TranscriptBuffer();
+  transcript.append("Solve Two Sum.", "stt", 1_000, "interviewer");
+  transcript.append("Use a hash map for the earlier solution.", "manual", 2_000, "assistant");
+  const screenContext = classifyScreenText("class Solution: pass");
+  screenContext.capturedAt = 1_000_000;
+
+  const followUpInput = buildLiveCodingFollowUpPrompt({
+    changeRequest: "handle duplicates",
+    currentSolution: previous,
+    problemContext: "interviewer: Solve Two Sum.",
+  });
+  const prompt = buildPrompt(createGlobalContext({
+    activeMode: "live_coding",
+    transcript: transcript.snapshot(),
+    screenContext,
+  }), followUpInput);
+
+  assert.match(prompt.user, /<latest_actionable_input>[\s\S]*responseType follow_up_change/i);
+  assert.match(prompt.user, /def two_sum/);
+  assert.match(prompt.user, /Remember each value's index/);
+  assert.match(prompt.user, /handle duplicates/i);
+  assert.doesNotMatch(prompt.user.match(/<previous_assistant_answers>\n([\s\S]*?)\n<\/previous_assistant_answers>/)?.[1] ?? "", /earlier solution/i);
+});
+
+test("structured follow-up coding answers include patch and change narration", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "follow_up_change",
+      problem: { title: "Two Sum", summary: "Return indices.", language: "Python", functionSignature: null, constraints: [] },
+      solution: {
+        approachSteps: ["Keep first index for each value."],
+        code: "def two_sum(nums, target):\n    # Keep the first index so duplicates still work.\n    seen = {}\n    return []",
+        complexity: { time: "O(n)", space: "O(n)", rationale: "Still one pass." },
+        edgeCases: ["duplicate values"],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "I changed the map update so duplicate values are handled correctly.", currentStep: "Apply duplicate handling." },
+      tests: [],
+      patch: { kind: "diff", code: "- seen[num] = i\n+ seen.setdefault(num, i)" },
+    },
+  }));
+
+  assert.equal(structured?.kind, "coding");
+  if (structured?.kind !== "coding") return;
+  assert.equal(structured.payload.responseType, "follow_up_change");
+  assert.equal(structured.payload.patch.kind, "diff");
+  assert.match(structured.payload.patch.code ?? "", /setdefault/);
+  assert.match(structured.payload.narration.spokenAnswer, /duplicate/i);
+});
+
+test("structured follow-up coding answers infer replace patch from updated code when provider omits patch", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "follow_up_change",
+      problem: { title: "Two Sum", summary: "Return indices.", language: "Python", functionSignature: null, constraints: [] },
+      solution: {
+        approachSteps: ["Update the code."],
+        code: "def two_sum(nums, target):\n    # Updated full solution.\n    return []",
+        complexity: { time: "O(n)", space: "O(n)", rationale: "One pass." },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "I updated the solution.", currentStep: "Change" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.equal(structured?.kind, "coding");
+  if (structured?.kind !== "coding") return;
+  assert.equal(structured.payload.patch.kind, "replace");
+  assert.match(structured.payload.patch.code ?? "", /Updated full solution/);
+});
+
+test("structured coding parser normalizes escaped newlines and fills missing change narration", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "follow_up_change",
+      problem: { title: "Queue", summary: "Avoid busy wait.", language: "Python", functionSignature: null, constraints: [] },
+      solution: {
+        approachSteps: [],
+        code: "def consume():\\n    # Wait without spinning.\\n    return queue.get()",
+        complexity: { time: "", space: "", rationale: "" },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "diff", code: "+    # Wait without spinning.\\n+    return queue.get()" },
+    },
+  }));
+
+  assert.equal(structured?.kind, "coding");
+  if (structured?.kind !== "coding") return;
+  assert.match(structured.payload.solution.code, /\n\s+# Wait without spinning/);
+  assert.match(structured.payload.patch.code ?? "", /\n\+\s+return queue\.get/);
+  assert.match(structured.payload.narration.spokenAnswer, /Updated the solution/);
+});
+
+test("structured coding parser repairs malformed empty-string tuple initializers", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      responseType: "follow_up_change",
+      problem: { title: "Longest substring", summary: "", language: "Python", functionSignature: null, constraints: [] },
+      solution: {
+        approachSteps: [],
+        code: "def solve(s):\\n    # Track best tuple.\\n    best = (0, \\\")\\\"\\n    return best",
+        complexity: { time: "O(n)", space: "O(n)", rationale: "" },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "Updated the return shape.", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.equal(structured?.kind, "coding");
+  if (structured?.kind !== "coding") return;
+  assert.match(structured.payload.solution.code, /best = \(0, ""\)/);
+});
+
+test("structured coding parser rescues payloads truncated inside patch when solution code is complete", () => {
+  const raw = '{"kind":"coding","payload":{"version":"1","answerNeeded":true,"intent":null,"responseType":"follow_up_change","spokenAnswer":"","keyPoints":[],"correction":{"needed":false,"transition":null,"correctedClaim":null},"assumptions":[],"evidenceRefs":[],"followUpHint":null,"problem":{"title":"Shortest Path","summary":"Weighted graph","language":"Python"},"solution":{"approachSteps":["Use Dijkstra"],"code":"import heapq\\n\\ndef shortest_path(graph, start, end):\\n    # Keep the nearest frontier first.\\n    heap = [(0, start)]\\n    return -1","complexity":{"time":"O(E log V)","space":"O(V)","rationale":"Heap-based Dijkstra"},"edgeCases":[],"invariants":[]},"narration":{"spokenAnswer":"I would switch from BFS to Dijkstra for positive weights.","currentStep":"Change algorithm"},"tests":[],"patch":{"kind":"replace","code":"import heapq\\n\\ndef shortest_path';
+
+  const structured = parseStructuredAnswerPayload(raw);
+
+  assert.equal(structured?.kind, "coding");
+  if (structured?.kind !== "coding") return;
+  assert.equal(structured.payload.responseType, "follow_up_change");
+  assert.match(structured.payload.solution.code, /nearest frontier/);
+  assert.equal(structured.payload.patch.kind, "replace");
+  assert.match(structured.payload.patch.code ?? "", /nearest frontier/);
+});
+
 test("structured coding answers accept provider payloads with root spokenAnswer", () => {
   const structured = parseStructuredAnswerPayload(JSON.stringify({
     kind: "coding",
@@ -981,6 +1200,111 @@ test("live coding completeness retry fires for visible problem with empty comple
   assert.equal(shouldRetryLiveCodingCompleteness(structured, "<screen_context>\ntechnical_focus:\nSolve the visible task.\n</screen_context>"), true);
 });
 
+test("live coding completeness retry fires for explicit empty coding scaffold", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "", summary: "", language: "Python", functionSignature: null, constraints: [] },
+      solution: { approachSteps: [], code: "", complexity: { time: "", space: "", rationale: "" }, edgeCases: [], invariants: [] },
+      narration: { spokenAnswer: "", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  assert.equal(shouldRetryLiveCodingCompleteness(structured, "<screen_context>\ntechnical_focus:\nSolve the visible task.\n</screen_context>"), true);
+});
+
+test("live coding completeness retry fires for truncated coding json", () => {
+  const raw = '{"kind":"coding","payload":{"solution":{"code":"def solve():\\n    return 1"';
+
+  assert.equal(
+    shouldRetryLiveCodingCompleteness(parseStructuredAnswerPayload(raw), "<screen_context>\ntechnical_focus:\nSolve the visible task.\n</screen_context>", raw),
+    true,
+  );
+});
+
+test("structured coding parser adds a minimal comment to uncommented multi-line code", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Rotate matrix", summary: "", language: "Python", functionSignature: null, constraints: [] },
+      solution: {
+        approachSteps: [],
+        code: "def rotate(matrix):\n    n = len(matrix)\n    for row in matrix:\n        row.reverse()",
+        complexity: { time: "O(n^2)", space: "O(1)", rationale: "" },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "Rotate in place.", currentStep: "" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.ok(structured);
+  assert.equal(structured.kind, "coding");
+  assert.match(structured.payload.solution.code, /# Core interview solution step\./);
+  assert.equal(shouldRetryLiveCodingCompleteness(structured, "<screen_context>\ntechnical_focus:\nSolve the visible task.\n</screen_context>"), false);
+});
+
+test("structured coding parser compacts long narration", () => {
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "follow_up_change",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Shortest Path", summary: "", language: "Python", functionSignature: null, constraints: [] },
+      solution: {
+        approachSteps: [],
+        code: "def shortest_path(graph, start, end):\n    # Use the nearest frontier first.\n    return 0",
+        complexity: { time: "O(E log V)", space: "O(V)", rationale: "" },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: {
+        spokenAnswer: "Para implementar Dijkstra, necesitamos mantener un heap de nodos con distancias conocidas, en lugar de una cola de nodos a visitar. Esto nos permite priorizar los nodos con distancias mas pequenas y encontrar el camino optimo con pesos positivos. Tambien actualizamos las distancias solo cuando encontramos una ruta mejor.",
+        currentStep: "",
+      },
+      tests: [],
+      patch: { kind: "diff", code: "+ heapq.heappush(heap, (dist, node))" },
+    },
+  }));
+
+  assert.ok(structured);
+  assert.equal(structured.kind, "coding");
+  assert.ok(structured.payload.narration.spokenAnswer.split(/\s+/).length <= 45);
+});
+
 test("live coding completeness retry does not fire when complexity is populated", () => {
   const structured = parseStructuredAnswerPayload(JSON.stringify({
     kind: "coding",
@@ -996,7 +1320,13 @@ test("live coding completeness retry does not fire when complexity is populated"
       evidenceRefs: [],
       followUpHint: null,
       problem: { title: "Visible problem", summary: "", language: "Python", functionSignature: null, constraints: [] },
-      solution: { approachSteps: ["Use the natural state transition."], code: "", complexity: { time: "O(n)", space: "O(1)", rationale: "Single pass." }, edgeCases: [], invariants: ["State remains consistent."] },
+      solution: {
+        approachSteps: ["Use the natural state transition."],
+        code: "def solve(items):\n    # Track each item once.\n    return len(items)",
+        complexity: { time: "O(n)", space: "O(1)", rationale: "Single pass." },
+        edgeCases: [],
+        invariants: ["State remains consistent."],
+      },
       narration: { spokenAnswer: "Track the state transition.", currentStep: "explain" },
       tests: [],
       patch: { kind: "none", code: null },
@@ -1063,6 +1393,26 @@ test("system design repair covers explicit Redis-alone requests when model omits
   assert.match(repaired, /Redis alone is not enough/i);
   assert.match(repaired, /durable source of truth/i);
   assert.equal(unchangedTechnical, "Use a cache for reads.");
+});
+
+test("technical debugging repair adds concrete Python memory leak diagnostics", () => {
+  const repaired = repairTechnicalDebuggingAnswerCoverage(
+    "**Respuesta:** Primero miraria el worker para confirmar que la memoria crece y no culparia al GC directamente.",
+    "Como investigarias este leak en un worker Python cuyo RSS crece hasta OOM?",
+    "technical_qa",
+  );
+  const unchanged = repairTechnicalDebuggingAnswerCoverage(
+    "**Respuesta:** Revisaria el query plan y las metricas de latencia.",
+    "Como investigarias una query lenta?",
+    "technical_qa",
+  );
+
+  assert.match(repaired, /tracemalloc/i);
+  assert.match(repaired, /snapshots?/i);
+  assert.match(repaired, /RSS/i);
+  assert.match(repaired, /objeto/i);
+  assert.match(repaired, /cache/i);
+  assert.equal(unchanged, "**Respuesta:** Revisaria el query plan y las metricas de latencia.");
 });
 
 test("system design repair rewrites Redis central-store shortcuts", () => {
@@ -1169,6 +1519,13 @@ test("live conversation focuses the final STT question without punctuation", () 
   assert.equal(
     extractLatestQuestionFocus(text),
     "how would you design retries without charging twice",
+  );
+});
+
+test("live conversation preserves CoderPad implementation directives with explanation tails", () => {
+  assert.equal(
+    extractLatestQuestionFocus("interviewer: This is in CoderPad. Implement length_of_longest_substring and explain the sliding window."),
+    "Implement length_of_longest_substring and explain the sliding window.",
   );
 });
 
@@ -1965,6 +2322,20 @@ test("screen classifier recognizes common V0 inputs", () => {
   assert.equal(classifyScreenText("API Reference\nParameters\nReturns").kind, "documentation");
   assert.equal(classifyScreenText("10:30 Alice: Let's ship it\nBob: Action item is the rollout plan").kind, "meeting_transcript");
   assert.equal(classifyScreenText("A quiet paragraph with no technical markers.").kind, "unknown");
+});
+
+test("screen classifier recognizes CoderPad exercise context", () => {
+  const context = classifyScreenText([
+    "CoderPad Interview",
+    "Run Code",
+    "Write a function length_of_longest_substring(s) that returns the length of the longest substring without repeating characters.",
+    "Example: s = 'abcabcbb' -> 3",
+    "Constraints: 0 <= len(s) <= 5 * 10^4",
+  ].join("\n"));
+
+  assert.equal(context.kind, "coding_problem");
+  assert.match(context.visibleText, /length_of_longest_substring/);
+  assert.doesNotMatch(context.visibleText, /Run Code/);
 });
 
 test("screen focus keeps coding text ahead of video player chrome", () => {

@@ -14,6 +14,7 @@ import {
   appendSegmentChunk,
   browserRecognitionLanguage,
   buildLiveCodingCompletenessRetryPrompt,
+  buildLiveCodingFollowUpPrompt,
   buildPrompt,
   buildPromptWithEvidence,
   classifyScreenText,
@@ -29,6 +30,7 @@ import {
   detectQuestionIntent,
   extractLatestQuestionFocus,
   formatAnswerForDisplay,
+  compactLiveSpokenAnswer,
   liveTranscriptionPlan,
   markLatencyStage,
   formatFactualTranscriptText,
@@ -44,6 +46,7 @@ import {
   reduceStealthState,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
+  repairTechnicalDebuggingAnswerCoverage,
   shouldRetryLiveCodingCompleteness,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
@@ -54,6 +57,7 @@ import {
   upsertSession,
   withNoAnswerForUngroundedDrift,
   type AssistantModeId,
+  type CodingAnswerPayload,
   type EvidenceEmbedder,
   type EvidenceEmbedding,
   type GlobalContext,
@@ -112,6 +116,32 @@ const NVIDIA_MODEL_PRESETS = [
   "meta/llama-3.1-70b-instruct",
 ];
 
+const createEmptyCodingPayload = (): CodingAnswerPayload => ({
+  version: "1",
+  answerNeeded: true,
+  responseType: "clarification",
+  problem: {
+    title: "Waiting for coding exercise",
+    summary: "Press Answer when the interviewer gives the exercise or asks for a change.",
+    language: "Python",
+    functionSignature: null,
+    constraints: [],
+  },
+  solution: {
+    approachSteps: [],
+    code: "",
+    complexity: { time: "", space: "", rationale: "" },
+    edgeCases: [],
+    invariants: [],
+  },
+  narration: {
+    spokenAnswer: "",
+    currentStep: "Listening for the exercise",
+  },
+  tests: [],
+  patch: { kind: "none", code: null },
+});
+
 const loadSavedSession = (): Partial<SavedSession> => {
   try {
     const raw = window.localStorage.getItem(CURRENT_SESSION_KEY);
@@ -147,65 +177,6 @@ const formatMockAnswer = (context: GlobalContext, userInput: string): string => 
     "",
     `Debug: ${prompt.debug.includedSections.length} sections included, ${prompt.debug.omittedSections.length} omitted.`,
   ].join("\n");
-};
-
-const countWords = (value: string): number => value.trim().split(/\s+/).filter(Boolean).length;
-
-const requestTextForCodeIntent = (value: string): string =>
-  String(value || "")
-    .split(/\nvisible_screen:|\nscreen_context:|\nraw_visible_text:|\nTechnical OCR focus:|\nVisible OCR text:/i)[0]
-    ?.trim() || String(value || "");
-
-const explicitlyRequestsCode = (value: string): boolean =>
-  /\b(write|implement|add|fix)\s+(?:the\s+|a\s+|an\s+|some\s+)?(?:code|function|method|tests?|test cases?|implementation)\b/i.test(requestTextForCodeIntent(value))
-  || /\b(show|provide)\s+(?:me\s+)?(?:the\s+|a\s+|an\s+)?(?:code|implementation|function|method|tests?|test cases?)\b/i.test(requestTextForCodeIntent(value))
-  || /\b(code this|write tests?|add tests?|fix the code|implement it)\b/i.test(requestTextForCodeIntent(value));
-
-const compactLiveSpokenAnswer = (
-  value: string,
-  options: { mode: AssistantModeId; userInput: string },
-): { text: string; compacted: boolean; originalWords: number; finalWords: number } => {
-  const originalWords = countWords(value);
-  const maxWords = options.mode === "live_coding" ? 120 : 100;
-  let text = value
-    .replace(/\*{0,2}to say:\*{0,2}\s*/gi, "")
-    .replace(/\*{0,2}respuesta:\*{0,2}\s*/gi, "")
-    .replace(/^to say:\s*/i, "")
-    .replace(/^respuesta:\s*/i, "")
-    .trim();
-
-  if (options.mode === "live_coding" && !explicitlyRequestsCode(options.userInput)) {
-    text = text
-      .replace(/```[\s\S]*?```/g, "")
-      .replace(/```[\s\S]*$/g, "")
-      .replace(/^\s*(here(?:'s| is)?|below is|this is)\b.*\b(code|snippet|implementation)\b.*:?$/gim, "")
-      .replace(/\bhere(?:'s| is)?\s+a\s+(?:python\s+)?(?:function|solution|implementation)[^:.]*:\s*/gi, "")
-      .replace(/^\s*[-*]\s*/gm, "")
-      .replace(/^#{1,6}\s*/gm, "")
-      .trim();
-  }
-  if (!text) text = value.trim();
-
-  if (countWords(text) > maxWords) {
-    const sentences = text.match(/[^.!?]+[.!?]?/g) ?? [text];
-    const selected: string[] = [];
-    for (const sentence of sentences) {
-      const candidate = [...selected, sentence.trim()].filter(Boolean).join(" ");
-      if (countWords(candidate) > maxWords) break;
-      selected.push(sentence.trim());
-    }
-    text = selected.join(" ").trim();
-    if (!text) text = value.trim().split(/\s+/).slice(0, maxWords).join(" ");
-  }
-
-  text = text.replace(/\s+/g, " ").trim();
-  const finalWords = countWords(text);
-  return {
-    text,
-    compacted: text !== value.trim(),
-    originalWords,
-    finalWords,
-  };
 };
 
 function App() {
@@ -294,6 +265,8 @@ function App() {
   const [latencyRuns, setLatencyRuns] = React.useState<LatencyMetricRun[]>([]);
   const [question, setQuestion] = React.useState(savedSession.question ?? "");
   const [answer, setAnswer] = React.useState(savedSession.answer ?? "");
+  const [followUpChange, setFollowUpChange] = React.useState("");
+  const [currentCodingPayload, setCurrentCodingPayload] = React.useState<CodingAnswerPayload | null>(savedSession.codingPayload ?? null);
   const [sessionLibrary, setSessionLibrary] = React.useState<SavedSession[]>(loadSessionLibrary);
   const [sessionMessage, setSessionMessage] = React.useState("");
   const [desktopStatus, setDesktopStatus] = React.useState("Web preview");
@@ -649,6 +622,7 @@ function App() {
       modelName,
       question,
       answer,
+      codingPayload: currentCodingPayload,
     });
     window.localStorage.setItem(CURRENT_SESSION_KEY, JSON.stringify(session));
   }, [
@@ -657,6 +631,7 @@ function App() {
     answerVerbosity,
     codingLanguage,
     companyName,
+    currentCodingPayload,
     jobDescription,
     modelName,
     modelProvider,
@@ -832,11 +807,45 @@ function App() {
       });
       emitAnswerTiming("format_started");
       let parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
+      if (result.ok && context.activeMode === "live_coding" && liveSpokenOutput) {
+        emitAnswerTiming("live_coding_structured_code_started");
+        const structuredResult = await window.callpilotDesktop.generateAnswer({
+          provider: modelProvider,
+          modelName,
+          requestId,
+          structuredOutput: true,
+          liveSpokenOutput: false,
+          prompt: builtPrompt,
+          apiKey: sessionApiKey,
+          nativelyApiKey,
+          nvidiaApiKey,
+          ollamaBaseUrl,
+          maxTokens: 1200,
+          timeoutMs: 120000,
+        });
+        emitAnswerTiming("live_coding_structured_code_completed", {
+          ok: structuredResult.ok,
+          cancelled: Boolean(structuredResult.cancelled),
+          error: structuredResult.error,
+          textChars: structuredResult.text.length,
+        });
+        const structuredPayload = structuredResult.ok ? parseStructuredAnswerPayload(structuredResult.text) : null;
+        if (structuredPayload?.kind === "coding") {
+          result = structuredResult;
+          parsedStructured = structuredPayload;
+        } else {
+          emitAnswerTiming("live_coding_structured_code_unavailable", {
+            ok: structuredResult.ok,
+            parsedStructured: Boolean(structuredPayload),
+            structuredKind: structuredPayload?.kind,
+          });
+        }
+      }
       if (
         result.ok
         && context.activeMode === "live_coding"
         && !liveSpokenOutput
-        && shouldRetryLiveCodingCompleteness(parsedStructured, builtPrompt.user)
+        && shouldRetryLiveCodingCompleteness(parsedStructured, builtPrompt.user, result.text)
       ) {
         emitAnswerTiming("live_coding_completeness_retry_started");
         const retryPrompt = buildLiveCodingCompletenessRetryPrompt(builtPrompt);
@@ -889,6 +898,7 @@ function App() {
         : `Generation failed: ${result.error ?? "unknown error"}`;
       if (result.ok) {
         text = repairSystemDesignAnswerCoverage(text, effectiveQuestion, context.activeMode);
+        text = repairTechnicalDebuggingAnswerCoverage(text, effectiveQuestion, context.activeMode);
       }
       if (result.ok && liveSpokenOutput) {
         const compacted = compactLiveSpokenAnswer(text, {
@@ -949,6 +959,9 @@ function App() {
       if (activeAnswerRequestIdRef.current === requestId) {
         setAnswer(text);
         if (result.ok && structured) {
+          if (structured.kind === "coding") {
+            setCurrentCodingPayload(structured.payload);
+          }
           void window.callpilotDesktop.publishStructuredAnswer?.({
             requestId,
             answer: structured,
@@ -1173,7 +1186,19 @@ function App() {
         return [
           latestPrompt,
           `visible_screen: ${screen.slice(-1800)}`,
+          currentCodingPayload?.solution.code.trim()
+            ? [
+              "current_live_coding_solution:",
+              `title: ${currentCodingPayload.problem.title}`,
+              `language: ${currentCodingPayload.problem.language}`,
+              "code:",
+              currentCodingPayload.solution.code,
+            ].join("\n")
+            : "",
           "task: Use the latest transcript together with the visible coding context to provide the next useful live-coding answer. If no one explicitly asked to write code or tests, explain the optimal approach, invariant, and complexity without code.",
+          currentCodingPayload?.solution.code.trim()
+            ? "follow_up_rule: If the latest interviewer request changes requirements, updates tests, reports a bug, or asks for another case, update the full current solution.code without dropping previous valid logic."
+            : "",
         ].join("\n");
       }
       return latestPrompt;
@@ -1186,10 +1211,32 @@ function App() {
         ? "task: Use the latest transcript and visible coding context to provide the next useful coding help, solution, explanation, or correction."
         : "task: Use the latest transcript and interview context to provide the next useful thing to say, or a brief clarification if no answer is needed.",
       screen ? `visible_screen: ${screen.slice(-1800)}` : "",
+      activeMode === "live_coding" && currentCodingPayload?.solution.code.trim()
+        ? [
+          "current_live_coding_solution:",
+          `title: ${currentCodingPayload.problem.title}`,
+          `language: ${currentCodingPayload.problem.language}`,
+          "code:",
+          currentCodingPayload.solution.code,
+          "follow_up_rule: Preserve the working parts of this solution and return the complete updated solution.code.",
+        ].join("\n")
+        : "",
       notesText ? `notes: ${notesText.slice(-1200)}` : "",
     ];
     return fallbackLines.filter(Boolean).join("\n");
-  }, [activeMode, getLatestInterviewPrompt, notes, screenText]);
+  }, [activeMode, currentCodingPayload, getLatestInterviewPrompt, notes, screenText]);
+
+  const submitFollowUpChange = React.useCallback(() => {
+    const changeRequest = followUpChange.trim();
+    if (!changeRequest || activeMode !== "live_coding" || !currentCodingPayload?.solution.code.trim()) return;
+    const prompt = buildLiveCodingFollowUpPrompt({
+      changeRequest,
+      currentSolution: currentCodingPayload,
+      problemContext: getManualAnswerPrompt(),
+    });
+    setFollowUpChange("");
+    void ask(prompt);
+  }, [activeMode, ask, currentCodingPayload, followUpChange, getManualAnswerPrompt]);
 
   const clearContext = React.useCallback(() => {
     const next = new TranscriptBuffer(transcript);
@@ -1204,6 +1251,8 @@ function App() {
     setProfile("");
     setQuestion("");
     setAnswer("");
+    setFollowUpChange("");
+    setCurrentCodingPayload(null);
     setTranscriptDraft("");
     window.localStorage.removeItem(CURRENT_SESSION_KEY);
   }, [transcript]);
@@ -1219,6 +1268,8 @@ function App() {
     setProfile("");
     setQuestion("");
     setAnswer("");
+    setFollowUpChange("");
+    setCurrentCodingPayload(null);
     setTranscriptDraft("");
     setLatencyRuns([]);
     activeLatencyRunIdRef.current = null;
@@ -1233,6 +1284,48 @@ function App() {
     isGeneratingRef.current = false;
     window.localStorage.removeItem(CURRENT_SESSION_KEY);
   }, []);
+
+  const resetLiveCodingExercise = React.useCallback(() => {
+    const emptyTranscript = new TranscriptBuffer().snapshot();
+    setTranscript(emptyTranscript);
+    transcriptRef.current = emptyTranscript;
+    setScreenText("");
+    setScreenContext(classifyScreenText(""));
+    setQuestion("");
+    setAnswer("");
+    setFollowUpChange("");
+    setCurrentCodingPayload(null);
+    setTranscriptDraft("");
+    setLatencyRuns([]);
+    activeLatencyRunIdRef.current = null;
+    activeAnswerRequestIdRef.current = null;
+    firstDetailChunkSeenRef.current = false;
+    turnAssemblerRef.current = createTurnAssemblerState();
+    setIsGenerating(false);
+    isGeneratingRef.current = false;
+    const emptyCodingPayload = createEmptyCodingPayload();
+    void window.callpilotDesktop?.publishStructuredAnswer?.({
+      requestId: `reset-${Date.now()}`,
+      answer: { kind: "coding", payload: emptyCodingPayload },
+      renderedText: "",
+      timestamp: Date.now(),
+    });
+    window.localStorage.removeItem(CURRENT_SESSION_KEY);
+    setLiveAssistStatus("New coding exercise ready");
+  }, []);
+
+  const resetFullSession = React.useCallback(() => {
+    resetSessionRuntimeContext();
+    setNotes("");
+    setCompanyName("");
+    setRoleTitle("");
+    setResumeText("");
+    setStarStories("");
+    setJobDescription("");
+    setProfile("");
+    setLiveAssistStatus("New session ready");
+    setSessionMessage("New session started with a clean slate");
+  }, [resetSessionRuntimeContext]);
 
   const handleFinalTranscript = React.useCallback((text: string, source: "manual" | "stt" = "stt", speaker: TranscriptSpeaker = "interviewer") => {
     const normalized = normalizeTechnicalTranscript(text).trim();
@@ -2180,12 +2273,14 @@ function App() {
     modelName,
     question,
     answer,
+    codingPayload: currentCodingPayload,
   }), [
     activeMode,
     answer,
     answerVerbosity,
     codingLanguage,
     companyName,
+    currentCodingPayload,
     jobDescription,
     modelName,
     modelProvider,
@@ -2444,6 +2539,7 @@ function App() {
     setModelName(session.modelName);
     setQuestion(session.question);
     setAnswer(session.answer);
+    setCurrentCodingPayload(session.codingPayload ?? null);
     setSessionMessage(`Loaded: ${session.title}`);
   };
 
@@ -2929,6 +3025,22 @@ function App() {
                 <MonitorUp size={18} />
                 Start interview overlay
               </button>
+              {selectedSetup === "live_coding" && (
+                <button className="status" onClick={() => void ask(getManualAnswerPrompt())} disabled={isGenerating}>
+                  <Sparkles size={16} />
+                  Answer
+                </button>
+              )}
+              {selectedSetup === "live_coding" && (
+                <button className="status" onClick={resetLiveCodingExercise}>
+                  <RotateCcw size={16} />
+                  New exercise
+                </button>
+              )}
+              <button className="status" onClick={resetFullSession}>
+                <Trash2 size={16} />
+                New session
+              </button>
               {isGenerating && (
                 <button className="status" onClick={cancelAnswer}>
                   <Square size={16} />
@@ -2936,6 +3048,26 @@ function App() {
                 </button>
               )}
             </div>
+            {selectedSetup === "live_coding" && (
+              <form
+                className="follow-up-change"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitFollowUpChange();
+                }}
+              >
+                <input
+                  value={followUpChange}
+                  onChange={(event) => setFollowUpChange(event.target.value)}
+                  placeholder="Request a change to the current solution..."
+                  disabled={!currentCodingPayload?.solution.code.trim() || isGenerating}
+                />
+                <button type="submit" disabled={!followUpChange.trim() || !currentCodingPayload?.solution.code.trim() || isGenerating}>
+                  <RefreshCw size={16} />
+                  Apply change
+                </button>
+              </form>
+            )}
             <div className="launch-includes">
               <span><Mic size={14} /> Starts listening</span>
               <span><Sparkles size={14} /> Auto-answer off by default</span>

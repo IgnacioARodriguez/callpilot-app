@@ -33,6 +33,7 @@ const uiNoisePatterns = [
   /\bthe image shows|screenshot of|the purpose of this image|features of the image\b/i,
   /\bvision summary|secondary; ignore if it conflicts with ocr|ignoredui\b/i,
   /\bplayback|controls|button reads|title:\s*viewing replay\b/i,
+  /\b(coderpad|run code|submit|reset code|invite|instructions|interview pad|execution output)\b/i,
 ];
 
 const technicalSignalPatterns = [
@@ -94,8 +95,8 @@ export const classifyScreenText = (visibleText: string): ScreenContext => {
   if (!text) return createEmptyScreenContext();
   const lower = text.toLowerCase();
   const scores: Record<ScreenKind, number> = {
-    coding_problem: score(lower, [/\bleetcode\b/, /\bexamples?\s*\d*\s*:/, /\bconstraints?\s*:/, /\binput\s*:.*\boutput\s*:/s]),
-    code_editor: score(text, [/\b(def|class|import|from|function|const|let|var|public|private)\b/, /\.(ts|tsx|js|jsx|py|java|cpp)\b/i, /[{};]\s*$/]),
+    coding_problem: score(lower, [/\bleetcode\b|\bcoderpad\b/, /\bexamples?\s*\d*\s*:/, /\bconstraints?\s*:/, /\binput\s*:.*\boutput\s*:/s, /\bwrite\s+a\s+(?:function|method)\b/]),
+    code_editor: score(text, [/\b(def|class|import|from|function|const|let|var|public|private)\b/, /\.(ts|tsx|js|jsx|py|java|cpp)\b/i, /[{};]\s*$/, /\bRun Code\b|\bCoderPad\b/i]),
     system_design_diagram: score(lower, [/\barchitecture\b|\bsystem design\b/, /\bqueue\b|\bkafka\b/, /\bcache\b|\bredis\b/, /\bdatabase\b|\bshard\b/, /->|-->|=>/]),
     documentation: score(lower, [/\bapi reference\b|\bdocumentation\b|\bdocs\b/, /\bparameters\b|\breturns\b/, /\binstallation\b|\bquickstart\b/, /\bendpoint\b|\bhttp\b/]),
     meeting_transcript: score(text, [/^\s*\d{1,2}:\d{2}(?::\d{2})?\s+/m, /^\s*(?!Input|Output|Example|Constraints)[A-Z][A-Za-z ]{1,30}:\s+.+/m, /\baction items?\b|\bdecisions?\b|\bfollow[- ]?ups?\b/i]),

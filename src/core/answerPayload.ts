@@ -182,6 +182,10 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 const asString = (value: unknown): string => typeof value === "string" ? value.trim() : "";
+const normalizeCodeString = (value: unknown): string => asString(value)
+  .replace(/\\n/g, "\n")
+  .replace(/\\"/g, "\"")
+  .replace(/=\s*\(0,\s*"\)"\s*$/gm, '= (0, "")');
 const stripLeadingLabel = (value: string): string =>
   value.replace(/^\s*(?:\*\*)?(respuesta|answer|para\s+d[\p{L}]+|correccion|corrección|enfoque|approach)(?:\*\*)?\s*:\s*/iu, "").trim();
 const asNullableString = (value: unknown): string | null => {
@@ -199,6 +203,30 @@ const splitSentences = (value: string): string[] =>
     .split(/(?<=[.!?])\s+/)
     .map((sentence) => sentence.trim())
     .filter(Boolean);
+
+const compactCodingNarration = (value: string): string => {
+  const compact = splitSentences(value).slice(0, 2).join(" ") || value;
+  const words = compact.split(/\s+/).filter(Boolean);
+  return words.length > 45 ? `${words.slice(0, 45).join(" ").replace(/[,:;]$/, "")}.` : compact;
+};
+
+const ensureInlineCodeComment = (code: string, language: string): string => {
+  const lines = code.split(/\n/);
+  if (lines.length < 3 || /(^|\n)\s*(#|\/\/|\/\*|\*)\s+\S/.test(code)) return code;
+  const isPython = !language || /\bpython\b/i.test(language);
+  const marker = isPython ? "#" : "//";
+  const defIndex = lines.findIndex((line) => /^\s*(def|class)\s+\w+/.test(line));
+  const insertAfter = defIndex >= 0 ? defIndex : 0;
+  const nextIndent = lines[insertAfter + 1]?.match(/^\s*/)?.[0] ?? "    ";
+  const indent = isPython && defIndex >= 0 && nextIndent.length <= (lines[insertAfter].match(/^\s*/)?.[0].length ?? 0)
+    ? `${nextIndent}    `
+    : nextIndent;
+  return [
+    ...lines.slice(0, insertAfter + 1),
+    `${indent}${marker} Core interview solution step.`,
+    ...lines.slice(insertAfter + 1),
+  ].join("\n");
+};
 
 const repairMalformedMarkdownLabels = (value: string): string =>
   value
@@ -358,12 +386,21 @@ const extractJsonObject = (text: string): unknown | null => {
       const closeBraces = (prefix.match(/}/g) ?? []).length;
       return `${prefix}${"}".repeat(Math.max(0, openBraces - closeBraces))}`;
     };
+    const replaceTruncatedCodingPatch = (input: string) => {
+      const patchIndex = input.lastIndexOf(",\"patch\":");
+      if (patchIndex < 0 || !/"kind"\s*:\s*"coding"/.test(input.slice(0, patchIndex))) return input;
+      const prefix = input.slice(0, patchIndex);
+      if (!/"solution"\s*:/.test(prefix) || !/"narration"\s*:/.test(prefix)) return input;
+      return `${prefix},"patch":{"kind":"none","code":null}}}`;
+    };
     const repairs = [
       value,
       quoteBareIntent(value),
       quoteBareIntent(value.replace(/`,\s*"/g, "\", \"")),
       stripTrailingNumericFields(quoteBareIntent(value)),
       stripTrailingNumericFields(quoteBareIntent(value.replace(/`,\s*"/g, "\", \""))),
+      replaceTruncatedCodingPatch(quoteBareIntent(value)),
+      replaceTruncatedCodingPatch(stripTrailingNumericFields(quoteBareIntent(value))),
     ];
     for (const repaired of repairs) {
       try {
@@ -429,23 +466,33 @@ export const parseInterviewAnswerPayload = (value: unknown): InterviewAnswerPayl
   };
 };
 
-export const parseCodingAnswerPayload = (value: unknown): CodingAnswerPayload | null => {
+export const parseCodingAnswerPayload = (value: unknown, options: { allowEmpty?: boolean } = {}): CodingAnswerPayload | null => {
   const record = asRecord(value);
   if (!record) return null;
   const solution = asRecord(record.solution);
   const narration = asRecord(record.narration) ?? {};
   if (!solution) return null;
-  const spokenAnswer = asString(narration.spokenAnswer) || asString(record.spokenAnswer);
-  const code = asString(solution.code);
-  if (!spokenAnswer && !code) return null;
+  const rawSpokenAnswer = asString(narration.spokenAnswer) || asString(record.spokenAnswer);
   const problem = asRecord(record.problem) ?? {};
+  const code = ensureInlineCodeComment(normalizeCodeString(solution.code), asString(problem.language) || "Python");
+  if (!rawSpokenAnswer && !code && !options.allowEmpty) return null;
   const complexity = asRecord(solution.complexity) ?? {};
   const patch = asRecord(record.patch) ?? {};
   const responseType = asString(record.responseType);
   const normalizedResponseType = ["initial_solution", "explanation", "follow_up_change", "debug_fix", "clarification"].includes(responseType)
     ? responseType as CodingAnswerPayload["responseType"]
     : "explanation";
+  const spokenAnswer = compactCodingNarration(rawSpokenAnswer
+    || (normalizedResponseType === "follow_up_change" && code ? "Updated the solution with the requested change." : "")
+    || (code ? "Here is the commented solution." : ""));
   const patchKind = asString(patch.kind);
+  const explicitPatchCode = normalizeCodeString(patch.code) || null;
+  const inferredPatch = normalizedResponseType === "follow_up_change" && patchKind !== "replace" && patchKind !== "diff" && code
+    ? { kind: "replace" as const, code }
+    : {
+      kind: patchKind === "replace" || patchKind === "diff" ? patchKind as "replace" | "diff" : "none" as const,
+      code: explicitPatchCode,
+    };
   return {
     version: "1",
     answerNeeded: asBoolean(record.answerNeeded, true),
@@ -483,8 +530,8 @@ export const parseCodingAnswerPayload = (value: unknown): CodingAnswerPayload | 
       }).filter((test) => test.input || test.expected).slice(0, 5)
       : [],
     patch: {
-      kind: patchKind === "replace" || patchKind === "diff" ? patchKind : "none",
-      code: asNullableString(patch.code),
+      kind: inferredPatch.kind,
+      code: inferredPatch.code,
     },
   };
 };
@@ -550,7 +597,7 @@ export const parseStructuredAnswerPayload = (text: string): StructuredAnswerPayl
   const record = asRecord(value);
   const explicitKind = asString(record?.kind);
   if (explicitKind === "coding") {
-    const coding = parseCodingAnswerPayload(record?.payload ?? record);
+    const coding = parseCodingAnswerPayload(record?.payload ?? record, { allowEmpty: true });
     return coding ? { kind: "coding", payload: coding } : null;
   }
   if (explicitKind === "interview") {

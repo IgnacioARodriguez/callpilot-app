@@ -974,7 +974,7 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
       ? "\nReturn only one valid JSON object that matches the structured answer contract in output_format. Do not wrap it in markdown, do not add prose before or after the JSON, and keep all required keys present."
       : "";
     const liveSpokenSystemSuffix = liveSpokenOutput
-      ? "\nLive interview response mode: ignore any output_format or JSON contract above. Return concise spoken text only, with no markdown, no JSON, no headings, no code block unless code is explicitly requested. Start with the answer immediately. Keep it interview-ready and under 120 words unless the user specifically asked for code."
+      ? "\nLive interview response mode: ignore any output_format or JSON contract above. Return concise spoken text only, with no JSON and no decorative headings. For live coding, include commented code when a concrete solution or change is useful; otherwise start with the spoken answer immediately. Keep non-code narration interview-ready and under 120 words."
       : "";
     const buildBody = (includeResponseFormat, stream = false) => JSON.stringify({
       model: modelName,
@@ -1177,7 +1177,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
     const liveSpokenOutput = Boolean(input?.liveSpokenOutput) && !input?.structuredOutput;
     const requestPrompt = liveSpokenOutput ? buildLiveSpokenPrompt(prompt) : prompt;
     const liveSpokenSystemSuffix = liveSpokenOutput
-      ? "\nLive interview response mode: ignore any output_format or JSON contract above. Return concise spoken text only, with no markdown, no JSON, no headings, no code block unless code is explicitly requested. Start with the answer immediately. Keep it interview-ready and under 120 words unless the user specifically asked for code."
+      ? "\nLive interview response mode: ignore any output_format or JSON contract above. Return concise spoken text only, with no JSON and no decorative headings. For live coding, include commented code when a concrete solution or change is useful; otherwise start with the spoken answer immediately. Keep non-code narration interview-ready and under 120 words."
       : "";
     const requestBase = {
       model: modelName,

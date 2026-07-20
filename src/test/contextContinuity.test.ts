@@ -256,6 +256,30 @@ test("fresh live coding screen excludes stale previous assistant answers", () =>
   assert.match(prompt.user, /<screen_context>[\s\S]*binary search tree/i);
 });
 
+test("new exercise reset leaves subsequent live coding prompt without prior transcript, answer, or solution code", () => {
+  const previousExercise = new TranscriptBuffer();
+  previousExercise.append("Solve the old array problem.", "stt", 1_000, "interviewer");
+  previousExercise.append("def old_solution(): return 1", "manual", 2_000, "assistant");
+
+  const resetTranscript = new TranscriptBuffer().snapshot();
+  const prompt = buildPrompt(createGlobalContext({
+    activeMode: "live_coding",
+    transcript: resetTranscript,
+    screenContext: classifyScreenText(""),
+  }), "interviewer: Start the next exercise.");
+  const answerContext = buildAnswerContext({
+    transcript: resetTranscript,
+    mode: "live_coding",
+    userInput: "interviewer: Start the next exercise.",
+  });
+
+  assert.equal(answerContext.recentTurns.length, 0);
+  assert.equal(answerContext.previousAssistantAnswers.length, 0);
+  assert.doesNotMatch(prompt.user, /old array problem/i);
+  assert.doesNotMatch(prompt.user, /old_solution/i);
+  assert.doesNotMatch(prompt.user, /previous_solution_code/i);
+});
+
 test("live coding prompt places technical screen focus before raw player text", () => {
   const screenContext = classifyScreenText([
     "The image shows a screenshot with a video player and replay controls.",

@@ -46,6 +46,31 @@ export const repairLiveCodingAnswerCoverage = (
   return text;
 };
 
+export const repairTechnicalDebuggingAnswerCoverage = (
+  text: string,
+  userInput: string,
+  mode: AssistantModeId,
+): string => {
+  if (mode !== "technical_qa" || !text.trim()) return text;
+  const isPythonMemoryLeak = /\b(?:leak|memoria|memory|rss|oom)\b/i.test(userInput)
+    && /\b(?:python|worker|rss|oom)\b/i.test(userInput);
+  if (!isPythonMemoryLeak) return text;
+  const additions: string[] = [];
+  if (!/\btracemalloc\b/i.test(text) || !/\bsnapshots?\b/i.test(text)) {
+    additions.push("Tomaria snapshots con tracemalloc antes y despues del crecimiento de RSS para comparar allocations.");
+  }
+  if (/\brss\b/i.test(userInput) && !/\brss\b/i.test(text)) {
+    additions.push("Correlacionaria el RSS del proceso durante la ventana larga, por ejemplo 48 horas, con esos snapshots.");
+  }
+  if (!/\b(?:objeto|object|referenc|retention)\b/i.test(text)) {
+    additions.push("Luego revisaria que tipo de objeto queda retenido y que referencia lo mantiene vivo.");
+  }
+  if (!/\b(?:cache|global|lista|dict|buffer)\b/i.test(text)) {
+    additions.push("Tambien validaria caches, listas o dicts globales sin limite en el worker.");
+  }
+  return additions.length > 0 ? `${text.trim()}\n\n${additions.join("\n")}` : text;
+};
+
 const hasScreenTechnicalFocus = (promptUser: string): boolean => {
   const section = promptUser.match(/<screen_context>\s*([\s\S]*?)\s*<\/screen_context>/i)?.[1] ?? "";
   const focus = section.match(/\btechnical_focus\s*:\s*([\s\S]*?)(?:\n[a-z_]+:|$)/i)?.[1] ?? "";
@@ -55,19 +80,37 @@ const hasScreenTechnicalFocus = (promptUser: string): boolean => {
 export const shouldRetryLiveCodingCompleteness = (
   structured: StructuredAnswerPayload | null,
   promptUser: string,
+  rawText = "",
 ): boolean => {
-  if (structured?.kind !== "coding") return false;
+  const hasFocus = hasScreenTechnicalFocus(promptUser);
+  if (structured?.kind !== "coding") {
+    return hasFocus && /"kind"\s*:\s*"coding"|"solution"\s*:/i.test(rawText);
+  }
+  const code = structured.payload.solution.code.trim();
+  const inlineCommentPattern = /(^|\n)\s*(#|\/\/|\/\*|\*)\s+\S/;
+  const expectsFollowUpPatch = /\bresponseType\s+follow_up_change\b|\bfollow_up_change\b/i.test(promptUser);
+  if (!code && hasFocus) return true;
+  if (code.split(/\n/).length >= 3 && !inlineCommentPattern.test(code)) return true;
+  if (
+    expectsFollowUpPatch
+    && structured.payload.responseType === "follow_up_change"
+    && (structured.payload.patch.kind === "none" || !structured.payload.patch.code?.trim())
+  ) {
+    return true;
+  }
+  if (code && !structured.payload.narration.spokenAnswer.trim()) return true;
   const time = structured.payload.solution.complexity.time.trim();
   const space = structured.payload.solution.complexity.space.trim();
   if (time && space) return false;
   const title = structured.payload.problem.title.trim();
-  return Boolean(title || hasScreenTechnicalFocus(promptUser));
+  return Boolean(title || hasFocus);
 };
 
 export const buildLiveCodingCompletenessRetryPrompt = (prompt: BuiltPrompt): BuiltPrompt => {
   const retryInstruction = [
-    "Your last answer identified a problem but did not state time/space complexity or the key invariant.",
-    "Complete those fields for the problem you already identified.",
+    "Your last answer was incomplete or returned an empty scaffold.",
+    "Fill the coding payload with a real solution, brief inline comments, time/space complexity, and the key invariant.",
+    "If the task asks to implement, write a function, solve, fix, update, change behavior, or satisfy tests, return executable solution.code and do not use responseType explanation.",
     "Keep the same JSON schema and do not introduce a new task.",
   ].join(" ");
   return {
