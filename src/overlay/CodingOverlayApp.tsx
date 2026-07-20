@@ -1,6 +1,6 @@
 import React from "react";
 import { Camera } from "lucide-react";
-import { normalizeOcrLanguage, ocrConfidenceLabel, type CodingAnswerPayload, type StructuredAnswerPayload } from "../core";
+import { classifyScreenText, normalizeOcrLanguage, ocrConfidenceLabel, type CodingAnswerPayload, type StructuredAnswerPayload } from "../core";
 
 interface StructuredAnswerEvent {
   requestId?: string;
@@ -73,7 +73,9 @@ export default function CodingOverlayApp() {
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onScreenContextPublished?.((event) => {
       if (event.source !== "coding_overlay") return;
-      setScreenStatus(event.visibleText?.trim() ? "Screenshot ready for Answer" : "Screenshot saved without readable text");
+      const classified = classifyScreenText(event.visibleText ?? "");
+      const hasCodingSignal = classified.kind === "coding_problem" || classified.kind === "code_editor";
+      setScreenStatus(hasCodingSignal ? "Screenshot ready for Answer" : "No coding problem detected");
     });
     return () => dispose?.();
   }, []);
@@ -92,7 +94,7 @@ export default function CodingOverlayApp() {
     setScreenStatus("Capturing screen...");
     try {
       const capturedAt = Date.now();
-      const screenshot = await window.callpilotDesktop.captureScreenshot();
+      const screenshot = await window.callpilotDesktop.captureScreenshot({ hideCallPilotWindows: true });
       if (!screenshot.ok || !screenshot.path) {
         setScreenStatus(`Screenshot failed: ${screenshot.error ?? "unknown"}`);
         return;
@@ -109,6 +111,8 @@ export default function CodingOverlayApp() {
           ? `Local OCR: ${ocr.language} - confidence ${ocrConfidenceLabel(ocr.confidence)}${typeof ocr.confidence === "number" ? ` (${ocr.confidence.toFixed(1)})` : ""}`
           : `Local OCR failed: ${ocr.error ?? "no text found"}`,
       ].filter(Boolean).join("\n\n");
+      const classified = classifyScreenText(ocr.ok && ocr.text ? ocr.text : "");
+      const hasCodingSignal = classified.kind === "coding_problem" || classified.kind === "code_editor";
       const published = await window.callpilotDesktop.publishScreenContext({
         screenshotPath: screenshot.path,
         visibleText,
@@ -117,7 +121,7 @@ export default function CodingOverlayApp() {
         capturedAt,
       });
       setScreenStatus(published.ok
-        ? ocr.ok && ocr.text ? "Screenshot ready for Answer" : "Screenshot saved without readable text"
+        ? hasCodingSignal ? "Screenshot ready for Answer" : "No coding problem detected"
         : `Context update failed: ${published.error ?? "unknown"}`);
     } catch (error) {
       setScreenStatus(error instanceof Error ? error.message : "Screenshot capture failed");

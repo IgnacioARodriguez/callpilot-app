@@ -133,7 +133,7 @@ declare global {
       applyShareSafe: () => Promise<StealthState>;
       resetPrivacy: () => Promise<StealthState>;
       runPrivacyCheck: () => Promise<PrivacyCheckResult>;
-      captureScreenshot: (input?: { preferWindowTitle?: string; strictWindowTitle?: boolean }) => Promise<ScreenshotResult>;
+      captureScreenshot: (input?: { preferWindowTitle?: string; strictWindowTitle?: boolean; hideCallPilotWindows?: boolean }) => Promise<ScreenshotResult>;
       recognizeScreenText: (input: { path: string; language?: OcrLanguage | "auto" | "english" | "spanish" }) => Promise<OcrResult>;
       analyzeScreenshot: (input: { path: string; modelName: string; provider?: "openai" | "nvidia"; apiKey?: string; nvidiaApiKey?: string }) => Promise<ScreenAnalysisResult>;
       publishScreenContext: (payload: PublishScreenContextInput) => Promise<PublishScreenContextResult>;

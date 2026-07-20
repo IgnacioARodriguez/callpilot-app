@@ -256,6 +256,27 @@ test("fresh live coding screen excludes stale previous assistant answers", () =>
   assert.match(prompt.user, /<screen_context>[\s\S]*binary search tree/i);
 });
 
+test("fresh live coding screen excludes assistant answers from before the screenshot", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Use three pointers to reverse the previous list.", "manual", 950_000, "assistant");
+  const screenContext = classifyScreenText([
+    "def hello():",
+    "    return \"hello\"",
+    "debe retornar el nombre del usuario",
+  ].join("\n"));
+  screenContext.capturedAt = 1_000_000;
+
+  const answerContext = buildAnswerContext({
+    transcript: transcript.snapshot(),
+    mode: "live_coding",
+    screenContext,
+    now: 1_000_100,
+  });
+
+  assert.equal(answerContext.trace.previousAnswerIncluded, false);
+  assert.equal(answerContext.previousAssistantAnswers.length, 0);
+});
+
 test("new exercise reset leaves subsequent live coding prompt without prior transcript, answer, or solution code", () => {
   const previousExercise = new TranscriptBuffer();
   previousExercise.append("Solve the old array problem.", "stt", 1_000, "interviewer");

@@ -1812,6 +1812,26 @@ const sendToSessionWindows = (channel, payload) => {
   codingWindow?.webContents.send(channel, payload);
 };
 
+const temporarilyHideSessionWindows = async (callback) => {
+  const windows = [overlayWindow, codingWindow]
+    .filter((windowRef) => windowRef && !windowRef.isDestroyed());
+  const visibleStates = windows.map((windowRef) => windowRef.isVisible());
+  for (const windowRef of windows) {
+    if (windowRef.isVisible()) windowRef.hide();
+  }
+  if (windows.some((_windowRef, index) => visibleStates[index])) {
+    await sleep(140);
+  }
+  try {
+    return await callback();
+  } finally {
+    windows.forEach((windowRef, index) => {
+      if (visibleStates[index] && !windowRef.isDestroyed()) windowRef.showInactive();
+    });
+    syncWindowState();
+  }
+};
+
 const createWindow = async () => {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -2377,7 +2397,10 @@ ipcMain.handle("screen:capture", async (_event, input) => {
     const preferWindowTitle = typeof input?.preferWindowTitle === "string" ? input.preferWindowTitle.trim().toLowerCase() : "";
     const strictWindowTitle = Boolean(input?.strictWindowTitle);
     const sourceTypes = preferWindowTitle ? ["window", "screen"] : ["screen"];
-    const sources = await desktopCapturer.getSources({ types: sourceTypes, thumbnailSize: { width: 1600, height: 1000 } });
+    const hideCallPilotWindows = Boolean(input?.hideCallPilotWindows);
+    const sources = await (hideCallPilotWindows
+      ? temporarilyHideSessionWindows(() => desktopCapturer.getSources({ types: sourceTypes, thumbnailSize: { width: 1600, height: 1000 } }))
+      : desktopCapturer.getSources({ types: sourceTypes, thumbnailSize: { width: 1600, height: 1000 } }));
     const sourceNames = sources.map((item) => sanitizeCaptureSourceName(item.name)).filter(Boolean).slice(0, 40);
     const preferredWindowSource = preferWindowTitle
       ? sources.find((item) => item.id?.startsWith("window:") && String(item.name || "").toLowerCase().includes(preferWindowTitle))
@@ -2411,6 +2434,7 @@ ipcMain.handle("screen:capture", async (_event, input) => {
       durationMs: Date.now() - startedAt,
       displayName: source.name,
       preferredWindowTitle: preferWindowTitle || undefined,
+      hideCallPilotWindows,
       bytes: png.length,
       fileName: path.basename(filePath),
     });

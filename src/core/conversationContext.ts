@@ -125,6 +125,11 @@ const freshnessCutoffForScreen = (mode: AssistantModeId, screenContext?: ScreenC
   return Math.max(0, screenContext.capturedAt - LIVE_CODING_SCREEN_FRESHNESS_WINDOW_MS);
 };
 
+const previousAssistantCutoffForScreen = (mode: AssistantModeId, screenContext?: ScreenContext): number | null => {
+  if (!hasFreshCodingScreen(mode, screenContext) || typeof screenContext?.capturedAt !== "number") return null;
+  return screenContext.capturedAt;
+};
+
 const chooseCurrentQuestion = (turns: ConversationTurn[], manualInput: string, now: number, cutoffTimestamp: number | null): ConversationTurn => {
   const manual = manualQuestionTurn(manualInput, now);
   if (manual) return manual;
@@ -166,6 +171,7 @@ export const buildAnswerContext = (
   const maxContextChars = input.maxContextChars ?? MAX_CONTEXT_CHARS;
   const allTurns = dedupeCumulativeTurns(toConversationTurns(input.transcript));
   const freshnessCutoff = freshnessCutoffForScreen(input.mode, input.screenContext);
+  const previousAssistantCutoff = previousAssistantCutoffForScreen(input.mode, input.screenContext);
   const currentQuestion = chooseCurrentQuestion(allTurns, input.userInput ?? "", now, freshnessCutoff);
   const sameCurrentTurnIds = new Set(
     allTurns
@@ -175,7 +181,7 @@ export const buildAnswerContext = (
   const conversationTurns = allTurns.filter((turn) => !sameCurrentTurnIds.has(turn.id));
   const previousAssistantAnswers = conversationTurns
     .filter((turn) => turn.role === "assistant" && turn.source === "generated" && !isFiller(turn))
-    .filter((turn) => freshnessCutoff === null || turn.createdAt >= freshnessCutoff)
+    .filter((turn) => previousAssistantCutoff === null || turn.createdAt >= previousAssistantCutoff)
     .slice(-maxPreviousAssistantAnswers);
   let recentTurns = conversationTurns
     .filter((turn) => turn.role !== "assistant")
