@@ -17,6 +17,7 @@
     "test": "node --experimental-strip-types --test \"src/test/*.test.ts\"",
     "test:protected-assets": "node scripts/check-protected-test-assets.mjs",
     "test:eval-datasets": "node scripts/check-eval-datasets.mjs",
+    "prepare:eval-dataset": "node scripts/prepare-external-eval-dataset.mjs",
     "generate:eval-mutations": "node scripts/generate-eval-mutations.mjs",
     "score:eval-records": "node scripts/score-eval-records.mjs",
     "test:e2e:subset": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=all",

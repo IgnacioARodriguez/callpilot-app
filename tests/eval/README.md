@@ -37,6 +37,14 @@ Splits are by complete interview/session, never by checkpoint.
 Put validation or holdout media in a directory outside this repository, then run:
 
 ```powershell
+npm run prepare:eval-dataset -- --split=validation --dir="D:\callpilot-eval\validation" --dataset=backend-interviews-v1
+```
+
+The preparation command creates `_incoming`, `reports`, `dataset-policy.json`,
+and a split-specific `WORKFLOW.md` in the external directory. It rejects paths
+inside the repository.
+
+```powershell
 $env:CALLPILOT_EVAL_VALIDATION_DIR="D:\callpilot-eval\validation"
 node tests/local-video-analysis/analyzeLocalVideo.cjs --split=validation --dataset=backend-interviews-v1 --source-id=interview-001 --video="D:\callpilot-eval\validation\interview-001\interview.mp4"
 ```
