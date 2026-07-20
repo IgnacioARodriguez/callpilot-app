@@ -459,6 +459,22 @@ test("acceptance: live coding controls separate exercise reset from full session
   assert.match(app, />\s*New session\s*</);
 });
 
+test("acceptance: session start clears stale live transcription streams", () => {
+  const app = read("src/main.tsx");
+  const startSessionStart = app.indexOf("const startSession = React.useCallback");
+  const startSessionEnd = app.indexOf("const stopMicRecording", startSessionStart);
+  const startSessionBody = app.slice(startSessionStart, startSessionEnd);
+  const toggleStart = app.indexOf("const toggleDictation = async");
+  const toggleEnd = app.indexOf("const startSession = React.useCallback", toggleStart);
+  const toggleBody = app.slice(toggleStart, toggleEnd);
+
+  assert.ok(startSessionStart > 0, "startSession helper must exist");
+  assert.match(startSessionBody, /stopLiveRecording\(\)[\s\S]*resetSessionRuntimeContext\(\)/);
+  assert.match(toggleBody, /if\s*\(forceStart\)\s*{\s*stopLiveRecording\(\);/);
+  assert.match(app, /local_stt_started/);
+  assert.match(app, /local_stt_blob_received/);
+});
+
 test("acceptance: live coding prompt includes problem, solution intent, and coding screen context", () => {
   const visibleText = [
     "Two Sum",

@@ -1805,6 +1805,12 @@ function App() {
 
   const transcribeLocalBlob = async (blob: Blob, speaker: TranscriptSpeaker = "interviewer", channelId = "default") => {
     if (!blob.size) return;
+    void window.callpilotDesktop?.recordSessionEvent?.("local_stt_blob_received", {
+      channelId,
+      speaker,
+      bytes: blob.size,
+      mimeType: blob.type || "unknown",
+    });
     enqueueLocalSttBlob(channelId, blob, speaker);
     if (localSttBusyByIdRef.current.has(channelId)) return;
     localSttBusyByIdRef.current.add(channelId);
@@ -1816,9 +1822,22 @@ function App() {
         if (audio.length < 1600) continue;
         const energy = audioEnergy(audio);
         if (energy.rms < 0.0035 && energy.peak < 0.035) {
+          void window.callpilotDesktop?.recordSessionEvent?.("local_stt_silence_ignored", {
+            channelId,
+            speaker: next.speaker,
+            rms: energy.rms,
+            peak: energy.peak,
+          });
           setDesktopStatus("Local Whisper ignored silence");
           continue;
         }
+        void window.callpilotDesktop?.recordSessionEvent?.("local_stt_transcription_started", {
+          channelId,
+          speaker: next.speaker,
+          samples: audio.length,
+          rms: energy.rms,
+          peak: energy.peak,
+        });
         const recognizer = await getLocalSttPipeline() as (audio: Float32Array, options?: Record<string, unknown>) => Promise<{ text?: string }>;
         const language = preferredLanguage === "spanish" ? "spanish" : preferredLanguage === "english" ? "english" : undefined;
         const result = await recognizer(audio, {
@@ -1828,6 +1847,12 @@ function App() {
           ...(language ? { language } : {}),
         });
         const text = typeof result?.text === "string" ? result.text.trim() : "";
+        void window.callpilotDesktop?.recordSessionEvent?.("local_stt_transcription_completed", {
+          channelId,
+          speaker: next.speaker,
+          kept: shouldKeepTranscriptText(text),
+          text,
+        });
         if (shouldKeepTranscriptText(text)) {
           handleFinalTranscript(text, "stt", next.speaker);
           setDesktopStatus("Local Whisper transcribed queued audio");
@@ -1836,6 +1861,10 @@ function App() {
         }
       }
     } catch (error) {
+      void window.callpilotDesktop?.recordSessionEvent?.("local_stt_transcription_failed", {
+        channelId,
+        error: error instanceof Error ? error.message : "local_stt_failed",
+      });
       setDesktopStatus(error instanceof Error ? `Local STT failed: ${error.message}` : "Local STT failed");
     } finally {
       localSttBusyByIdRef.current.delete(channelId);
@@ -1849,6 +1878,12 @@ function App() {
     }
     try {
       const channels = await requestLiveAudioStreams();
+      void window.callpilotDesktop?.recordSessionEvent?.("local_stt_started", {
+        reason,
+        audioSource: liveAudioSource,
+        channels: channels.map((channel) => ({ speaker: channel.speaker, label: channel.label })),
+        chunkMs: liveChunkMs(),
+      });
       liveStreamsRef.current = channels.map((channel) => channel.stream);
       liveContinueRef.current = true;
 
@@ -2054,6 +2089,9 @@ function App() {
       stopLiveRecording();
       return;
     }
+    if (forceStart) {
+      stopLiveRecording();
+    }
 
     if (liveTranscriptionProvider === "browser" && (liveAudioSource === "system" || liveAudioSource === "both")) {
       setLiveTranscriptionProvider("local");
@@ -2153,11 +2191,11 @@ function App() {
       setDesktopStatus("Overlay requires desktop mode");
       return;
     }
+    stopLiveRecording();
     resetSessionRuntimeContext();
     applyInterviewSetup(selectedSetup);
     autoAnswerEnabledRef.current = false;
     setAutoAnswerEnabled(false);
-    if (isDictating) stopLiveRecording();
     await toggleDictation(true);
     const result = await window.callpilotDesktop.startSession({ mode: selectedSetup === "live_coding" ? "live_coding" : "technical_qa" });
     if (result.ok) {
@@ -2169,7 +2207,7 @@ function App() {
     } else {
       setDesktopStatus(`Overlay failed: ${result.error ?? "unknown"}`);
     }
-  }, [applyInterviewSetup, isDictating, resetSessionRuntimeContext, selectedSetup, toggleDictation]);
+  }, [applyInterviewSetup, resetSessionRuntimeContext, selectedSetup, toggleDictation]);
 
   const stopMicRecording = () => {
     mediaRecorderRef.current?.stop();
