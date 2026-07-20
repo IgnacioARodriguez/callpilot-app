@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -21,6 +21,7 @@ const {
   createEvaluationRecord,
   summarizeEvaluationRecords,
 } = require("../tests/eval/evaluationContract.cjs");
+const { scoreExecutableRecord } = require("../tests/eval/scorers/executableScorers.cjs");
 loadDotEnv(root);
 const electronBin = process.platform === "win32"
   ? path.join(root, "node_modules", "electron", "dist", "electron.exe")
@@ -1163,42 +1164,22 @@ const defaultModelName = (provider, savedModel) => {
 };
 
 const runPythonAssertions = (code, assertions = []) => {
-  if (!assertions.length) return { required: false, ok: true, passed: 0, total: 0, error: "" };
-  if (!code.trim()) {
-    return { required: true, ok: false, passed: 0, total: assertions.length, error: "missing_code" };
-  }
-  const assertionBody = assertions.map((assertion, index) => {
-    if (assertion.python) return `# assertion ${index + 1}\n${assertion.python}`;
-    return "";
-  }).filter(Boolean).join("\n\n");
-  const script = [
-    code,
-    "",
-    "def __callpilot_assert_equal(actual, expected):",
-    "    if actual != expected:",
-    "        raise AssertionError(f'expected {expected!r}, got {actual!r}')",
-    "",
-    assertionBody,
-  ].join("\n");
-  const pythonBin = process.env.CALLPILOT_PYTHON || process.env.PYTHON || "python";
-  const result = spawnSync(pythonBin, ["-c", script], {
+  if (!assertions.length) return { required: false, ok: true, passed: 0, total: 0, error: "", scorer: null };
+  const result = scoreExecutableRecord({ parsed_output: { kind: "coding", payload: { solution: { code } } } }, {
+    language: "python",
+    public_tests: assertions,
+    timeout_ms: 5000,
     cwd: root,
-    encoding: "utf8",
-    timeout: 5000,
-    windowsHide: true,
   });
-  const timedOut = result.error?.code === "ETIMEDOUT";
-  const error = [
-    timedOut ? "python_assertions_timeout" : result.error?.message || "",
-    result.stderr || "",
-    result.stdout || "",
-  ].filter(Boolean).join("\n").trim();
+  const total = result.public_tests?.total ?? assertions.length;
   return {
     required: true,
-    ok: result.status === 0 && !result.error,
-    passed: result.status === 0 && !result.error ? assertions.length : 0,
-    total: assertions.length,
-    error: error.slice(0, 1200),
+    ok: result.ok,
+    passed: result.public_tests?.passed ?? (result.ok ? total : 0),
+    total,
+    error: String(result.error || "").slice(0, 1200),
+    timedOut: Boolean(result.timeout),
+    scorer: result,
   };
 };
 

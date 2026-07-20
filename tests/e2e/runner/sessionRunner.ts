@@ -171,6 +171,7 @@ const root = path.resolve(__dirname, "../../..");
 const require = createRequire(import.meta.url);
 const { loadDotEnv } = require("../../../electron/env.cjs");
 const { createEvaluationRecord, summarizeEvaluationRecords } = require("../../eval/evaluationContract.cjs");
+const { scoreExecutableRecord } = require("../../eval/scorers/executableScorers.cjs");
 loadDotEnv(root);
 
 const fixturesDir = path.join(root, "tests", "fixtures");
@@ -596,30 +597,20 @@ const runCodingFixtureValidation = (): RunResult[] => {
 
 const runPythonAssertions = (code: string, assertions: string[]) => {
   fs.mkdirSync(tmpDir, { recursive: true });
-  const scriptPath = path.join(tmpDir, `python-objective-${Date.now()}-${Math.random().toString(36).slice(2)}.py`);
-  const script = [
-    code.trim(),
-    "",
-    ...assertions,
-    "",
-  ].join("\n");
-  fs.writeFileSync(scriptPath, script, "utf8");
-  try {
-    const result = spawnSync(process.env.PYTHON || "python", [scriptPath], {
-      cwd: tmpDir,
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    return {
-      ok: result.status === 0,
-      status: result.status,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      timedOut: Boolean(result.error && /timed?out/i.test(result.error.message)),
-    };
-  } finally {
-    fs.rmSync(scriptPath, { force: true });
-  }
+  const result = scoreExecutableRecord({ parsed_output: { kind: "coding", payload: { solution: { code } } } }, {
+    language: "python",
+    public_tests: assertions,
+    timeout_ms: 5000,
+    cwd: tmpDir,
+  });
+  return {
+    ok: result.ok,
+    status: result.ok ? 0 : 1,
+    stdout: result.stdout || "",
+    stderr: result.stderr || result.error || "",
+    timedOut: Boolean(result.timeout),
+    scorer: result,
+  };
 };
 
 const executablePythonAssertions = (turns: CodingTurn[]): string[] =>
