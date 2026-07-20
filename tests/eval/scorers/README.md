@@ -37,6 +37,12 @@ defaults to Python. It covers:
 Executable scorers must not encode expected prose answers. They should validate
 observable behavior from external validation or holdout datasets.
 
+## Evaluation Scoring
+
+`evaluationScoring.cjs` maps a versioned dataset case plus an
+`evaluationRecord` into the shared deterministic and executable scorer outputs.
+Use it from runners when producing the unified result contract.
+
 ## Pending
 
 - judge adapter.
