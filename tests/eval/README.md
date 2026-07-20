@@ -52,4 +52,8 @@ npm run build
 node tests/e2e/video-interview/localVideoInterviewRunner.cjs --split=validation --dataset-dir="D:\callpilot-eval\validation" --manifest="D:\callpilot-eval\validation\interview-001\<analysis-run>\manifest.json"
 ```
 
+Ingestion also writes `dataset.jsonl` next to the manifest. That file contains
+one versioned evaluation case per checkpoint and is safe to feed to future
+runners/scorers without copying raw media into the repository.
+
 The existing MP4/manifests generated during earlier iterations are always development fixtures. They must not be used as validation or holdout evidence.

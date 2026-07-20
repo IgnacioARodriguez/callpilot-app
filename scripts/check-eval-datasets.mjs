@@ -7,6 +7,10 @@ const {
   explicitSplitRoot,
   validateManifestSet,
 } = require("../tests/eval/datasetPolicy.cjs");
+const {
+  readDatasetJsonl,
+  validateDatasetCase,
+} = require("../tests/eval/datasetCases.cjs");
 
 const root = path.resolve(import.meta.dirname, "..");
 const splits = ["validation", "holdout"];
@@ -63,10 +67,30 @@ for (const split of splits) {
 }
 
 const checked = validateManifestSet({ root, entries });
+const checkedCases = [];
+for (const item of checked) {
+  const jsonlPath = path.join(path.dirname(item.manifestPath), "dataset.jsonl");
+  if (!fs.existsSync(jsonlPath)) continue;
+  const cases = readDatasetJsonl(jsonlPath);
+  for (const [index, datasetCase] of cases.entries()) {
+    const validation = validateDatasetCase(datasetCase);
+    if (!validation.ok) {
+      throw new Error(`Invalid dataset case in ${jsonlPath}:${index + 1}: ${validation.errors.join(", ")}`);
+    }
+    if (datasetCase.split !== item.metadata.split) {
+      throw new Error(`Dataset case split mismatch in ${jsonlPath}:${index + 1}.`);
+    }
+    if (datasetCase.source_id !== item.metadata.source_id) {
+      throw new Error(`Dataset case source_id mismatch in ${jsonlPath}:${index + 1}.`);
+    }
+    checkedCases.push({ jsonlPath, caseId: datasetCase.case_id });
+  }
+}
 
 console.log(JSON.stringify({
   status: checked.length > 0 ? "ok" : "skipped",
   checked_manifests: checked.length,
+  checked_cases: checkedCases.length,
   skipped,
   manifests: checked.map((item) => ({
     split: item.metadata.split,
@@ -76,4 +100,5 @@ console.log(JSON.stringify({
     fixture_class: item.metadata.fixture_class,
     manifest_path: item.manifestPath,
   })),
+  dataset_cases: checkedCases,
 }, null, 2));

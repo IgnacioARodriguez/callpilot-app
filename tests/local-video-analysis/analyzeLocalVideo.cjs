@@ -11,6 +11,7 @@ const {
   sourceIdFromPath,
   writeDatasetReadme,
 } = require("../eval/datasetPolicy.cjs");
+const { writeManifestDatasetJsonl } = require("../eval/datasetCases.cjs");
 
 const root = path.resolve(__dirname, "..", "..");
 const defaultVideo = process.env.CALLPILOT_E2E_VIDEO || "";
@@ -468,10 +469,19 @@ const main = async () => {
   });
   manifest.evaluation_dataset.content_hash = manifest.video.sha256;
   manifest.artifacts.review_html_path = writeReviewHtml(manifestPath, manifest);
+  manifest.artifacts.dataset_jsonl_path = path.join(outDir, "dataset.jsonl");
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const datasetJsonl = writeManifestDatasetJsonl({
+    root,
+    manifest,
+    manifestPath,
+    requested: datasetOptions,
+    outPath: manifest.artifacts.dataset_jsonl_path,
+  });
   writeMarkdownSummary(manifestPath, manifest);
   process.stdout.write(`${JSON.stringify({
     manifestPath,
+    datasetJsonlPath: datasetJsonl.filePath,
     summaryPath: path.join(outDir, "manifest-summary.md"),
     configTemplatePath: manifest.artifacts.video_config_template_path,
     reviewHtmlPath: manifest.artifacts.review_html_path,
