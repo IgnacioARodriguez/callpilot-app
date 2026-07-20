@@ -23,6 +23,7 @@
     "test:e2e:real-coding": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-coding",
     "test:e2e:real-coding-multiturn": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-coding-multiturn",
     "test:e2e:coderpad-multiturn": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-coding-multiturn --scenario=coderpad_longest_substring_multiturn --turns=1,2,3",
+    "test:e2e:coderpad-reset-flow": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-coding-reset-flow",
     "test:e2e:real-natively-interview": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-natively-interview",
     "test:e2e:real-text-interview": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-text-interview",
     "test:e2e:real-text-interview-batch": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-text-interview-batch",

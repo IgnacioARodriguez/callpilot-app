@@ -407,6 +407,10 @@ test("acceptance: CoderPad multi-turn E2E validates executable code per turn", (
   const pkg = read("package.json");
 
   assert.match(runner, /coderpad_longest_substring_multiturn/);
+  assert.match(runner, /coderpad_two_sum_reset_flow/);
+  assert.match(runner, /coderpad_rotate_matrix_after_reset/);
+  assert.match(runner, /real-coding-reset-flow/);
+  assert.match(runner, /clickButtonByText\(client,\s*"New exercise"\)/);
   assert.match(runner, /expected_function:\s*"length_of_longest_substring"/);
   assert.match(runner, /expectedPythonFunctionName/);
   assert.match(runner, /definesExpectedPythonFunction/);
@@ -414,6 +418,7 @@ test("acceptance: CoderPad multi-turn E2E validates executable code per turn", (
   assert.match(runner, /runPythonAssertions\(code,\s*assertions\)/);
   assert.match(runner, /current.*tuple|return both the length and one substring/s);
   assert.match(pkg, /test:e2e:coderpad-multiturn/);
+  assert.match(pkg, /test:e2e:coderpad-reset-flow/);
 });
 
 test("acceptance: live coding controls separate exercise reset from full session reset", () => {

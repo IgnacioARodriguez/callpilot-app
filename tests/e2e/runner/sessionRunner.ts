@@ -18,6 +18,7 @@ type Track =
   | "real-behavioral"
   | "real-coding"
   | "real-coding-multiturn"
+  | "real-coding-reset-flow"
   | "real-suite"
   | "real-vision"
   | "real-audio-track-d"
@@ -284,6 +285,99 @@ const builtinCodingScenarios = (): Array<CodingScenario & { fixturePath: string;
   ],
   critical_failure_categories: ["missing_code", "wrong_function_name", "lost_followup_state", "python_execution_failure"],
   notes: "Built-in CoderPad baseline kept outside protected fixture assets.",
+}, {
+  scenarioId: "coderpad_two_sum_reset_flow",
+  language: "python",
+  expected_function: "two_sum",
+  fixturePath: "builtin:coderpad_two_sum_reset_flow",
+  sourceKey: "builtin_coderpad",
+  starter_code: [
+    "def two_sum(nums, target):",
+    "    # Write your solution here",
+    "    pass",
+  ].join("\n"),
+  screen_context: [
+    "CoderPad",
+    "Two Sum",
+    "Python 3",
+    "Function signature:",
+    "def two_sum(nums, target):",
+    "Return indices of two numbers that add up to target.",
+    "If there is no solution, return None.",
+    "Examples:",
+    "nums = [2, 7, 11, 15], target = 9 -> [0, 1]",
+    "Run Code",
+    "Console",
+  ].join("\n"),
+  expected_behavior: "Maintain executable Python code for Two Sum and update it across follow-ups.",
+  turns: [
+    {
+      turnId: 1,
+      prompt_transcript: "Implement Two Sum in Python for CoderPad. Keep commented code visible, explain it simply, and include complexity.",
+      expected_behavior: "Return indices for a valid pair or None when absent.",
+      test_cases: [
+        "assert two_sum([2, 7, 11, 15], 9) == [0, 1]",
+        "assert two_sum([1, 2, 3], 99) is None",
+      ].join("\n"),
+    },
+    {
+      turnId: 2,
+      prompt_transcript: "Follow-up: duplicates are allowed, especially nums=[3,3], target=6. Update the same solution and include a patch.",
+      expected_behavior: "Preserve the existing solution and handle duplicate values by storing the prior index before returning.",
+      test_cases: [
+        "assert two_sum([3, 3], 6) == [0, 1]",
+        "assert two_sum([3, 2, 4], 6) == [1, 2]",
+      ].join("\n"),
+    },
+    {
+      turnId: 3,
+      prompt_transcript: "Add the edge case/test explanation for no solution and negative numbers. Do not destroy the working code.",
+      expected_behavior: "Keep the same executable function and mention tests/edge cases.",
+      test_cases: [
+        "assert two_sum([-3, 4, 3, 90], 0) == [0, 2]",
+        "assert two_sum([5], 5) is None",
+      ].join("\n"),
+    },
+  ],
+  critical_failure_categories: ["missing_code", "missing_patch", "lost_followup_state", "python_execution_failure"],
+  notes: "Built-in E2E reset-flow first exercise.",
+}, {
+  scenarioId: "coderpad_rotate_matrix_after_reset",
+  language: "python",
+  expected_function: "rotate",
+  fixturePath: "builtin:coderpad_rotate_matrix_after_reset",
+  sourceKey: "builtin_coderpad",
+  starter_code: [
+    "def rotate(matrix):",
+    "    # Modify matrix in-place and return it for CoderPad checks",
+    "    pass",
+  ].join("\n"),
+  screen_context: [
+    "CoderPad",
+    "Rotate Matrix",
+    "Python 3",
+    "Function signature:",
+    "def rotate(matrix):",
+    "Rotate an n x n matrix 90 degrees clockwise in-place.",
+    "Return the matrix too so tests can assert easily.",
+    "Example:",
+    "[[1,2,3],[4,5,6],[7,8,9]] -> [[7,4,1],[8,5,2],[9,6,3]]",
+    "Run Code",
+  ].join("\n"),
+  expected_behavior: "Solve Rotate Matrix as a fresh exercise after New exercise, with no Two Sum carry-over.",
+  turns: [{
+    turnId: 1,
+    prompt_transcript: "New CoderPad exercise: implement rotate(matrix) for Rotate Matrix. This is a fresh exercise after clicking New exercise. Keep commented code and an easy explanation.",
+    expected_behavior: "Return/modify a matrix rotation solution and do not mention or implement Two Sum.",
+    test_cases: [
+      "m = [[1,2,3],[4,5,6],[7,8,9]]",
+      "assert rotate(m) == [[7,4,1],[8,5,2],[9,6,3]]",
+      "m2 = [[1,2],[3,4]]",
+      "assert rotate(m2) == [[3,1],[4,2]]",
+    ].join("\n"),
+  }],
+  critical_failure_categories: ["stale_problem_carryover", "missing_code", "python_execution_failure"],
+  notes: "Built-in E2E reset-flow second exercise.",
 }];
 
 const loadCodingScenarios = (): Array<CodingScenario & { fixturePath: string; sourceKey: string }> =>
@@ -531,7 +625,7 @@ const executablePythonAssertions = (turns: CodingTurn[]): string[] =>
   turns
     .map((turn) => turn.test_cases?.trim())
     .filter((value): value is string => Boolean(value))
-    .filter((value) => /^(assert|import|from|for|with|def|class|async|if|result\s*=|[a-zA-Z_][\w.]*\()/m.test(value));
+    .filter((value) => /^(assert|import|from|for|with|def|class|async|if|result\s*=|[a-zA-Z_]\w*\s*=|[a-zA-Z_][\w.]*\()/m.test(value));
 
 const rawTestCases = (turns: CodingTurn[]): string[] =>
   turns
@@ -879,6 +973,16 @@ const evaluate = async <T = any>(client: CdpClient, expression: string): Promise
   return result.result.value as T;
 };
 
+const clickButtonByText = async (client: CdpClient, text: string): Promise<boolean> =>
+  evaluate<boolean>(client, `(() => {
+    const expected = ${JSON.stringify(text.trim().toLowerCase())};
+    const buttons = Array.from(document.querySelectorAll("button"));
+    const button = buttons.find((item) => (item.textContent || "").trim().toLowerCase().includes(expected));
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+
 const getPageTargets = async () => {
   const response = await waitForHttp(`http://127.0.0.1:${debugPort}/json/list`);
   return await response.json() as Array<{ type: string; url: string; webSocketDebuggerUrl?: string }>;
@@ -1175,6 +1279,7 @@ const makeTextInterviewSession = (
     modelName,
     question: "",
     answer: "",
+    codingPayload: null,
   };
 };
 
@@ -1305,6 +1410,11 @@ const waitForAnswerEvents = async (
   await overlayClient.send("Runtime.enable");
   await evaluate(overlayClient, waitForBridgeExpression);
   await evaluate(overlayClient, `(() => {
+    if (Array.isArray(window.__callpilotE2EDispose)) {
+      for (const dispose of window.__callpilotE2EDispose) {
+        try { dispose?.(); } catch {}
+      }
+    }
     window.__callpilotE2EEvents = [];
     window.__callpilotE2EDispose = [
       window.callpilotDesktop.onAnswerStatus((payload) => window.__callpilotE2EEvents.push({ type: "status", at: Date.now(), payload })),
@@ -1312,6 +1422,7 @@ const waitForAnswerEvents = async (
     ];
     return true;
   })()`);
+  await evaluate(overlayClient, `new Promise((resolve) => setTimeout(resolve, 350))`);
 
   recordRealCall();
   const requestResult = await evaluate<{ ok: boolean; error?: string }>(mainClient, `window.callpilotDesktop.requestAnswer()`);
@@ -2360,6 +2471,247 @@ const runRealCodingMultiturn = async (): Promise<RunResult[]> => {
     assistantAnswers[turnCount - 1] = answerText;
   }
   return results;
+};
+
+const runRealCodingResetFlow = async (): Promise<RunResult[]> => {
+  if (!process.env.NVIDIA_API_KEY && !process.env.CALLPILOT_NVIDIA_API_KEY) {
+    return [{
+      scenarioId: "coderpad_two_sum_new_exercise_rotate_matrix",
+      track: "real_coding_reset_flow_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        nvidiaKeyAvailable: false,
+        answerCompleted: false,
+        resetClicked: false,
+        pythonExecutionPassed: false,
+      },
+      judge: null,
+      latency_ms: finishLatency("real-coding-reset-flow-blocked"),
+      diagnostics: {
+        blocked: true,
+        reason: "NVIDIA_API_KEY or CALLPILOT_NVIDIA_API_KEY is required for --track=real-coding-reset-flow",
+      },
+    }];
+  }
+  if (!fs.existsSync(path.join(root, "dist", "index.html"))) {
+    throw new Error("dist/index.html is missing. Run npm run build before --track=real-coding-reset-flow.");
+  }
+
+  const twoSum = loadCodingScenarios().find((item) => item.scenarioId === "coderpad_two_sum_reset_flow");
+  const rotate = loadCodingScenarios().find((item) => item.scenarioId === "coderpad_rotate_matrix_after_reset");
+  if (!twoSum || !rotate) throw new Error("Built-in reset-flow coding scenarios are missing.");
+  checkBudget(4);
+
+  const modelName = process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
+  const userDataDir = path.join(tmpDir, `user-data-coding-reset-${Date.now()}`);
+  fs.mkdirSync(userDataDir, { recursive: true });
+
+  const childEnv = { ...process.env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  const electron = spawn(electronBin, ["."], {
+    cwd: root,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...childEnv,
+      CALLPILOT_REMOTE_DEBUG_PORT: String(debugPort),
+      CALLPILOT_USER_DATA_DIR: userDataDir,
+    },
+  });
+
+  let stdout = "";
+  let stderr = "";
+  electron.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  electron.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  let client: CdpClient | null = null;
+  try {
+    const mainTarget = await getPageTarget((target) => !target.url.includes("#/overlay") && !target.url.includes("#/coding"), 30000);
+    if (!mainTarget?.webSocketDebuggerUrl) {
+      throw new Error(`Could not find Electron main target.\nstdout:\n${stdout.slice(-1200)}\nstderr:\n${stderr.slice(-1200)}`);
+    }
+    client = await cdp(mainTarget.webSocketDebuggerUrl);
+    await client.send("Runtime.enable");
+    const hasBridge = await evaluate<boolean>(client, waitForBridgeExpression);
+    if (!hasBridge) throw new Error("Desktop bridge did not become available in renderer");
+
+    await evaluate(client, `window.callpilotDesktop.saveSettings(${JSON.stringify({
+      activeMode: "live_coding",
+      preferredLanguage: "spanish",
+      defaultCodingLanguage: "Python",
+      answerVerbosity: "medium",
+      modelProvider: "nvidia",
+      modelName,
+      ollamaBaseUrl: "http://localhost:11434",
+      transcriptionModelName: "gpt-4o-transcribe",
+      liveTranscriptionProvider: "natively",
+      liveLatencyPreset: "balanced",
+      liveAudioSource: "both",
+      autoAnswerCooldownMs: 12000,
+      autoAnswerMinConfidence: 0.45,
+    })})`);
+
+    const results: RunResult[] = [];
+    const twoSumAnswers: string[] = [];
+    let sessionStarted = false;
+
+    const runTurn = async (
+      scenario: CodingScenario,
+      turnCount: number,
+      assistantAnswers: string[],
+      scenarioId: string,
+      extraChecks: Record<string, boolean> = {},
+    ): Promise<{ answerText: string; code: string }> => {
+      const session = makeCodingSession(scenario, "nvidia", modelName, turnCount, assistantAnswers);
+      await evaluate(client!, seedSessionExpression(session));
+      const bridgeAfterReload = await evaluate<boolean>(client!, waitForBridgeExpression);
+      if (!bridgeAfterReload) throw new Error("Desktop bridge did not recover after coding session seed reload");
+
+      const answerStarted = markLatencyStage(createLatencyMetricRun(`${scenarioId}-answer`), "model_call_start");
+      const answer = await waitForAnswerEvents(client!, "nvidia", modelName, {
+        mode: "live_coding",
+        timeoutMs: 120000,
+        startSession: !sessionStarted,
+      });
+      sessionStarted = true;
+      const answerDone = markLatencyStage(answerStarted, "response_complete");
+      const failed = answer.events.find((event) => event.type === "status" && event.payload?.status === "failed");
+      const assertions = executablePythonAssertions(scenario.turns.slice(0, turnCount));
+      const code = extractPythonCode(answer.answerText, expectedPythonFunctionName(scenario));
+      const execution = code && assertions.length > 0
+        ? runPythonAssertions(code, assertions)
+        : { ok: false, status: null, stdout: "", stderr: "No executable Python assertions or code were available.", timedOut: false };
+      const structuredAnswer = answer.structured?.payload?.answer;
+      const patch = structuredAnswer?.kind === "coding" ? structuredAnswer.payload?.patch : null;
+      const totalLatency = answerDone.events.find((event) => event.stage === "response_complete")?.elapsedMs ?? 0;
+      results.push({
+        scenarioId,
+        track: "real_coding_reset_flow_ipc",
+        run: runNumber,
+        deterministicChecks: {
+          answerRequestAccepted: answer.requestResult.ok,
+          answerCompleted: Boolean(answer.completed) && !failed,
+          answerNonEmpty: answer.answerText.trim().length > 40,
+          structuredSchemaValid: answer.structuredValidation.ok,
+          codeBlockFound: Boolean(code),
+          definesExpectedFunction: definesExpectedPythonFunction(code, scenario),
+          ...(scenario.scenarioId === "coderpad_two_sum_reset_flow" && turnCount === 2
+            ? { patchPresentForFollowUp: Boolean(patch && patch.kind !== "none" && patch.code) }
+            : {}),
+          pythonExecutionPassed: execution.ok,
+          didNotTimeout: !execution.timedOut,
+          ...extraChecks,
+        },
+        judge: null,
+        latency_ms: { first_token: null, total: totalLatency },
+        diagnostics: {
+          provider: "nvidia",
+          modelName,
+          turnCount,
+          transcript: session.transcript.messages,
+          screenText: session.screenText,
+          answer_received: answer.answerText,
+          structuredValidation: answer.structuredValidation,
+          patch,
+          extracted_code: code,
+          rawTestCases: rawTestCases(scenario.turns.slice(0, turnCount)),
+          executableAssertions: assertions,
+          execution,
+          answer_events: answer.events.map((event) => ({
+            type: event.type,
+            status: event.payload?.status,
+            answerKind: event.payload?.answer?.kind,
+            textPreview: String(event.payload?.text || event.payload?.renderedText || "").slice(0, 240),
+          })),
+        },
+      });
+      return { answerText: answer.answerText, code };
+    };
+
+    for (const turnCount of [1, 2, 3]) {
+      const { answerText } = await runTurn(twoSum, turnCount, twoSumAnswers, `coderpad_two_sum_reset_flow_turn_${turnCount}`);
+      twoSumAnswers[turnCount - 1] = answerText;
+    }
+
+    const liveCodingSelected = await clickButtonByText(client, "Live Coding");
+    await evaluate(client, `new Promise((resolve) => setTimeout(resolve, 300))`);
+    const resetClicked = await clickButtonByText(client, "New exercise");
+    const resetState = await evaluate<{ hasTwoSum: boolean; hasCodingPayload: boolean; answer: string; screenText: string; question: string; transcriptText: string }>(client, `(() => new Promise((resolve) => {
+      setTimeout(() => {
+        const raw = window.localStorage.getItem("callpilot_v0_session") || "{}";
+        let session = {};
+        try { session = JSON.parse(raw); } catch {}
+        const codingState = [
+          session.answer || "",
+          session.question || "",
+          session.screenText || "",
+          JSON.stringify(session.transcript || {}),
+          JSON.stringify(session.codingPayload || {})
+        ].join("\\n");
+        resolve({
+          hasTwoSum: /two_sum|two sum/i.test(codingState),
+          hasCodingPayload: Boolean(session && session.codingPayload && session.codingPayload.solution && session.codingPayload.solution.code),
+          answer: String(session.answer || ""),
+          screenText: String(session.screenText || ""),
+          question: String(session.question || ""),
+          transcriptText: JSON.stringify(session.transcript || {})
+        });
+      }, 700);
+    }))()`);
+    results.push({
+      scenarioId: "new_exercise_reset_between_two_sum_and_rotate_matrix",
+      track: "real_coding_reset_flow_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        liveCodingSelected,
+        resetClicked,
+        clearedTwoSumState: !resetState.hasTwoSum,
+        clearedCodingPayload: !resetState.hasCodingPayload,
+        clearedAnswer: resetState.answer.trim().length === 0,
+        clearedScreenText: resetState.screenText.trim().length === 0,
+      },
+      judge: null,
+      latency_ms: finishLatency("new-exercise-reset-check"),
+      diagnostics: { resetState },
+    });
+
+    await runTurn(rotate, 1, [], "coderpad_rotate_matrix_after_new_exercise", {
+      doesNotMentionTwoSum: true,
+    });
+    const rotateResult = results.at(-1);
+    if (rotateResult) {
+      const diagnostics = rotateResult.diagnostics as Record<string, any>;
+      rotateResult.deterministicChecks.doesNotMentionTwoSum = !/\btwo_sum\b|two sum/i.test(String(diagnostics.answer_received || diagnostics.extracted_code || ""));
+    }
+
+    const traceStatus = await evaluate<any>(client, `window.callpilotDesktop.getSessionTraceStatus()`);
+    const endSession = await evaluate<any>(client, `window.callpilotDesktop.endSession()`);
+    results.push({
+      scenarioId: "coderpad_reset_flow_trace_recorded",
+      track: "real_coding_reset_flow_ipc",
+      run: runNumber,
+      deterministicChecks: {
+        traceRecorded: Boolean((endSession?.tracePath || traceStatus?.path) && traceStatus?.eventCount >= 3),
+      },
+      judge: null,
+      latency_ms: finishLatency("real-coding-reset-flow-trace"),
+      diagnostics: {
+        trace: {
+          path: endSession?.tracePath || traceStatus?.path,
+          eventCount: traceStatus?.eventCount,
+        },
+      },
+    });
+
+    return results;
+  } finally {
+    client?.close();
+    electron.kill();
+  }
 };
 
 const selectedScenarioIds = (): string[] =>
@@ -3477,6 +3829,7 @@ const run = async () => {
     ...(selectedTrack === "real-behavioral" ? await runRealBehavioral() : []),
     ...(selectedTrack === "real-coding" ? await runRealCoding() : []),
     ...(selectedTrack === "real-coding-multiturn" || includeRealSuite ? await runRealCodingMultiturn() : []),
+    ...(selectedTrack === "real-coding-reset-flow" || includeRealSuite ? await runRealCodingResetFlow() : []),
     ...(selectedTrack === "real-vision" || includeRealSuite ? await runRealVision() : []),
     ...(selectedTrack === "real-audio-track-d" || includeRealSuite ? await runRealAudioTrackD() : []),
     ...(selectedTrack === "real-long-session" || includeRealSuite ? await runRealLongSession() : []),
