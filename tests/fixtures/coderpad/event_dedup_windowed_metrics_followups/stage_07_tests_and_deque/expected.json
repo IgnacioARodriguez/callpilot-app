@@ -1,12 +1,12 @@
 {
   "conversationAssist": {
     "maxWords": 130,
-    "mustContainGroups": [
-      ["deque", "popleft"],
-      ["test", "assert"],
-      ["duplicate", "duplicado", "expiry", "expira", "malformed", "malformada", "sorting", "orden"],
-      ["O(1)", "complexity", "complejidad", "front removal"]
-    ]
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "dequeTestsPlan": true
+    }
   },
   "codingWorkspace": {
     "expectedFunction": "count_event_types",
@@ -44,6 +44,10 @@
     "semanticChecks": {
       "sortedEventMetrics": true,
       "usesDequeWindow": true
-    }
+    },
+    "pythonAssertions": [
+      "events = ['0|a1|click', '10|a1|view', 'bad line', '301|a1|purchase', '302|b2|click', '303|c3|view']",
+      "assert count_event_types(events) == [('click', 2), ('purchase', 1), ('view', 1)]"
+    ]
   }
 }

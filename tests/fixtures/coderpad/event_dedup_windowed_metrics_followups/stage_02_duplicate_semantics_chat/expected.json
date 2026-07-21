@@ -1,12 +1,12 @@
 {
   "conversationAssist": {
     "maxWords": 130,
-    "mustContainGroups": [
-      ["first", "first event", "first occurrence", "primera", "primer"],
-      ["ignore", "skip", "omitir", "saltar", "ignor", "duplicate", "duplicado", "nuevo", "de nuevo"],
-      ["seen", "seen_ids", "set", "visto", "conjunto"],
-      ["no code", "no change", "current", "enough", "suficiente", "sin cambio", "sin necesidad", "actual"]
-    ]
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "duplicateSemantics": true
+    }
   },
   "codingWorkspace": {
     "expectedFunction": "count_event_types",

@@ -1,12 +1,12 @@
 {
   "conversationAssist": {
     "maxWords": 130,
-    "mustContainGroups": [
-      ["simple", "basic", "basica", "básica", "first version", "start", "comenzar", "empezar", "punto de partida"],
-      ["split", "parse", "pipe", "separar", "extraer", "dividir", "dividiendola", "dividiéndola", "descompon", "proces", "lines", "lineas", "líneas"],
-      ["seen_ids", "seen", "vistos", "conjunto", "duplicate", "duplicado", "dedupe"],
-      ["counts", "count", "contar", "conteo", "event_type"]
-    ]
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "eventDedupPlan": true
+    }
   },
   "codingWorkspace": {
     "expectedFunction": "count_event_types",

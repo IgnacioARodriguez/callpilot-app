@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -68,6 +68,7 @@ type CodingWorkspaceExpected = {
     sortedEventMetrics?: boolean;
     usesDequeWindow?: boolean;
   };
+  pythonAssertions?: string[];
 };
 
 type ConversationAssistExpected = {
@@ -76,6 +77,17 @@ type ConversationAssistExpected = {
   mustContainAny?: string[];
   mustContainGroups?: string[][];
   mustNotContain?: string[];
+  semanticChecks?: {
+    naturalSpokenTone?: boolean;
+    noCodeBlock?: boolean;
+    noLongCode?: boolean;
+    eventDedupPlan?: boolean;
+    duplicateSemantics?: boolean;
+    windowPlan?: boolean;
+    staleSetBug?: boolean;
+    malformedSortingPlan?: boolean;
+    dequeTestsPlan?: boolean;
+  };
 };
 
 type ScenarioExpected = CodingWorkspaceExpected & {
@@ -95,6 +107,7 @@ type LoadedCodingWorkspaceExpected = {
     sortedEventMetrics: boolean;
     usesDequeWindow: boolean;
   };
+  pythonAssertions: string[];
 };
 
 type LoadedConversationAssistExpected = {
@@ -103,6 +116,17 @@ type LoadedConversationAssistExpected = {
   mustContainAny: string[];
   mustContainGroups: string[][];
   mustNotContain: string[];
+  semanticChecks: {
+    naturalSpokenTone: boolean;
+    noCodeBlock: boolean;
+    noLongCode: boolean;
+    eventDedupPlan: boolean;
+    duplicateSemantics: boolean;
+    windowPlan: boolean;
+    staleSetBug: boolean;
+    malformedSortingPlan: boolean;
+    dequeTestsPlan: boolean;
+  };
 };
 
 type LoadedScenarioExpected = {
@@ -285,11 +309,13 @@ const loadCodingWorkspaceExpected = (expectedRules: CodingWorkspaceExpected): Lo
     sortedEventMetrics: Boolean(expectedRules.semanticChecks?.sortedEventMetrics),
     usesDequeWindow: Boolean(expectedRules.semanticChecks?.usesDequeWindow),
   },
+  pythonAssertions: Array.isArray(expectedRules.pythonAssertions) ? expectedRules.pythonAssertions.map(String) : [],
 });
 
 const loadConversationAssistExpected = (expectedRules: ConversationAssistExpected | undefined): LoadedConversationAssistExpected | null => {
   if (!expectedRules) return null;
   const explicitForbidden = Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [];
+  const defaultForbidden = defaultConversationAssistForbiddenTerms.filter((term) => !/^(code|codigo|c.digo|def|class):?$/i.test(normalizeText(term)));
   return {
     maxWords: Number.isFinite(expectedRules.maxWords) ? Number(expectedRules.maxWords) : 130,
     mustContain: Array.isArray(expectedRules.mustContain) ? expectedRules.mustContain.map(String) : [],
@@ -300,7 +326,18 @@ const loadConversationAssistExpected = (expectedRules: ConversationAssistExpecte
         .map((group) => group.map(String).filter(Boolean))
         .filter((group) => group.length > 0)
       : [],
-    mustNotContain: [...defaultConversationAssistForbiddenTerms, ...explicitForbidden],
+    mustNotContain: [...defaultForbidden, ...explicitForbidden],
+    semanticChecks: {
+      naturalSpokenTone: Boolean(expectedRules.semanticChecks?.naturalSpokenTone),
+      noCodeBlock: Boolean(expectedRules.semanticChecks?.noCodeBlock),
+      noLongCode: Boolean(expectedRules.semanticChecks?.noLongCode),
+      eventDedupPlan: Boolean(expectedRules.semanticChecks?.eventDedupPlan),
+      duplicateSemantics: Boolean(expectedRules.semanticChecks?.duplicateSemantics),
+      windowPlan: Boolean(expectedRules.semanticChecks?.windowPlan),
+      staleSetBug: Boolean(expectedRules.semanticChecks?.staleSetBug),
+      malformedSortingPlan: Boolean(expectedRules.semanticChecks?.malformedSortingPlan),
+      dequeTestsPlan: Boolean(expectedRules.semanticChecks?.dequeTestsPlan),
+    },
   };
 };
 
@@ -965,7 +1002,76 @@ const transcriptPrompt = (scenarioId: string, stage: LoadedScenarioStage) => [
   ...stage.transcript.map((turn) => `${turn.role}: ${turn.text}`),
 ].join("\n");
 
-const includesTerm = (text: string, term: string) => text.toLowerCase().includes(term.toLowerCase());
+const normalizeText = (text: string) =>
+  text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_`"'(){}\[\],.;:!?|>=-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const includesTerm = (text: string, term: string) => {
+  const normalizedTerm = normalizeText(term);
+  if (!normalizedTerm) return text.toLowerCase().includes(term.toLowerCase());
+  return normalizeText(text).includes(normalizedTerm);
+};
+
+const includesCodeTerm = (code: string, term: string) => code.toLowerCase().includes(term.toLowerCase());
+
+const hasAny = (text: string, patterns: RegExp[]) => {
+  const normalized = normalizeText(text);
+  return patterns.some((pattern) => pattern.test(normalized));
+};
+
+const validateConversationSemanticChecks = (text: string, checks: LoadedConversationAssistExpected["semanticChecks"]) => {
+  const failures: string[] = [];
+  const normalized = normalizeText(text);
+  if (checks.naturalSpokenTone && !hasAny(text, [/\bi d say\b/, /\bi ll\b/, /\bvoy\b/, /\bempez/, /\bprimero\b/, /\bahora\b/, /\bmantendr/, /\bnecesito\b/, /\bconfirm/])) {
+    failures.push("conversation assist does not sound like a spoken candidate plan");
+  }
+  if (checks.noCodeBlock && /```|\bdef\s+\w+\s*\(|\bclass\s+\w+/.test(text)) {
+    failures.push("conversation assist includes a code block or full code shape");
+  }
+  if (checks.noLongCode && (normalized.match(/\b(if|for|while|return|continue|try|except)\b/g)?.length ?? 0) > 5) {
+    failures.push("conversation assist is contaminated with too much code-like detail");
+  }
+  if (checks.eventDedupPlan) {
+    if (!hasAny(text, [/split|separ|divid|parse|proces|line/])) failures.push("conversation assist does not describe reading/parsing event lines");
+    if (!hasAny(text, [/dedup|duplic|vist|seen|conjunto|id/])) failures.push("conversation assist does not describe event_id deduplication");
+    if (!hasAny(text, [/count|conte|cuenta|contador|tipo de evento|event type|event_type/])) failures.push("conversation assist does not describe counting event types");
+  }
+  if (checks.duplicateSemantics) {
+    if (!hasAny(text, [/primer|first/])) failures.push("conversation assist does not preserve first-occurrence semantics");
+    if (!hasAny(text, [/ignor|skip|saltar|omitir|no volv/])) failures.push("conversation assist does not describe ignoring later duplicates");
+    if (!hasAny(text, [/suficient|actual|sin necesidad|no necesito|conjunto|seen/])) failures.push("conversation assist does not explain why the current set-based state is enough");
+  }
+  if (checks.windowPlan) {
+    if (!hasAny(text, [/cinco|five|\b5\b|\b300\b/])) failures.push("conversation assist does not mention the five-minute/300-second window");
+    if (!hasAny(text, [/ventana|window|timestamp|tiempo/])) failures.push("conversation assist does not ground the plan in timestamp/window context");
+    if (!hasAny(text, [/expir|elimin|quit|remov|viejo|antigu|old/])) failures.push("conversation assist does not describe expiring old ids");
+    if (!hasAny(text, [/orden|llegan|sorted|timestamp/])) failures.push("conversation assist does not mention ordered arrival context");
+  }
+  if (checks.staleSetBug) {
+    if (!hasAny(text, [/coher|sincron|consistent|stale|obsolet|out of sync|drift|membres|actualiz|ya no deber/])) failures.push("conversation assist does not describe stale/out-of-sync state");
+    if (!hasAny(text, [/seen|conjunto|set|vist/])) failures.push("conversation assist does not mention the seen-id membership state");
+    if (!hasAny(text, [/elimin|quit|discard|remove|expir/])) failures.push("conversation assist does not describe removing expired ids from seen state");
+    if (!hasAny(text, [/recent events|recent_events|tupla|tuple|evento expir/])) failures.push("conversation assist does not connect the fix to recent_events");
+  }
+  if (checks.malformedSortingPlan) {
+    if (!hasAny(text, [/malform|invalid|bad line|linea mala|lineas malas/])) failures.push("conversation assist does not mention malformed input handling");
+    if (!hasAny(text, [/ignor|skip|saltar|omitir|no romper|sin lanzar/])) failures.push("conversation assist does not describe skipping malformed lines safely");
+    if (!hasAny(text, [/orden|sort|descendent|alfabet|alphabet/])) failures.push("conversation assist does not describe sorted return semantics");
+    if (!hasAny(text, [/mantener|preserv|conservar|ventana|window|existente/])) failures.push("conversation assist does not preserve the existing window logic");
+  }
+  if (checks.dequeTestsPlan) {
+    if (!hasAny(text, [/deque|popleft/])) failures.push("conversation assist does not mention deque/popleft optimization");
+    if (!hasAny(text, [/test|assert|prueb/])) failures.push("conversation assist does not mention tests/assertions");
+    if (!hasAny(text, [/duplic|expir|malform|orden|sort/])) failures.push("conversation assist does not cover the expected test scenario families");
+    if (!hasAny(text, [/o 1|complej|complexity|frente|front/])) failures.push("conversation assist does not describe the front-removal complexity improvement");
+  }
+  return failures;
+};
 
 const wordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
 
@@ -994,6 +1100,21 @@ const validatesDequeWindow = (code: string) =>
   && /\.popleft\s*\(/.test(code)
   && /seen_ids\.(?:discard|remove)\s*\(/.test(code);
 
+const validatePythonAssertions = (code: string, assertions: string[]) => {
+  if (assertions.length === 0) return [];
+  const tempDir = fs.mkdtempSync(path.join(reportsDir, "python-assert-"));
+  const filePath = path.join(tempDir, "solution_check.py");
+  fs.writeFileSync(filePath, [
+    code,
+    "",
+    "# Assertions supplied by the replay fixture; not included in model prompts.",
+    ...assertions,
+  ].join("\n"), "utf8");
+  const result = spawnSync("python", [filePath], { encoding: "utf8", timeout: 10000 });
+  if (result.status === 0) return [];
+  return [`python assertions failed: ${(result.stderr || result.stdout || "unknown").trim().slice(0, 500)}`];
+};
+
 const validateScenarioStageAnswer = (
   scenarioId: string,
   stage: LoadedScenarioStage,
@@ -1016,16 +1137,16 @@ const validateScenarioStageAnswer = (
       failures.push(`code does not preserve function ${codingRules.expectedFunction}`);
     }
     for (const term of codingRules.mustContain) {
-      if (!includesTerm(code, term)) failures.push(`code missing required term: ${term}`);
+      if (!includesCodeTerm(code, term)) failures.push(`code missing required term: ${term}`);
     }
-    if (codingRules.mustContainAny.length > 0 && !codingRules.mustContainAny.some((term) => includesTerm(code, term))) {
+    if (codingRules.mustContainAny.length > 0 && !codingRules.mustContainAny.some((term) => includesCodeTerm(code, term))) {
       failures.push(`code missing any required term: ${codingRules.mustContainAny.join(", ")}`);
     }
     for (const term of codingRules.mustPreserve) {
-      if (!includesTerm(code, term)) failures.push(`code does not preserve required term: ${term}`);
+      if (!includesCodeTerm(code, term)) failures.push(`code does not preserve required term: ${term}`);
     }
     for (const term of codingRules.mustNotContain) {
-      if (includesTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
+      if (includesCodeTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
     }
     if (codingRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
       failures.push("code does not sort word frequencies by descending count and ascending word");
@@ -1036,6 +1157,7 @@ const validateScenarioStageAnswer = (
     if (codingRules.semanticChecks.usesDequeWindow && !validatesDequeWindow(code)) {
       failures.push("code does not use deque/popleft while keeping seen_ids synchronized");
     }
+    failures.push(...validatePythonAssertions(code, codingRules.pythonAssertions));
   }
   const expectsConversation = (stage.answerAction ?? "both") !== "coding";
   if (conversationRules && expectsConversation) {
@@ -1058,6 +1180,7 @@ const validateScenarioStageAnswer = (
     for (const term of conversationRules.mustNotContain) {
       if (includesTerm(conversationAssist, term)) failures.push(`conversation assist contains forbidden term: ${term}`);
     }
+    failures.push(...validateConversationSemanticChecks(conversationAssist, conversationRules.semanticChecks));
   }
   return {
     ok: failures.length === 0,

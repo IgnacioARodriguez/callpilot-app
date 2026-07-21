@@ -1,12 +1,12 @@
 {
   "conversationAssist": {
     "maxWords": 130,
-    "mustContainGroups": [
-      ["malformed", "malformada", "invalid", "invalida", "bad line"],
-      ["ignore", "skip", "omitir", "saltar", "do not raise", "no romper"],
-      ["sorted", "ordenar", "descending", "descendente", "alphabet", "alfabetico"],
-      ["keep", "preserve", "mantener", "window", "ventana", "existing", "existente"]
-    ]
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "malformedSortingPlan": true
+    }
   },
   "codingWorkspace": {
     "expectedFunction": "count_event_types",
@@ -45,6 +45,10 @@
     ],
     "semanticChecks": {
       "sortedEventMetrics": true
-    }
+    },
+    "pythonAssertions": [
+      "events = ['0|a1|click', 'bad line', '10|b2|view', '301|a1|purchase', '302|c3|click']",
+      "assert count_event_types(events) == [('click', 2), ('purchase', 1), ('view', 1)]"
+    ]
   }
 }

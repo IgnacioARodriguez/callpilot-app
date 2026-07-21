@@ -1,12 +1,12 @@
 {
   "conversationAssist": {
     "maxWords": 130,
-    "mustContainGroups": [
-      ["five", "cinco", "5", "300"],
-      ["window", "ventana", "minutes", "minutos", "seconds", "segundos"],
-      ["expire", "expira", "expirar", "remove", "remover", "elimin", "old", "viejo", "antiguo"],
-      ["sorted", "ordenado", "timestamp", "arrive", "llegan", "orden"]
-    ]
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "windowPlan": true
+    }
   },
   "codingWorkspace": {
     "expectedFunction": "count_event_types",

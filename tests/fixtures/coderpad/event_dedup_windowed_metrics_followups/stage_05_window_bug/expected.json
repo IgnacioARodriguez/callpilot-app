@@ -1,12 +1,12 @@
 {
   "conversationAssist": {
     "maxWords": 130,
-    "mustContainGroups": [
-      ["stale", "drift", "out of sync", "coherencia", "coherente", "sincron", "consisten"],
-      ["seen_ids", "set", "conjunto", "vistos"],
-      ["remove", "discard", "expire", "elimin", "quit", "expirado", "relevante"],
-      ["recent_events", "tuple", "old"]
-    ]
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "staleSetBug": true
+    }
   },
   "codingWorkspace": {
     "expectedFunction": "count_event_types",
@@ -36,6 +36,10 @@
       "Debe remover tambien del set cuando expira un evento.",
       "Debe mantener el contrato de retorno como diccionario de conteos.",
       "No debe optimizar con deque todavia."
+    ],
+    "pythonAssertions": [
+      "events = ['0|a1|click', '301|a1|purchase']",
+      "assert count_event_types(events) == {'click': 1, 'purchase': 1}"
     ]
   }
 }
