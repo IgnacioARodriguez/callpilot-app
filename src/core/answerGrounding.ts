@@ -175,6 +175,9 @@ const latestUserText = (userInput: string): string => {
   return latest.replace(/^(interviewer|interviewer_partial|candidate)\s*:\s*/i, "").trim();
 };
 
+const asksForCandidateExperience = (text: string): boolean =>
+  /\b(experience|background|resume|cv|career|project|worked|used before|have you used|where have you used|how have you used|your work|your background|experiencia|carrera|proyecto|trabajaste|usaste antes|has usado|lo usaste|lo has usado|donde lo usaste|como lo usaste|como lo has usado|en tu caso|que hiciste|qu[eé] hiciste)\b/i.test(text);
+
 const groundingText = (context: GlobalContext, userInput: string): string =>
   [
     userInput,
@@ -202,12 +205,17 @@ const allowedBehavioralProperNouns = new Set([
 
 const unsupportedBehavioralSpecifics = (candidateText: string, grounding: string): string[] => {
   const normalizedGrounding = normalize(grounding).replace(/\s+/g, " ");
+  const groundingTokenSet = new Set(tokenize(grounding));
   const unsupported = new Set<string>();
   const addIfUnsupported = (raw: string | undefined) => {
     const value = raw?.replace(/\s+/g, " ").trim();
     if (!value) return;
     const normalizedValue = normalize(value).replace(/\s+/g, " ").trim();
     if (!normalizedValue || normalizedGrounding.includes(normalizedValue)) return;
+    if (normalize(grounding).replace(/[^a-z0-9+#.-]+/g, "").includes(normalizedValue.replace(/[^a-z0-9+#.-]+/g, ""))) return;
+    const valueTokens = tokenize(value);
+    if (valueTokens.length > 0 && valueTokens.every((token) => groundingTokenSet.has(token))) return;
+    if (normalizedValue.startsWith("apache ") && valueTokens.some((token) => token !== "apache" && groundingTokenSet.has(token))) return;
     unsupported.add(value);
   };
 
@@ -242,7 +250,7 @@ export const assessAnswerGrounding = (
     return { ok: true, reason: "grounded", overlapCount: 0, unsupportedTerms: [] };
   }
 
-  if (structured.kind === "interview" && (context.activeMode === "behavioral" || structured.payload.intent === "behavioral")) {
+  if (structured.kind === "interview" && (context.activeMode === "behavioral" || structured.payload.intent === "behavioral" || asksForCandidateExperience(userInput))) {
     const unsupportedSpecifics = unsupportedBehavioralSpecifics(candidateText, groundingText(context, userInput));
     if (unsupportedSpecifics.length > 0) {
       return {

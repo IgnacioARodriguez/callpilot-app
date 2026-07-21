@@ -434,6 +434,24 @@ test("acceptance: repeated assistant errors stay visible as separate answer atte
   assert.match(overlay, /mode === "final" && role !== "assistant"/);
 });
 
+test("acceptance: completed assistant answer replaces streamed detail in overlay", () => {
+  const overlay = read("src/overlay/OverlayApp.tsx");
+
+  assert.match(overlay, /detail:\s*terminal \? "" : undefined/);
+  assert.match(overlay, /\{ \.\.\.message, \.\.\.assistantMessage \}/);
+});
+
+test("acceptance: Deepgram microphone audio is sent to provider instead of locally filtered", () => {
+  const app = read("src/main.tsx");
+  const deepgramStart = app.indexOf("const startDeepgramListening = async");
+  const toggleStart = app.indexOf("const toggleDictation = async", deepgramStart);
+  const body = app.slice(deepgramStart, toggleStart);
+
+  assert.match(body, /recordSessionEvent\?\.\("live_audio_signal"/);
+  assert.doesNotMatch(body, /shouldSendNativelyFrame\(speaker, energy\)/);
+  assert.match(body, /sendDeepgramAudio/);
+});
+
 test("acceptance: overlay shows the changing tail of long live transcripts", () => {
   const overlay = read("src/overlay/OverlayApp.tsx");
 

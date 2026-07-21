@@ -297,6 +297,7 @@ function App() {
   const nativelyPartialStabilityRef = React.useRef<Record<string, { text: string; timestamp: number }>>({});
   const turnAssemblerRef = React.useRef<TurnAssemblerState>(createTurnAssemblerState());
   const lastSystemAudioSignalAtRef = React.useRef(0);
+  const lastMicAudioSignalAtRef = React.useRef(0);
   const liveChunkBusyByIdRef = React.useRef(new Set<string>());
   const liveChunkQueueByIdRef = React.useRef(new Map<string, Array<{ blob: Blob; speaker: TranscriptSpeaker }>>());
   const liveContinueRef = React.useRef(false);
@@ -958,7 +959,7 @@ function App() {
           emitAnswerTiming("live_coding_repaired", { textChars: text.length });
         }
       }
-      if (result.ok && !parsedStructured && context.activeMode === "behavioral") {
+      if (result.ok && !parsedStructured && context.activeMode !== "live_coding") {
         const plainGrounding = assessPlainInterviewAnswerGrounding(context, effectiveQuestion, text);
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
           requestId,
@@ -974,7 +975,7 @@ function App() {
             payload: {
               version: "1",
               answerNeeded: true,
-              intent: "behavioral",
+              intent: context.activeMode === "behavioral" ? "behavioral" : "technical_qa",
               spokenAnswer: text,
               keyPoints: [],
               correction: { needed: false, transition: null, correctedClaim: null },
@@ -987,7 +988,7 @@ function App() {
         }
       }
       emitAnswerTiming("grounding_completed", {
-        checked: Boolean(grounding) || (result.ok && !parsedStructured && context.activeMode === "behavioral"),
+        checked: Boolean(grounding) || (result.ok && !parsedStructured && context.activeMode !== "live_coding"),
         structured: Boolean(structured),
       });
       emitAnswerTiming("format_completed", {
@@ -2285,7 +2286,17 @@ function App() {
             setDesktopStatus("Computer audio signal detected");
           }
           const speaker = channel.speaker === "candidate" ? "candidate" : "interviewer";
-          if (!shouldSendNativelyFrame(speaker, energy)) return;
+          if (speaker === "candidate" && Date.now() - lastMicAudioSignalAtRef.current > 3000) {
+            lastMicAudioSignalAtRef.current = Date.now();
+            void window.callpilotDesktop?.recordSessionEvent?.("live_audio_signal", {
+              provider: "deepgram",
+              speaker,
+              streamId,
+              rms: Number(energy.rms.toFixed(6)),
+              peak: Number(energy.peak.toFixed(6)),
+              sent: true,
+            });
+          }
           const pcm = floatToLinear16(resampled);
           void window.callpilotDesktop?.sendDeepgramAudio?.({ streamId, arrayBuffer: pcm });
         };

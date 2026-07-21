@@ -2110,6 +2110,36 @@ test("plain behavioral answer grounding blocks unstructured invented specifics",
   assert.match(assessment.unsupportedTerms.join(" "), /TechCorp|UserSync|10,000 users|Black Friday/);
 });
 
+test("plain background answer grounding blocks invented project tools in technical mode", () => {
+  const context = createGlobalContext({
+    activeMode: "technical_qa",
+    resumeText: "Desarrollador Full Stack en Talan/Cepsa con Python, Flask, React, SQL, PostgreSQL, MySQL, Redis, Docker, Git y CI/CD.",
+  });
+  const assessment = assessPlainInterviewAnswerGrounding(
+    context,
+    "interviewer: en Cepsa, que hiciste?",
+    "En Cepsa trabaje como Ingeniero de Datos y disene un pipeline de ETL usando Apache NiFi y PySpark.",
+  );
+
+  assert.equal(assessment.ok, false);
+  assert.equal(assessment.reason, "unsupported_behavioral_specifics");
+  assert.match(assessment.unsupportedTerms.join(" "), /Apache NiFi|PySpark|Ingeniero de Datos/);
+});
+
+test("plain background answer grounding allows explicit no Kafka experience answer", () => {
+  const context = createGlobalContext({
+    activeMode: "technical_qa",
+    resumeText: "Backend Python con microservicios, sistemas distribuidos, bases SQL/NoSQL, PostgreSQL, MongoDB, Redis, Django, Flask y FastAPI.",
+  });
+  const assessment = assessPlainInterviewAnswerGrounding(
+    context,
+    "interviewer: usaste Kafka en algun momento de tu carrera?",
+    "No tengo experiencia directa con Apache Kafka en proyectos profesionales; mi experiencia relacionada es con microservicios, sistemas distribuidos, Redis y bases SQL/NoSQL.",
+  );
+
+  assert.equal(assessment.ok, true);
+});
+
 test("answer grounding guard allows explicitly mentioned technical topics", () => {
   const context = createGlobalContext({ activeMode: "technical_qa" });
   const structured = parseStructuredAnswerPayload(JSON.stringify({

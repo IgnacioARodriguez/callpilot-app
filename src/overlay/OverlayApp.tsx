@@ -360,6 +360,7 @@ export default function OverlayApp() {
         requestId: payload.requestId,
         role: "assistant",
         text,
+        detail: terminal ? "" : undefined,
         isStreaming: !terminal,
       };
       setMessages((current) => {
