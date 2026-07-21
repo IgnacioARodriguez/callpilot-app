@@ -47,6 +47,48 @@ type ReplayCase = {
   followups: ReplayTurn[];
 };
 
+type ScenarioTranscriptTurn = {
+  role: "interviewer" | "candidate";
+  text: string;
+};
+
+type ScenarioExpected = {
+  expectedFunction: string;
+  mustContain: string[];
+  mustNotContain: string[];
+  semanticExpectations?: string[];
+};
+
+type ScenarioStage = {
+  id: string;
+  order: number;
+  image: string;
+  code: string;
+  transcript_delta: string;
+  expected: string;
+};
+
+type StageScenario = {
+  id: string;
+  difficulty?: string;
+  stages: ScenarioStage[];
+};
+
+type LoadedScenarioStage = ScenarioStage & {
+  imagePath: string;
+  codePath: string;
+  transcriptPath: string;
+  expectedPath: string;
+  transcript: ScenarioTranscriptTurn[];
+  expectedRules: ScenarioExpected;
+};
+
+type LoadedStageScenario = Omit<StageScenario, "stages"> & {
+  scenarioPath: string;
+  baseDir: string;
+  stages: LoadedScenarioStage[];
+};
+
 type TraceSummary = {
   path: string;
   answerTimings: Array<{ requestId?: string; stage?: string; elapsedMs?: number; ok?: boolean; error?: string; textChars?: number }>;
@@ -92,6 +134,7 @@ const screenshotPath = argValue("--screenshot") || process.env.CALLPILOT_E2E_SCR
 const screenTextArg = argValue("--screen-text") || process.env.CALLPILOT_E2E_SCREEN_TEXT || "";
 const screenTextFile = argValue("--screen-text-file") || process.env.CALLPILOT_E2E_SCREEN_TEXT_FILE || "";
 const corpusPath = argValue("--corpus") || process.env.CALLPILOT_E2E_LIVE_CODING_CORPUS || "";
+const scenarioFilePath = argValue("--scenario-file") || process.env.CALLPILOT_E2E_LIVE_CODING_SCENARIO || "";
 const followup = argValue("--followup") || process.env.CALLPILOT_E2E_FOLLOWUP || "Ahora el usuario debe poner su nombre en un input.";
 const expectedFunctionArg = argValue("--expected-function") || process.env.CALLPILOT_E2E_EXPECTED_FUNCTION || "";
 const followupTerms = (argValue("--expect-followup-terms") || process.env.CALLPILOT_E2E_EXPECT_FOLLOWUP_TERMS || "input")
@@ -159,6 +202,64 @@ const readCases = (): ReplayCase[] => {
     expectedFunction: expectedFunctionArg || undefined,
     followups: [{ speaker: "interviewer", text: followup, expectTerms: followupTerms }],
   }];
+};
+
+const readJsonFile = <T>(filePath: string): T => JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+const requireFixtureFile = (scenarioId: string, stageId: string, label: string, filePath: string) => {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Fixture file missing for ${scenarioId}/${stageId} (${label}): ${filePath}`);
+  }
+};
+
+const readStageScenario = (): LoadedStageScenario | null => {
+  if (!scenarioFilePath.trim()) return null;
+  const absolute = path.resolve(root, scenarioFilePath);
+  const parsed = readJsonFile<StageScenario>(absolute);
+  if (!parsed?.id || !Array.isArray(parsed.stages) || parsed.stages.length === 0) {
+    throw new Error(`Stage scenario has no stages: ${absolute}`);
+  }
+  const baseDir = path.dirname(absolute);
+  const stages = [...parsed.stages]
+    .sort((a, b) => a.order - b.order)
+    .map((stage) => {
+      const imagePath = path.resolve(baseDir, stage.image);
+      const codePath = path.resolve(baseDir, stage.code);
+      const transcriptPath = path.resolve(baseDir, stage.transcript_delta);
+      const expectedPath = path.resolve(baseDir, stage.expected);
+      requireFixtureFile(parsed.id, stage.id, "coderpad.png", imagePath);
+      requireFixtureFile(parsed.id, stage.id, "code.py", codePath);
+      requireFixtureFile(parsed.id, stage.id, "transcript_delta.json", transcriptPath);
+      requireFixtureFile(parsed.id, stage.id, "expected.json", expectedPath);
+      const transcript = readJsonFile<ScenarioTranscriptTurn[]>(transcriptPath);
+      const expectedRules = readJsonFile<ScenarioExpected>(expectedPath);
+      if (!Array.isArray(transcript)) throw new Error(`Invalid transcript_delta for ${parsed.id}/${stage.id}: ${transcriptPath}`);
+      if (!expectedRules?.expectedFunction) throw new Error(`Invalid expected.json for ${parsed.id}/${stage.id}: ${expectedPath}`);
+      return {
+        ...stage,
+        imagePath,
+        codePath,
+        transcriptPath,
+        expectedPath,
+        transcript,
+        expectedRules: {
+          expectedFunction: expectedRules.expectedFunction,
+          mustContain: Array.isArray(expectedRules.mustContain) ? expectedRules.mustContain.map(String) : [],
+          mustNotContain: Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [],
+          semanticExpectations: Array.isArray(expectedRules.semanticExpectations) ? expectedRules.semanticExpectations.map(String) : [],
+        },
+      };
+    });
+  stages.forEach((stage, index) => {
+    if (stage.order !== index) throw new Error(`Scenario ${parsed.id} stage order must be contiguous from 0; got ${stage.id} order ${stage.order}`);
+  });
+  return {
+    id: parsed.id,
+    difficulty: parsed.difficulty,
+    scenarioPath: absolute,
+    baseDir,
+    stages,
+  };
 };
 
 const extractExpectedFunction = (text: string, explicit = ""): string => {
@@ -236,7 +337,25 @@ const mockOpenAI = http.createServer((request, response) => {
     const hasPriorLiveCodingSolution = /current_live_coding_solution|previous_solution_code|follow_up_rule/i.test(input);
     const wantsInput = hasPriorLiveCodingSolution
       && /input|entrada|ingres|type|typed|poner su nombre/i.test(latestActionableInput || input);
-    const code = wantsInput
+    const wantsNormalizeTests = functionName === "normalize_name" && /tests?|assert|empty|tabs?|whitespace/i.test(latestActionableInput || input);
+    const wantsNormalizeCollapsedSpaces = functionName === "normalize_name" && /internal spaces|multiple spaces|underscores|espacios internos|varios espacios/i.test(latestActionableInput || input);
+    const code = functionName === "normalize_name" && wantsNormalizeTests
+      ? [
+        "def normalize_name(name):",
+        "    limpio = \"_\".join(name.strip().lower().split())",
+        "    return limpio",
+        "",
+        "assert normalize_name(\" Ana \") == \"ana\"",
+        "assert normalize_name(\"Ana   Pérez\") == \"ana_pérez\"",
+        "assert normalize_name(\"\") == \"\"",
+        "assert normalize_name(\"\\t Ana\\tPérez \\n\") == \"ana_pérez\"",
+        "print(\"ok\")",
+      ].join("\n")
+      : functionName === "normalize_name" && wantsNormalizeCollapsedSpaces
+        ? ["def normalize_name(name):", "    limpio = \"_\".join(name.strip().lower().split())", "    return limpio"].join("\n")
+        : functionName === "normalize_name"
+          ? ["def normalize_name(name):", "    limpio = name.strip()", "    limpio = limpio.lower()", "    return limpio"].join("\n")
+          : wantsInput
       ? [`def ${functionName}(${params}):`, "    # Read the username requested by the interviewer.", "    username = input(\"Nombre de usuario: \")", "    return username"].join("\n")
       : [`def ${functionName}(${params}):`, "    # Return the requested username while preserving the visible function.", "    username = \"example_user\"", "    return username"].join("\n");
     const structured = makeCodingPayload(code, wantsInput ? "follow_up_change" : "initial_solution");
@@ -465,6 +584,62 @@ const publishScreen = async (client: CdpClient, text: string, imagePath: string)
   if (!result?.ok) throw new Error(`screen:publish-context failed: ${result?.error || "unknown"}`);
 };
 
+const publishTranscriptDelta = async (client: CdpClient, scenarioId: string, stage: LoadedScenarioStage) => {
+  for (let index = 0; index < stage.transcript.length; index += 1) {
+    const turn = stage.transcript[index];
+    const result = await evaluate<any>(client, `window.callpilotDesktop.publishTranscriptMessage({
+      id: ${JSON.stringify(`${scenarioId}-${stage.id}-${index}`)},
+      speaker: ${JSON.stringify(turn.role === "candidate" ? "candidate" : "interviewer")},
+      text: ${JSON.stringify(turn.text)},
+      timestamp: Date.now() + ${index}
+    })`);
+    if (!result?.ok) throw new Error(`transcript:publish failed for ${scenarioId}/${stage.id}/${index}: ${result?.error || "unknown"}`);
+  }
+};
+
+const transcriptPrompt = (scenarioId: string, stage: LoadedScenarioStage) => [
+  `scenario_id: ${scenarioId}`,
+  `stage_id: ${stage.id}`,
+  "Use the latest CoderPad screenshot as the source of truth.",
+  "Preserve visible Python function names, signatures, and custom variable names unless explicitly asked otherwise.",
+  "Apply only the interviewer request in this stage.",
+  "",
+  ...stage.transcript.map((turn) => `${turn.role}: ${turn.text}`),
+].join("\n");
+
+const includesTerm = (text: string, term: string) => text.toLowerCase().includes(term.toLowerCase());
+
+const validateScenarioStageAnswer = (
+  scenarioId: string,
+  stage: LoadedScenarioStage,
+  answerRun: AnswerRun,
+) => {
+  const code = extractCode(answerRun.structured);
+  const rendered = answerRun.renderedText.trim();
+  const failures: string[] = [];
+  if (!answerRun.requestResult.ok) failures.push(`request was rejected: ${answerRun.requestResult.error || "unknown"}`);
+  if (!answerRun.completed) failures.push("answer did not complete");
+  if (!rendered) failures.push("rendered answer is empty");
+  if (answerRun.structured?.kind !== "coding") failures.push("structured answer is not coding");
+  if (!code.trim()) failures.push("extracted solution code is empty");
+  if (!new RegExp(`\\bdef\\s+${stage.expectedRules.expectedFunction}\\s*\\(`).test(code)) {
+    failures.push(`code does not preserve function ${stage.expectedRules.expectedFunction}`);
+  }
+  if (!includesTerm(code, "limpio")) failures.push("code does not preserve variable limpio");
+  for (const term of stage.expectedRules.mustContain) {
+    if (!includesTerm(code, term)) failures.push(`code missing required term: ${term}`);
+  }
+  for (const term of stage.expectedRules.mustNotContain) {
+    if (includesTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
+  }
+  return {
+    ok: failures.length === 0,
+    failures: failures.map((failure) => `${scenarioId}/${stage.id}: ${failure}`),
+    code,
+    rendered,
+  };
+};
+
 const summarizeTrace = (tracePath: string): TraceSummary | null => {
   if (!tracePath || !fs.existsSync(tracePath)) return null;
   const trace = JSON.parse(fs.readFileSync(tracePath, "utf8"));
@@ -529,13 +704,13 @@ const resolveCasePaths = (replayCase: ReplayCase) => {
   };
 };
 
-const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, label: string): Promise<AnswerRun> => {
+const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, label: string, questionOverride = ""): Promise<AnswerRun> => {
   const actionTimings: Record<string, number> = {};
   await timed(actionTimings, "install_event_capture_ms", () => installEventCapture(eventClient));
   await sleep(150);
   const started = Date.now();
   const requestResult = await timed(actionTimings, "request_answer_ipc_ms", () =>
-    evaluate<{ ok: boolean; requestId?: string; error?: string }>(mainClient, "window.callpilotDesktop.requestAnswer()"));
+    evaluate<{ ok: boolean; requestId?: string; error?: string }>(mainClient, `window.callpilotDesktop.requestAnswer(${JSON.stringify(questionOverride)})`));
   const expectedRequestId = requestResult.requestId;
   const events = await timed(actionTimings, "wait_for_terminal_answer_event_ms", () =>
     evaluate<Array<{ type: string; at: number; payload: any }>>(eventClient, `new Promise((resolve) => {
@@ -673,16 +848,115 @@ const runLoop = async (client: CdpClient, replayCase: ReplayCase, loop: number, 
   };
 };
 
+const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScenario, loop: number) => {
+  const sessionId = `e2e-live-coding-stage-replay-${scenario.id}-${Date.now()}-${loop}`;
+  const actionTimings: Record<string, number> = {};
+  await timed(actionTimings, "seed_session_ms", () => seedSession(client, makeSession({
+    id: sessionId,
+    screenText: "",
+  })));
+  await timed(actionTimings, "start_session_ms", () => evaluate(client, `window.callpilotDesktop.startSession({
+    mode: "live_coding",
+    modelProvider: ${JSON.stringify(provider)},
+    modelName: ${JSON.stringify(modelName)},
+    preferredLanguage: "spanish"
+  })`));
+  const stages: any[] = [];
+  let previousCode = "";
+  let ok = true;
+
+  for (const stage of scenario.stages) {
+    const stageTimings: Record<string, number> = {};
+    await timed(stageTimings, "publish_transcript_delta_ms", () => publishTranscriptDelta(client, scenario.id, stage));
+    const screen = await timed(stageTimings, "resolve_screen_text_ms", () => resolveScreenText(client, stage.imagePath, "", stageTimings));
+    if (!screen.text.trim()) {
+      stages.push({
+        id: stage.id,
+        order: stage.order,
+        ok: false,
+        failures: [`${scenario.id}/${stage.id}: screen text is empty after OCR/vision`],
+        screenshot: stage.imagePath,
+      });
+      ok = false;
+      break;
+    }
+    await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath));
+    const eventClient = await timed(stageTimings, "open_session_event_client_ms", () => getSessionEventClient());
+    const answerRun = await requestAnswer(client, eventClient, stage.id, transcriptPrompt(scenario.id, stage));
+    eventClient.close();
+    answerRun.actionTimings = { ...stageTimings, ...answerRun.actionTimings };
+    const validation = validateScenarioStageAnswer(scenario.id, stage, answerRun);
+    const codeChangedFromPreviousStage = previousCode ? validation.code !== previousCode : null;
+    previousCode = validation.code || previousCode;
+    stages.push({
+      id: stage.id,
+      order: stage.order,
+      ok: validation.ok,
+      failures: validation.failures,
+      screenshot: stage.imagePath,
+      codeFixture: stage.codePath,
+      expected: stage.expectedPath,
+      transcriptDelta: stage.transcriptPath,
+      screen: {
+        textChars: screen.text.length,
+        textPreview: screen.text.slice(0, 700),
+        ocrOk: screen.ocrResult?.ok ?? null,
+        ocrConfidence: screen.ocrResult?.confidence ?? null,
+        visionOk: screen.visionResult?.ok ?? null,
+      },
+      continuity: {
+        sessionId,
+        sameSessionAsPreviousStage: true,
+        codeChangedFromPreviousStage,
+      },
+      answer: {
+        label: answerRun.label,
+        completed: answerRun.completed,
+        failed: answerRun.failed,
+        latencyMs: answerRun.latencyMs,
+        requestId: answerRun.requestId,
+        actionTimings: answerRun.actionTimings,
+        renderedText: answerRun.renderedText,
+        parsed_output: answerRun.structured,
+        final_rendered_output: answerRun.renderedText,
+        raw_model_output: answerRun.rawModelOutput ?? null,
+        raw_model_output_stage: answerRun.rawModelOutputStage ?? null,
+        raw_model_output_available: Boolean(answerRun.rawModelOutput),
+      },
+    });
+    if (!validation.ok) {
+      ok = false;
+      break;
+    }
+  }
+
+  return {
+    loop,
+    scenarioId: scenario.id,
+    sessionId,
+    actionTimings,
+    stages,
+    ok,
+  };
+};
+
 const run = async () => {
   if (!fs.existsSync(electronBin)) throw new Error(`Electron binary not found: ${electronBin}`);
   if (useVision && requestedProvider === "groq") {
     throw new Error("Groq replay currently supports answer generation only. Run without --vision, or use NVIDIA/OpenAI for screenshot vision.");
   }
-  const cases = readCases();
-  for (const replayCase of cases) {
-    const { imagePath, fallbackText } = resolveCasePaths(replayCase);
-    if (imagePath && !fs.existsSync(imagePath)) throw new Error(`Screenshot not found for ${replayCase.id}: ${imagePath}`);
-    if (!imagePath && !fallbackText) throw new Error(`Case ${replayCase.id} needs screenshot, screenText, or screenTextFile.`);
+  const stageScenario = readStageScenario();
+  const cases = stageScenario ? [] : readCases();
+  if (stageScenario) {
+    for (const stage of stageScenario.stages) {
+      if (!fs.existsSync(stage.imagePath)) throw new Error(`Screenshot not found for ${stageScenario.id}/${stage.id}: ${stage.imagePath}`);
+    }
+  } else {
+    for (const replayCase of cases) {
+      const { imagePath, fallbackText } = resolveCasePaths(replayCase);
+      if (imagePath && !fs.existsSync(imagePath)) throw new Error(`Screenshot not found for ${replayCase.id}: ${imagePath}`);
+      if (!imagePath && !fallbackText) throw new Error(`Case ${replayCase.id} needs screenshot, screenText, or screenTextFile.`);
+    }
   }
   if (requestedProvider === "mock") {
     await listen(mockOpenAI, mockPort);
@@ -718,7 +992,8 @@ const run = async () => {
     provider: requestedProvider,
     modelName,
     corpus: corpusPath || null,
-    caseCount: cases.length,
+    scenario: stageScenario ? { id: stageScenario.id, path: stageScenario.scenarioPath, stageCount: stageScenario.stages.length } : null,
+    caseCount: stageScenario ? 1 : cases.length,
     raw_model_output_available: "after_session_trace",
     cases: [],
     actionTimings: {},
@@ -732,54 +1007,70 @@ const run = async () => {
     await client.send("Runtime.enable");
     const bridgeReady = await evaluate<boolean>(client, waitForBridgeExpression);
     if (!bridgeReady) throw new Error("Desktop bridge did not become ready");
-    for (const replayCase of cases) {
-      const { imagePath, fallbackText } = resolveCasePaths(replayCase);
-      const caseTimings: Record<string, number> = {};
-      const screen = await timed(caseTimings, "resolve_screen_text_ms", () => resolveScreenText(client!, imagePath, fallbackText, caseTimings));
-      const caseReport: Record<string, any> = {
-        id: replayCase.id,
-        screenshot: imagePath || null,
-        followups: replayCase.followups,
-        actionTimings: caseTimings,
-        screen: {
-          textChars: screen.text.length,
-          textPreview: screen.text.slice(0, 700),
-          ocrOk: screen.ocrResult?.ok ?? null,
-          ocrConfidence: screen.ocrResult?.confidence ?? null,
-          visionOk: screen.visionResult?.ok ?? null,
-        },
+    if (stageScenario) {
+      const scenarioReport: Record<string, any> = {
+        id: stageScenario.id,
+        scenarioPath: stageScenario.scenarioPath,
+        difficulty: stageScenario.difficulty ?? null,
         loops: [],
       };
-      if (!screen.text.trim()) throw new Error(`Screen text is empty after OCR/manual input for ${replayCase.id}.`);
       for (let index = 1; index <= loops; index += 1) {
-        const result = await runLoop(client, replayCase, index, screen.text, imagePath);
-        caseReport.loops.push({
-          loop: result.loop,
-          ok: result.ok,
-          expectedFunction: result.expectedFunction,
-          checks: result.checks,
-          turns: result.turns.map((turn) => ({
-            label: turn.label,
-            completed: turn.completed,
-            failed: turn.failed,
-            latencyMs: turn.latencyMs,
-            requestId: turn.requestId,
-            actionTimings: turn.actionTimings,
-            renderedText: turn.renderedText,
-            parsed_output: turn.structured,
-            final_rendered_output: turn.renderedText,
-            raw_model_output: turn.rawModelOutput ?? null,
-            raw_model_output_stage: turn.rawModelOutputStage ?? null,
-            raw_model_output_available: Boolean(turn.rawModelOutput),
-          })),
-        });
+        const result = await runStageScenarioLoop(client, stageScenario, index);
+        scenarioReport.loops.push(result);
         if (!result.ok) break;
       }
-      caseReport.ok = caseReport.loops.length === loops && caseReport.loops.every((item: any) => item.ok);
-      report.cases.push(caseReport);
-      if (!caseReport.ok) break;
+      scenarioReport.ok = scenarioReport.loops.length === loops && scenarioReport.loops.every((item: any) => item.ok);
+      report.cases.push(scenarioReport);
+    } else {
+      for (const replayCase of cases) {
+        const { imagePath, fallbackText } = resolveCasePaths(replayCase);
+        const caseTimings: Record<string, number> = {};
+        const screen = await timed(caseTimings, "resolve_screen_text_ms", () => resolveScreenText(client!, imagePath, fallbackText, caseTimings));
+        const caseReport: Record<string, any> = {
+          id: replayCase.id,
+          screenshot: imagePath || null,
+          followups: replayCase.followups,
+          actionTimings: caseTimings,
+          screen: {
+            textChars: screen.text.length,
+            textPreview: screen.text.slice(0, 700),
+            ocrOk: screen.ocrResult?.ok ?? null,
+            ocrConfidence: screen.ocrResult?.confidence ?? null,
+            visionOk: screen.visionResult?.ok ?? null,
+          },
+          loops: [],
+        };
+        if (!screen.text.trim()) throw new Error(`Screen text is empty after OCR/manual input for ${replayCase.id}.`);
+        for (let index = 1; index <= loops; index += 1) {
+          const result = await runLoop(client, replayCase, index, screen.text, imagePath);
+          caseReport.loops.push({
+            loop: result.loop,
+            ok: result.ok,
+            expectedFunction: result.expectedFunction,
+            checks: result.checks,
+            turns: result.turns.map((turn) => ({
+              label: turn.label,
+              completed: turn.completed,
+              failed: turn.failed,
+              latencyMs: turn.latencyMs,
+              requestId: turn.requestId,
+              actionTimings: turn.actionTimings,
+              renderedText: turn.renderedText,
+              parsed_output: turn.structured,
+              final_rendered_output: turn.renderedText,
+              raw_model_output: turn.rawModelOutput ?? null,
+              raw_model_output_stage: turn.rawModelOutputStage ?? null,
+              raw_model_output_available: Boolean(turn.rawModelOutput),
+            })),
+          });
+          if (!result.ok) break;
+        }
+        caseReport.ok = caseReport.loops.length === loops && caseReport.loops.every((item: any) => item.ok);
+        report.cases.push(caseReport);
+        if (!caseReport.ok) break;
+      }
     }
-    report.ok = report.cases.length === cases.length && report.cases.every((item: any) => item.ok);
+    report.ok = report.cases.length === (stageScenario ? 1 : cases.length) && report.cases.every((item: any) => item.ok);
     const traceStatus = await evaluate<any>(client, "window.callpilotDesktop.getSessionTraceStatus()");
     const endSession = await evaluate<any>(client, "window.callpilotDesktop.endSession()");
     report.trace = { status: traceStatus, endSession };
@@ -796,6 +1087,15 @@ const run = async () => {
             turn.raw_model_output = raw.text;
             turn.raw_model_output_stage = raw.stage ?? null;
             turn.raw_model_output_available = true;
+          }
+        }
+        for (const stage of loop.stages ?? []) {
+          const answer = stage.answer;
+          const raw = answer?.requestId ? rawByRequestId.get(answer.requestId) : null;
+          if (answer && !answer.raw_model_output && raw?.text) {
+            answer.raw_model_output = raw.text;
+            answer.raw_model_output_stage = raw.stage ?? null;
+            answer.raw_model_output_available = true;
           }
         }
       }

@@ -1,0 +1,14 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Good. One small change: internal spaces should become underscores. Multiple spaces should count as one."
+  },
+  {
+    "role": "candidate",
+    "text": "So `Ana   Pérez` becomes `ana_pérez`, preserving accented characters?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly. No need to remove accents."
+  }
+]

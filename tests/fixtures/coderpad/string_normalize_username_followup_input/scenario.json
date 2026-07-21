@@ -1,0 +1,30 @@
+{
+  "id": "string_normalize_username_followup_input",
+  "difficulty": "easy",
+  "stages": [
+    {
+      "id": "initial",
+      "order": 0,
+      "image": "stage_00_initial/coderpad.png",
+      "code": "stage_00_initial/code.py",
+      "transcript_delta": "stage_00_initial/transcript_delta.json",
+      "expected": "stage_00_initial/expected.json"
+    },
+    {
+      "id": "collapse_spaces",
+      "order": 1,
+      "image": "stage_01_collapse_spaces/coderpad.png",
+      "code": "stage_01_collapse_spaces/code.py",
+      "transcript_delta": "stage_01_collapse_spaces/transcript_delta.json",
+      "expected": "stage_01_collapse_spaces/expected.json"
+    },
+    {
+      "id": "tests",
+      "order": 2,
+      "image": "stage_02_tests/coderpad.png",
+      "code": "stage_02_tests/code.py",
+      "transcript_delta": "stage_02_tests/transcript_delta.json",
+      "expected": "stage_02_tests/expected.json"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "expectedFunction": "normalize_name",
+  "mustContain": [
+    "def normalize_name(name):",
+    "limpio",
+    "strip",
+    "lower"
+  ],
+  "mustNotContain": [
+    "def solution",
+    "def get_user_name",
+    "replace(\" \", \"_\")",
+    "unidecode",
+    "input("
+  ],
+  "semanticExpectations": [
+    "Debe detectar o corregir el parentesis faltante en lower().",
+    "Debe preservar la firma visible.",
+    "Debe preservar la variable limpio.",
+    "No debe anadir todavia reglas sobre espacios internos, underscores, acentos o caracteres permitidos."
+  ]
+}

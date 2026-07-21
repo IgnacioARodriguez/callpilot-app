@@ -3168,9 +3168,12 @@ function App() {
   }, [activeMode, cancelAnswer, captureScreenshot, resetFullSession, resetLiveCodingExercise]);
 
   React.useEffect(() => {
-    const dispose = window.callpilotDesktop?.onManualAnswerRequest?.(() => {
+    const dispose = window.callpilotDesktop?.onManualAnswerRequest?.((payload) => {
       setLiveAssistStatus("Manual answer requested");
-      void ask(getManualAnswerPrompt());
+      const questionOverride = typeof payload?.questionOverride === "string" && payload.questionOverride.trim()
+        ? payload.questionOverride.trim()
+        : getManualAnswerPrompt();
+      void ask(questionOverride);
     });
     return () => dispose?.();
   }, [ask, getManualAnswerPrompt]);

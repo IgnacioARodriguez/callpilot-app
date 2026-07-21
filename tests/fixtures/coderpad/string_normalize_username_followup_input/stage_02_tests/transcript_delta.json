@@ -1,0 +1,14 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Can you add a few quick tests? Empty input and tabs would be useful."
+  },
+  {
+    "role": "candidate",
+    "text": "Do you want exceptions for empty strings?"
+  },
+  {
+    "role": "interviewer",
+    "text": "No, empty or whitespace-only can return an empty string."
+  }
+]

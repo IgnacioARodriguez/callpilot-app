@@ -1,0 +1,22 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Hi Ignacio, can you hear me okay?"
+  },
+  {
+    "role": "candidate",
+    "text": "Yes, loud and clear. I can see the pad too."
+  },
+  {
+    "role": "interviewer",
+    "text": "Perfect. Nothing fancy to start. We receive a username and want a normalized version. Trim it and make it lowercase. You can continue from what's there."
+  },
+  {
+    "role": "candidate",
+    "text": "Okay. Should spaces inside the name remain as they are for now?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes, for now. Just leading and trailing whitespace."
+  }
+]

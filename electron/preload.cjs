@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   endSession: () => ipcRenderer.invoke("session:end"),
   getSessionTraceStatus: () => ipcRenderer.invoke("session:trace-status"),
   recordSessionEvent: (type, payload) => ipcRenderer.invoke("session:trace-event", type, payload),
-  requestAnswer: () => ipcRenderer.invoke("answer:request"),
+  requestAnswer: (questionOverride) => ipcRenderer.invoke("answer:request", questionOverride),
   cancelAnswer: (requestId) => ipcRenderer.invoke("answer:cancel", requestId),
   publishTranscriptMessage: (message) => ipcRenderer.invoke("transcript:publish", message),
   publishLiveTranscript: (message) => ipcRenderer.invoke("transcript:publish-live", message),
@@ -69,7 +69,7 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     return () => ipcRenderer.removeListener("remote-control:status", handler);
   },
   onManualAnswerRequest: (callback) => {
-    const handler = () => callback();
+    const handler = (_event, payload) => callback(payload);
     ipcRenderer.on("answer:manual-request", handler);
     return () => ipcRenderer.removeListener("answer:manual-request", handler);
   },

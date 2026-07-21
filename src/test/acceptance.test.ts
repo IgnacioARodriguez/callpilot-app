@@ -602,6 +602,34 @@ test("acceptance: live coding replay E2E drives screenshot answer and follow-up 
   assert.match(runner, /final_rendered_output/);
 });
 
+test("acceptance: CoderPad staged replay keeps one live coding session across screenshots", () => {
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const pkg = read("package.json");
+  const scenario = read("tests/fixtures/coderpad/string_normalize_username_followup_input/scenario.json");
+  const stage0Expected = read("tests/fixtures/coderpad/string_normalize_username_followup_input/stage_00_initial/expected.json");
+  const stage1Expected = read("tests/fixtures/coderpad/string_normalize_username_followup_input/stage_01_collapse_spaces/expected.json");
+  const stage2Expected = read("tests/fixtures/coderpad/string_normalize_username_followup_input/stage_02_tests/expected.json");
+
+  assert.match(pkg, /test:e2e:live-coding-replay:normalize-name/);
+  assert.match(runner, /--scenario-file/);
+  assert.match(runner, /readStageScenario/);
+  assert.match(runner, /runStageScenarioLoop/);
+  assert.match(runner, /publishTranscriptDelta/);
+  assert.match(runner, /transcriptPrompt/);
+  assert.match(runner, /validateScenarioStageAnswer/);
+  assert.match(runner, /sameSessionAsPreviousStage:\s*true/);
+  assert.match(runner, /Screenshot not found for \$\{stageScenario\.id\}\/\$\{stage\.id\}/);
+  assert.match(scenario, /string_normalize_username_followup_input/);
+  assert.match(scenario, /stage_00_initial\/coderpad\.png/);
+  assert.match(scenario, /stage_01_collapse_spaces\/coderpad\.png/);
+  assert.match(scenario, /stage_02_tests\/coderpad\.png/);
+  assert.match(stage0Expected, /normalize_name/);
+  assert.match(stage0Expected, /limpio/);
+  assert.match(stage1Expected, /split/);
+  assert.match(stage1Expected, /join/);
+  assert.match(stage2Expected, /assert normalize_name/);
+});
+
 test("acceptance: live coding controls separate exercise reset from full session reset", () => {
   const app = read("src/main.tsx");
   const resetExerciseStart = app.indexOf("const resetLiveCodingExercise");

@@ -2508,14 +2508,18 @@ ipcMain.handle("session:trace-event", (_event, type, payload = {}) => {
   writeActiveSessionTrace("active");
   return { ok: true };
 });
-ipcMain.handle("answer:request", () => {
-  appendTraceEvent("manual_answer_requested", {});
+ipcMain.handle("answer:request", (_event, questionOverride) => {
+  const override = typeof questionOverride === "string" ? questionOverride.trim() : "";
+  appendTraceEvent("manual_answer_requested", {
+    hasQuestionOverride: Boolean(override),
+    questionOverride: override ? textSummary(override, 180) : undefined,
+  });
   writeActiveSessionTrace("active");
   if (!mainWindow || mainWindow.webContents.isDestroyed()) {
     sendToOverlay("answer:manual-status", { ok: false, status: "main_window_unavailable" });
     return { ok: false, error: "main_window_unavailable" };
   }
-  mainWindow.webContents.send("answer:manual-request");
+  mainWindow.webContents.send("answer:manual-request", override ? { questionOverride: override } : undefined);
   sendToOverlay("answer:manual-status", { ok: true, status: "sent_to_main" });
   return { ok: true };
 });

@@ -169,7 +169,7 @@ declare global {
       endSession: () => Promise<{ ok: boolean; error?: string; tracePath?: string }>;
       getSessionTraceStatus: () => Promise<{ ok: boolean; active: boolean; id?: string; path?: string; eventCount?: number; startedAt?: string; updatedAt?: string }>;
       recordSessionEvent: (type: string, payload?: Record<string, unknown>) => Promise<{ ok: boolean }>;
-      requestAnswer: () => Promise<{ ok: boolean; error?: string }>;
+      requestAnswer: (questionOverride?: string) => Promise<{ ok: boolean; error?: string; requestId?: string }>;
       cancelAnswer: (requestId: string) => Promise<{ ok: boolean; status?: string; requestId?: string; error?: string }>;
       publishTranscriptMessage: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishLiveTranscript: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
@@ -232,7 +232,7 @@ declare global {
       onShortcut: (callback: (action: DesktopShortcutAction) => void) => () => void;
       onRemoteControlCommand: (callback: (command: RemoteControlCommand) => void) => () => void;
       onRemoteControlStatus: (callback: (status: RemoteControlStatus) => void) => () => void;
-      onManualAnswerRequest: (callback: () => void) => () => void;
+      onManualAnswerRequest: (callback: (payload?: { questionOverride?: string }) => void) => () => void;
       onSessionEnded: (callback: () => void) => () => void;
       onManualAnswerStatus: (callback: (payload: { ok: boolean; status: string; error?: string }) => void) => () => void;
       onAnswerHeadline: (callback: (payload: { requestId?: string; headline: string; keywords: string[] }) => void) => () => void;
