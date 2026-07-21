@@ -586,6 +586,7 @@ const openDeepgramStreamSocket = (streamId, config) => {
     queue: [],
     connected: false,
     closed: false,
+    closedAudioLogged: false,
     config,
   };
   deepgramStreams.set(streamId, stream);
@@ -2265,8 +2266,8 @@ ipcMain.handle("deepgram:start", async (_event, input) => {
     ? Math.max(100, Math.min(3000, Math.round(Number(input.endpointingMs))))
     : latencyPreset === "accurate" ? 700 : latencyPreset === "fast" ? 200 : 300;
   const utteranceEndMs = Number.isFinite(input?.utteranceEndMs)
-    ? Math.max(500, Math.min(5000, Math.round(Number(input.utteranceEndMs))))
-    : latencyPreset === "accurate" ? 1400 : latencyPreset === "fast" ? 800 : 1000;
+    ? Math.max(1000, Math.min(5000, Math.round(Number(input.utteranceEndMs))))
+    : latencyPreset === "accurate" ? 1400 : 1000;
   const model = typeof input?.modelName === "string" && input.modelName.trim() ? input.modelName.trim() : defaultDeepgramModel();
   appendTraceEvent("deepgram_stream_started", {
     streamId,
@@ -2304,8 +2305,11 @@ ipcMain.handle("deepgram:audio", (_event, input) => {
     return { ok: false, error: "deepgram_stream_not_started" };
   }
   if (stream.closed) {
-    appendTraceEvent("deepgram_audio_rejected", { streamId, error: "deepgram_stream_closed" });
-    writeActiveSessionTrace("active");
+    if (!stream.closedAudioLogged) {
+      stream.closedAudioLogged = true;
+      appendTraceEvent("deepgram_audio_rejected", { streamId, error: "deepgram_stream_closed" });
+      writeActiveSessionTrace("active");
+    }
     return { ok: false, error: "deepgram_stream_closed" };
   }
   const queuedBefore = stream.queue.length;

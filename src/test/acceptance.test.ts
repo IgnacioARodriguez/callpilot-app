@@ -247,6 +247,15 @@ test("acceptance: Deepgram realtime STT uses the production live audio path", ()
   assert.match(app, /hasDeepgramTranscriptionKey/);
 });
 
+test("acceptance: Deepgram realtime settings respect provider parameter bounds", () => {
+  const main = read("electron/main.cjs");
+
+  assert.match(main, /Math\.max\(1000,\s*Math\.min\(5000,\s*Math\.round\(Number\(input\.utteranceEndMs\)\)\)\)/);
+  assert.doesNotMatch(main, /latencyPreset === "fast" \? 800/);
+  assert.match(main, /latencyPreset === "accurate" \? 1400 : 1000/);
+  assert.match(main, /closedAudioLogged/);
+});
+
 test("acceptance: Natively partial auto-answer waits for turn stability", () => {
   const partial = "Can you walk me through how you would design retries for payments?";
   const changed = assessPartialTurnStability(partial, "Can you walk me through", 1_000, 2_000);
