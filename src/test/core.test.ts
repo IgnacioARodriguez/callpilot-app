@@ -60,6 +60,7 @@ import {
   buildLiveCodingFollowUpPrompt,
   compactLiveSpokenAnswer,
   extractVisibleCodeSymbols,
+  extractVisiblePythonSymbols,
   reduceStealthState,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
@@ -320,8 +321,8 @@ test("live coding prompt treats visible code without a full statement as bounded
   assert.match(screenSection, /nombre del usuario/i);
   assert.match(prompt.system, /operate on that visible code with bounded assumptions/i);
   assert.match(prompt.system, /never invent a new unrelated practice problem/i);
-  assert.match(prompt.system, /smallest complete update to that code/i);
-  assert.match(prompt.user, /Preserve visible function, method, class, parameter, and variable names/i);
+  assert.match(prompt.system, /visible Python starter code/i);
+  assert.match(prompt.user, /Preserve visible def\/class names, function signatures, parameters, and variables/i);
 });
 
 test("live coding retry detects solutions that rename visible starter code", () => {
@@ -362,9 +363,51 @@ test("live coding retry detects solutions that rename visible starter code", () 
   }));
 
   assert.deepEqual(extractVisibleCodeSymbols(prompt.user), ["hello"]);
+  assert.deepEqual(extractVisiblePythonSymbols(prompt.user), [{ kind: "function", name: "hello", signature: "def hello():" }]);
   assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), true);
   assert.equal(shouldRetryLiveCodingCompleteness(structured, prompt.user, JSON.stringify(structured)), true);
-  assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /Do not create a parallel replacement function/i);
+  assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /visible Python def\/class starter code/i);
+});
+
+test("live coding retry detects Python signature changes without explicit request", () => {
+  const screenContext = classifyScreenText([
+    "def two_sum(nums, target):",
+    "    pass",
+    "return indices of two numbers that add to target",
+  ].join("\n"));
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english", screenContext }),
+    "user_request: The candidate pressed Answer. task: Use visible coding context.",
+  );
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Two Sum", summary: "Return indices", language: "Python", functionSignature: "def two_sum(arr, x)", constraints: [] },
+      solution: {
+        approachSteps: ["Use a hash map."],
+        code: "def two_sum(arr, x):\n    # Track seen values.\n    seen = {}\n    for i, value in enumerate(arr):\n        if x - value in seen:\n            return [seen[x - value], i]\n        seen[value] = i\n    return []",
+        complexity: { time: "O(n)", space: "O(n)", rationale: "One pass with a map." },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "I would use a hash map.", currentStep: "Implement function" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.deepEqual(extractVisiblePythonSymbols(prompt.user), [{ kind: "function", name: "two_sum", signature: "def two_sum(nums,target):" }]);
+  assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), true);
 });
 
 test("live coding continuity allows explicit rename requests", () => {

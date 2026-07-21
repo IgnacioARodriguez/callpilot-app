@@ -55,36 +55,60 @@ const explicitRenameRequest = (promptUser: string): boolean =>
     promptSection(promptUser, "user_input"),
   ].join("\n"));
 
-export const extractVisibleCodeSymbols = (promptUser: string): string[] => {
+export interface VisiblePythonSymbol {
+  kind: "function" | "class";
+  name: string;
+  signature: string;
+}
+
+const normalizePythonSignature = (signature: string): string =>
+  signature
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),:=])\s*/g, "$1")
+    .replace(/\s*->\s*/g, "->")
+    .trim();
+
+export const extractVisiblePythonSymbols = (promptUser: string): VisiblePythonSymbol[] => {
   const text = screenContextText(promptUser);
-  const symbols = new Set<string>();
-  const patterns = [
-    /\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g,
-    /\basync\s+def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g,
-    /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
-    /\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/g,
-    /\bclass\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/g,
-    /\b(?:public|private|protected)?\s*(?:static\s+)?[\w<>\[\], ?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{}]*\)\s*\{/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      const name = match[1]?.trim();
-      if (name && !/^(if|for|while|switch|catch|return)$/.test(name)) symbols.add(name);
-    }
+  const symbols = new Map<string, VisiblePythonSymbol>();
+  for (const match of text.matchAll(/\b(async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)\n]*)\)\s*(?:->\s*([^:\n]+))?\s*:/g)) {
+    const prefix = match[1] ?? "def";
+    const name = match[2]?.trim();
+    if (!name) continue;
+    const params = match[3] ?? "";
+    const returnType = match[4]?.trim();
+    const signature = normalizePythonSignature(`${prefix} ${name}(${params})${returnType ? ` -> ${returnType}` : ""}:`);
+    symbols.set(`function:${name}`, { kind: "function", name, signature });
   }
-  return [...symbols];
+  for (const match of text.matchAll(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*\(([^)\n]*)\))?\s*:/g)) {
+    const name = match[1]?.trim();
+    if (!name) continue;
+    const bases = match[2];
+    const signature = normalizePythonSignature(`class ${name}${bases ? `(${bases})` : ""}:`);
+    symbols.set(`class:${name}`, { kind: "class", name, signature });
+  }
+  return [...symbols.values()];
 };
+
+export const extractVisibleCodeSymbols = (promptUser: string): string[] =>
+  extractVisiblePythonSymbols(promptUser).map((symbol) => symbol.name);
 
 export const violatesVisibleCodeContinuity = (
   structured: StructuredAnswerPayload | null,
   promptUser: string,
 ): boolean => {
   if (structured?.kind !== "coding" || explicitRenameRequest(promptUser)) return false;
-  const visibleSymbols = extractVisibleCodeSymbols(promptUser);
+  const visibleSymbols = extractVisiblePythonSymbols(promptUser);
   if (visibleSymbols.length === 0) return false;
   const code = structured.payload.solution.code;
   if (!code.trim()) return false;
-  return visibleSymbols.some((symbol) => !new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(code));
+  const normalizedCode = normalizePythonSignature(code);
+  return visibleSymbols.some((symbol) => {
+    const escapedName = symbol.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp(`\\b${escapedName}\\b`).test(code)) return true;
+    if (symbol.kind === "function") return !normalizedCode.includes(symbol.signature);
+    return false;
+  });
 };
 
 export const shouldRetryLiveCodingCompleteness = (
@@ -121,8 +145,8 @@ export const buildLiveCodingCompletenessRetryPrompt = (prompt: BuiltPrompt): Bui
   const retryInstruction = [
     "Your last answer was incomplete or returned an empty scaffold.",
     "Fill the coding payload with a real solution, brief inline comments, time/space complexity, and the key invariant.",
-    "If screen_context contains visible functions, methods, classes, parameters, variables, or starter code, preserve those names and edit that code unless the latest request explicitly asks to rename them.",
-    "Do not create a parallel replacement function when the editor already shows a function or stub for the same task.",
+    "If screen_context contains visible Python def/class starter code, preserve those function/class names and function signatures unless the latest request explicitly asks to rename or change the signature.",
+    "Do not create a parallel replacement function when the Python editor already shows a function or stub for the same task.",
     "If the task asks to implement, write a function, solve, fix, update, change behavior, or satisfy tests, return executable solution.code and do not use responseType explanation.",
     "Keep the same JSON schema and do not introduce a new task.",
   ].join(" ");

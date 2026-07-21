@@ -34,6 +34,7 @@ export {
 export {
   buildLiveCodingCompletenessRetryPrompt,
   extractVisibleCodeSymbols,
+  extractVisiblePythonSymbols,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
   repairTechnicalDebuggingAnswerCoverage,
