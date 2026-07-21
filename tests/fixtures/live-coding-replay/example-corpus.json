@@ -1,0 +1,17 @@
+{
+  "description": "Local template for real live-coding screenshot replay. Replace screenshot paths with local files; do not commit private screenshots.",
+  "cases": [
+    {
+      "id": "return-username-visible-hello",
+      "screenshot": "REPLACE_WITH_LOCAL_SCREENSHOT.png",
+      "expectedFunction": "hello",
+      "followups": [
+        {
+          "speaker": "interviewer",
+          "text": "Ahora el usuario debe poner su nombre en un input",
+          "expectTerms": ["input"]
+        }
+      ]
+    }
+  ]
+}

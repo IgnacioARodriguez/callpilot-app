@@ -17,7 +17,7 @@ type CdpClient = {
 };
 
 type AnswerRun = {
-  label: "initial" | "followup";
+  label: string;
   requestResult: { ok: boolean; error?: string };
   events: Array<{ type: string; at: number; payload: any }>;
   completed: boolean;
@@ -25,6 +25,31 @@ type AnswerRun = {
   renderedText: string;
   structured: StructuredAnswerPayload | null;
   latencyMs: number;
+  requestId?: string;
+  actionTimings: Record<string, number>;
+};
+
+type ReplayTurn = {
+  speaker?: "interviewer" | "candidate";
+  text: string;
+  expectTerms?: string[];
+};
+
+type ReplayCase = {
+  id: string;
+  screenshot?: string;
+  screenText?: string;
+  screenTextFile?: string;
+  expectedFunction?: string;
+  expectInitialTerms?: string[];
+  followups: ReplayTurn[];
+};
+
+type TraceSummary = {
+  path: string;
+  answerTimings: Array<{ requestId?: string; stage?: string; elapsedMs?: number; ok?: boolean; error?: string; textChars?: number }>;
+  providerEvents: Array<{ requestId?: string; type: string; provider?: string; modelName?: string; durationMs?: number; status?: number; ok?: boolean; stream?: boolean }>;
+  screenEvents: Array<{ type: string; elapsedMs?: number; ok?: boolean; durationMs?: number; confidence?: number; hasScreenshot?: boolean; fileName?: string }>;
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -35,8 +60,26 @@ const electronBin = process.platform === "win32"
   : path.join(root, "node_modules", ".bin", "electron");
 
 const argValue = (name: string): string => {
+  const clean = (value: string) => value.replace(/\^/g, "").trim();
+  const collectValue = (start: number): string[] => {
+    const values: string[] = [];
+    for (let index = start; index < process.argv.length; index += 1) {
+      const item = process.argv[index];
+      if (item.startsWith("--")) break;
+      values.push(item);
+    }
+    return values;
+  };
   const prefix = `${name}=`;
-  return process.argv.find((item) => item.startsWith(prefix))?.slice(prefix.length).trim() ?? "";
+  const exactIndex = process.argv.indexOf(name);
+  if (exactIndex >= 0) {
+    return collectValue(exactIndex + 1).join(" ").trim();
+  }
+  const prefixIndex = process.argv.findIndex((item) => item.startsWith(prefix));
+  if (prefixIndex < 0) return "";
+  const first = process.argv[prefixIndex].slice(prefix.length);
+  const rest = collectValue(prefixIndex + 1);
+  return clean([first, ...rest].join(" "));
 };
 
 const hasArg = (name: string): boolean => process.argv.includes(name);
@@ -45,16 +88,19 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const screenshotPath = argValue("--screenshot") || process.env.CALLPILOT_E2E_SCREENSHOT || "";
 const screenTextArg = argValue("--screen-text") || process.env.CALLPILOT_E2E_SCREEN_TEXT || "";
 const screenTextFile = argValue("--screen-text-file") || process.env.CALLPILOT_E2E_SCREEN_TEXT_FILE || "";
+const corpusPath = argValue("--corpus") || process.env.CALLPILOT_E2E_LIVE_CODING_CORPUS || "";
 const followup = argValue("--followup") || process.env.CALLPILOT_E2E_FOLLOWUP || "Ahora el usuario debe poner su nombre en un input.";
 const expectedFunctionArg = argValue("--expected-function") || process.env.CALLPILOT_E2E_EXPECTED_FUNCTION || "";
 const followupTerms = (argValue("--expect-followup-terms") || process.env.CALLPILOT_E2E_EXPECT_FOLLOWUP_TERMS || "input")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
-const loops = Math.max(1, Number(argValue("--loops") || process.env.CALLPILOT_E2E_LOOPS || "1"));
-const timeoutMs = Math.max(5000, Number(argValue("--timeout-ms") || process.env.CALLPILOT_E2E_ANSWER_TIMEOUT_MS || "180000"));
-const debugPort = Number(argValue("--debug-port") || process.env.CALLPILOT_E2E_DEBUG_PORT || "9369");
-const mockPort = Number(argValue("--mock-port") || process.env.CALLPILOT_E2E_MOCK_PORT || "9370");
+const intArg = (name: string, envName: string, fallback: string): number =>
+  Number.parseInt(argValue(name) || process.env[envName] || fallback, 10);
+const loops = Math.max(1, intArg("--loops", "CALLPILOT_E2E_LOOPS", "1"));
+const timeoutMs = Math.max(5000, intArg("--timeout-ms", "CALLPILOT_E2E_ANSWER_TIMEOUT_MS", "180000"));
+const debugPort = intArg("--debug-port", "CALLPILOT_E2E_DEBUG_PORT", "9369");
+const mockPort = intArg("--mock-port", "CALLPILOT_E2E_MOCK_PORT", "9370");
 const requestedProvider = (argValue("--provider") || process.env.CALLPILOT_E2E_PROVIDER || "mock") as "mock" | "openai" | "nvidia";
 const provider: ModelProvider = requestedProvider === "mock" ? "openai" : requestedProvider;
 const modelName = argValue("--model")
@@ -62,14 +108,54 @@ const modelName = argValue("--model")
   || (provider === "nvidia" ? process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct" : "mock-live-coding-replay");
 const useVision = hasArg("--vision") || process.env.CALLPILOT_E2E_USE_VISION === "1";
 
+const nowMs = () => Date.now();
+const timed = async <T>(timings: Record<string, number>, name: string, action: () => Promise<T>): Promise<T> => {
+  const started = nowMs();
+  try {
+    return await action();
+  } finally {
+    timings[name] = nowMs() - started;
+  }
+};
+
 const readOptionalScreenText = (): string => {
   if (screenTextArg.trim()) return screenTextArg.trim();
   if (screenTextFile.trim()) return fs.readFileSync(path.resolve(root, screenTextFile), "utf8").trim();
   return "";
 };
 
-const extractExpectedFunction = (text: string): string => {
-  if (expectedFunctionArg.trim()) return expectedFunctionArg.trim();
+const readCases = (): ReplayCase[] => {
+  if (corpusPath.trim()) {
+    const absolute = path.resolve(root, corpusPath);
+    const parsed = JSON.parse(fs.readFileSync(absolute, "utf8"));
+    const cases = Array.isArray(parsed) ? parsed : parsed.cases;
+    if (!Array.isArray(cases) || cases.length === 0) throw new Error(`Corpus has no cases: ${absolute}`);
+    return cases.map((item: any, index: number) => ({
+      id: String(item.id || `case-${index + 1}`),
+      screenshot: typeof item.screenshot === "string" ? item.screenshot : undefined,
+      screenText: typeof item.screenText === "string" ? item.screenText : undefined,
+      screenTextFile: typeof item.screenTextFile === "string" ? item.screenTextFile : undefined,
+      expectedFunction: typeof item.expectedFunction === "string" ? item.expectedFunction : undefined,
+      expectInitialTerms: Array.isArray(item.expectInitialTerms) ? item.expectInitialTerms.map(String) : undefined,
+      followups: (Array.isArray(item.followups) && item.followups.length > 0 ? item.followups : [{ text: followup }]).map((turn: any) => ({
+        speaker: turn.speaker === "candidate" ? "candidate" : "interviewer",
+        text: String(turn.text || ""),
+        expectTerms: Array.isArray(turn.expectTerms) ? turn.expectTerms.map(String) : undefined,
+      })),
+    }));
+  }
+  return [{
+    id: "single",
+    screenshot: screenshotPath || undefined,
+    screenText: screenTextArg || undefined,
+    screenTextFile: screenTextFile || undefined,
+    expectedFunction: expectedFunctionArg || undefined,
+    followups: [{ speaker: "interviewer", text: followup, expectTerms: followupTerms }],
+  }];
+};
+
+const extractExpectedFunction = (text: string, explicit = ""): string => {
+  if (explicit.trim()) return explicit.trim();
   const match = text.match(/^\s*(?:\d+\s+)?(?:async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/m);
   return match?.[1] ?? "";
 };
@@ -338,23 +424,23 @@ const installEventCapture = async (client: CdpClient) => {
   })()`);
 };
 
-const resolveScreenText = async (client: CdpClient, imagePath: string, fallbackText: string) => {
+const resolveScreenText = async (client: CdpClient, imagePath: string, fallbackText: string, timings: Record<string, number>) => {
   let text = fallbackText.trim();
   let ocrResult: any = null;
   let visionResult: any = null;
   if (!text && imagePath) {
-    ocrResult = await evaluate<any>(client, `window.callpilotDesktop.recognizeScreenText({
+    ocrResult = await timed(timings, "ocr_ms", () => evaluate<any>(client, `window.callpilotDesktop.recognizeScreenText({
       path: ${JSON.stringify(imagePath)},
       language: "auto"
-    })`);
+    })`));
     text = String(ocrResult?.text || "").trim();
   }
   if (useVision && imagePath) {
-    visionResult = await evaluate<any>(client, `window.callpilotDesktop.analyzeScreenshot({
+    visionResult = await timed(timings, "vision_ms", () => evaluate<any>(client, `window.callpilotDesktop.analyzeScreenshot({
       path: ${JSON.stringify(imagePath)},
       provider: ${JSON.stringify(provider === "nvidia" ? "nvidia" : "openai")},
       modelName: ${JSON.stringify(provider === "nvidia" ? process.env.CALLPILOT_NVIDIA_VISION_MODEL || "meta/llama-3.2-11b-vision-instruct" : modelName)}
-    })`);
+    })`));
     if (visionResult?.ok && visionResult.text) text = [text, String(visionResult.text).trim()].filter(Boolean).join("\n");
   }
   return { text, ocrResult, visionResult };
@@ -371,12 +457,67 @@ const publishScreen = async (client: CdpClient, text: string, imagePath: string)
   if (!result?.ok) throw new Error(`screen:publish-context failed: ${result?.error || "unknown"}`);
 };
 
-const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, label: "initial" | "followup"): Promise<AnswerRun> => {
-  await installEventCapture(eventClient);
+const summarizeTrace = (tracePath: string): TraceSummary | null => {
+  if (!tracePath || !fs.existsSync(tracePath)) return null;
+  const trace = JSON.parse(fs.readFileSync(tracePath, "utf8"));
+  const events = Array.isArray(trace.events) ? trace.events : [];
+  return {
+    path: tracePath,
+    answerTimings: events
+      .filter((event: any) => event.type === "answer_timing")
+      .map((event: any) => ({
+        requestId: event.requestId,
+        stage: event.stage,
+        elapsedMs: event.elapsedMs,
+        ok: event.ok,
+        error: event.error,
+        textChars: event.textChars,
+      })),
+    providerEvents: events
+      .filter((event: any) => /^provider_|^model_generate/.test(String(event.type)))
+      .map((event: any) => ({
+        requestId: event.requestId,
+        type: event.type,
+        provider: event.provider ?? event.result?.provider,
+        modelName: event.modelName ?? event.result?.modelName,
+        durationMs: event.durationMs,
+        status: event.status,
+        ok: event.ok ?? event.result?.ok,
+        stream: event.stream,
+      })),
+    screenEvents: events
+      .filter((event: any) => /^screen_/.test(String(event.type)))
+      .map((event: any) => ({
+        type: event.type,
+        elapsedMs: event.elapsedMs,
+        ok: event.ok,
+        durationMs: event.durationMs,
+        confidence: event.confidence,
+        hasScreenshot: event.hasScreenshot,
+        fileName: event.fileName,
+      })),
+  };
+};
+
+const resolveCasePaths = (replayCase: ReplayCase) => {
+  const imagePath = replayCase.screenshot ? path.resolve(root, replayCase.screenshot) : "";
+  const inlineText = replayCase.screenText?.trim() ?? "";
+  const fileText = replayCase.screenTextFile ? fs.readFileSync(path.resolve(root, replayCase.screenTextFile), "utf8").trim() : "";
+  return {
+    imagePath,
+    fallbackText: inlineText || fileText,
+  };
+};
+
+const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, label: string): Promise<AnswerRun> => {
+  const actionTimings: Record<string, number> = {};
+  await timed(actionTimings, "install_event_capture_ms", () => installEventCapture(eventClient));
   await sleep(150);
   const started = Date.now();
-  const requestResult = await evaluate<{ ok: boolean; error?: string }>(mainClient, "window.callpilotDesktop.requestAnswer()");
-  const events = await evaluate<Array<{ type: string; at: number; payload: any }>>(eventClient, `new Promise((resolve) => {
+  const requestResult = await timed(actionTimings, "request_answer_ipc_ms", () =>
+    evaluate<{ ok: boolean; error?: string }>(mainClient, "window.callpilotDesktop.requestAnswer()"));
+  const events = await timed(actionTimings, "wait_for_terminal_answer_event_ms", () =>
+    evaluate<Array<{ type: string; at: number; payload: any }>>(eventClient, `new Promise((resolve) => {
     const started = Date.now();
     const tick = () => {
       const events = window.__callpilotReplayEvents || [];
@@ -388,7 +529,7 @@ const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, labe
       setTimeout(tick, 250);
     };
     tick();
-  })`);
+  })`));
   const status = events.find((event) => event.type === "status" && ["completed", "failed", "cancelled"].includes(event.payload?.status));
   const structuredEvent = events.find((event) => event.type === "structured");
   const structured = structuredEvent?.payload?.answer
@@ -402,64 +543,99 @@ const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, labe
     failed: status?.payload?.status === "failed",
     renderedText: String(status?.payload?.text || structuredEvent?.payload?.renderedText || ""),
     structured,
+    requestId: status?.payload?.requestId || structuredEvent?.payload?.requestId,
     latencyMs: Date.now() - started,
+    actionTimings,
   };
 };
 
-const runLoop = async (client: CdpClient, loop: number, baseScreenText: string, imagePath: string) => {
-  const sessionId = `e2e-live-coding-replay-${Date.now()}-${loop}`;
-  await seedSession(client, makeSession({ id: sessionId, screenText: baseScreenText }));
-  await evaluate(client, `window.callpilotDesktop.startSession({
+const runSingleAnswerTurn = async (input: {
+  client: CdpClient;
+  sessionId: string;
+  baseScreenText: string;
+  imagePath: string;
+  answer?: string;
+  codingPayload?: CodingAnswerPayload | null;
+  transcriptText?: string;
+  label: string;
+}) => {
+  const actionTimings: Record<string, number> = {};
+  await timed(actionTimings, "seed_session_ms", () => seedSession(input.client, makeSession({
+    id: input.sessionId,
+    screenText: input.baseScreenText,
+    answer: input.answer,
+    codingPayload: input.codingPayload,
+    transcriptText: input.transcriptText,
+  })));
+  await timed(actionTimings, "start_session_ms", () => evaluate(input.client, `window.callpilotDesktop.startSession({
     mode: "live_coding",
     modelProvider: ${JSON.stringify(provider)},
     modelName: ${JSON.stringify(modelName)},
     preferredLanguage: "spanish"
-  })`);
-  await publishScreen(client, baseScreenText, imagePath);
-  const initialEventClient = await getSessionEventClient();
-  const initial = await requestAnswer(client, initialEventClient, "initial");
-  initialEventClient.close();
-  const initialCode = extractCode(initial.structured);
-  const initialPayload = initial.structured?.kind === "coding" ? initial.structured.payload : null;
+  })`));
+  await timed(actionTimings, "publish_screen_context_ms", () => publishScreen(input.client, input.baseScreenText, input.imagePath));
+  const eventClient = await timed(actionTimings, "open_session_event_client_ms", () => getSessionEventClient());
+  const answerRun = await requestAnswer(input.client, eventClient, input.label);
+  eventClient.close();
+  answerRun.actionTimings = { ...actionTimings, ...answerRun.actionTimings };
+  return answerRun;
+};
 
-  await seedSession(client, makeSession({
-    id: sessionId,
-    screenText: baseScreenText,
-    answer: initial.renderedText,
-    codingPayload: initialPayload,
-    transcriptText: followup,
-  }));
-  await evaluate(client, `window.callpilotDesktop.startSession({
-    mode: "live_coding",
-    modelProvider: ${JSON.stringify(provider)},
-    modelName: ${JSON.stringify(modelName)},
-    preferredLanguage: "spanish"
-  })`);
-  await publishScreen(client, baseScreenText, imagePath);
-  const followupEventClient = await getSessionEventClient();
-  const followupRun = await requestAnswer(client, followupEventClient, "followup");
-  followupEventClient.close();
-  const followupCode = extractCode(followupRun.structured);
-  const expectedFunction = extractExpectedFunction(baseScreenText);
-  const checks = {
+const runLoop = async (client: CdpClient, replayCase: ReplayCase, loop: number, baseScreenText: string, imagePath: string) => {
+  const sessionId = `e2e-live-coding-replay-${Date.now()}-${loop}`;
+  const initial = await runSingleAnswerTurn({
+    client,
+    sessionId,
+    baseScreenText,
+    imagePath,
+    label: "initial",
+  });
+  let previousCode = extractCode(initial.structured);
+  let previousAnswer = initial.renderedText;
+  let previousPayload = initial.structured?.kind === "coding" ? initial.structured.payload : null;
+  const expectedFunction = extractExpectedFunction(baseScreenText, replayCase.expectedFunction);
+  const turnResults = [initial];
+
+  for (let index = 0; index < replayCase.followups.length; index += 1) {
+    const turn = replayCase.followups[index];
+    const followupRun = await runSingleAnswerTurn({
+      client,
+      sessionId,
+      baseScreenText,
+      imagePath,
+      answer: previousAnswer,
+      codingPayload: previousPayload,
+      transcriptText: turn.text,
+      label: `followup-${index + 1}`,
+    });
+    turnResults.push(followupRun);
+    previousAnswer = followupRun.renderedText;
+    previousPayload = followupRun.structured?.kind === "coding" ? followupRun.structured.payload : previousPayload;
+  }
+
+  const checks: Record<string, boolean> = {
     screenContextAvailable: baseScreenText.trim().length > 0,
     expectedFunctionDetected: Boolean(expectedFunction),
-    initialRequestAccepted: initial.requestResult.ok,
-    initialCompleted: initial.completed,
-    initialStructuredCoding: initial.structured?.kind === "coding",
-    initialPreservedVisibleFunction: expectedFunction ? new RegExp(`\\bdef\\s+${expectedFunction}\\s*\\(`).test(initialCode) : false,
-    followupRequestAccepted: followupRun.requestResult.ok,
-    followupCompleted: followupRun.completed,
-    followupStructuredCoding: followupRun.structured?.kind === "coding",
-    followupPreservedVisibleFunction: expectedFunction ? new RegExp(`\\bdef\\s+${expectedFunction}\\s*\\(`).test(followupCode) : false,
-    followupChangedCode: Boolean(initialCode && followupCode && initialCode !== followupCode),
-    followupContainsExpectedTerms: followupTerms.every((term) => new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(followupCode)),
   };
+  turnResults.forEach((turn, index) => {
+    const code = extractCode(turn.structured);
+    const priorCode = index === 0 ? "" : extractCode(turnResults[index - 1].structured);
+    const expectedTerms = index === 0
+      ? replayCase.expectInitialTerms ?? []
+      : replayCase.followups[index - 1]?.expectTerms ?? followupTerms;
+    checks[`${turn.label}RequestAccepted`] = turn.requestResult.ok;
+    checks[`${turn.label}Completed`] = turn.completed;
+    checks[`${turn.label}StructuredCoding`] = turn.structured?.kind === "coding";
+    checks[`${turn.label}PreservedVisibleFunction`] = expectedFunction ? new RegExp(`\\bdef\\s+${expectedFunction}\\s*\\(`).test(code) : false;
+    if (index > 0) checks[`${turn.label}ChangedCode`] = Boolean(priorCode && code && priorCode !== code);
+    checks[`${turn.label}ContainsExpectedTerms`] = expectedTerms.every((term) =>
+      new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(code));
+  });
   return {
     loop,
+    caseId: replayCase.id,
     expectedFunction,
-    initial,
-    followup: followupRun,
+    turns: turnResults,
     checks,
     ok: Object.values(checks).every(Boolean),
   };
@@ -467,10 +643,11 @@ const runLoop = async (client: CdpClient, loop: number, baseScreenText: string, 
 
 const run = async () => {
   if (!fs.existsSync(electronBin)) throw new Error(`Electron binary not found: ${electronBin}`);
-  const absoluteScreenshot = screenshotPath ? path.resolve(root, screenshotPath) : "";
-  if (absoluteScreenshot && !fs.existsSync(absoluteScreenshot)) throw new Error(`Screenshot not found: ${absoluteScreenshot}`);
-  if (!absoluteScreenshot && !readOptionalScreenText()) {
-    throw new Error("Provide --screenshot, CALLPILOT_E2E_SCREENSHOT, --screen-text, or --screen-text-file.");
+  const cases = readCases();
+  for (const replayCase of cases) {
+    const { imagePath, fallbackText } = resolveCasePaths(replayCase);
+    if (imagePath && !fs.existsSync(imagePath)) throw new Error(`Screenshot not found for ${replayCase.id}: ${imagePath}`);
+    if (!imagePath && !fallbackText) throw new Error(`Case ${replayCase.id} needs screenshot, screenText, or screenTextFile.`);
   }
   if (requestedProvider === "mock") {
     await listen(mockOpenAI, mockPort);
@@ -501,14 +678,15 @@ const run = async () => {
   });
 
   let client: CdpClient | null = null;
-  const report: Record<string, unknown> = {
+  const report: Record<string, any> = {
     runId: `live-coding-replay-${new Date().toISOString().replace(/[:.]/g, "-")}`,
     provider: requestedProvider,
     modelName,
-    screenshot: absoluteScreenshot || null,
-    followup,
+    corpus: corpusPath || null,
+    caseCount: cases.length,
     raw_model_output_available: false,
-    loops: [],
+    cases: [],
+    actionTimings: {},
   };
 
   try {
@@ -519,50 +697,56 @@ const run = async () => {
     await client.send("Runtime.enable");
     const bridgeReady = await evaluate<boolean>(client, waitForBridgeExpression);
     if (!bridgeReady) throw new Error("Desktop bridge did not become ready");
-    const screen = await resolveScreenText(client, absoluteScreenshot, readOptionalScreenText());
-    report.screen = {
-      textChars: screen.text.length,
-      textPreview: screen.text.slice(0, 700),
-      ocrOk: screen.ocrResult?.ok ?? null,
-      ocrConfidence: screen.ocrResult?.confidence ?? null,
-      visionOk: screen.visionResult?.ok ?? null,
-    };
-    if (!screen.text.trim()) throw new Error("Screen text is empty after OCR/manual input.");
-
-    const loopResults = [];
-    for (let index = 1; index <= loops; index += 1) {
-      const result = await runLoop(client, index, screen.text, absoluteScreenshot);
-      loopResults.push(result);
-      if (!result.ok) break;
+    for (const replayCase of cases) {
+      const { imagePath, fallbackText } = resolveCasePaths(replayCase);
+      const caseTimings: Record<string, number> = {};
+      const screen = await timed(caseTimings, "resolve_screen_text_ms", () => resolveScreenText(client!, imagePath, fallbackText, caseTimings));
+      const caseReport: Record<string, any> = {
+        id: replayCase.id,
+        screenshot: imagePath || null,
+        followups: replayCase.followups,
+        actionTimings: caseTimings,
+        screen: {
+          textChars: screen.text.length,
+          textPreview: screen.text.slice(0, 700),
+          ocrOk: screen.ocrResult?.ok ?? null,
+          ocrConfidence: screen.ocrResult?.confidence ?? null,
+          visionOk: screen.visionResult?.ok ?? null,
+        },
+        loops: [],
+      };
+      if (!screen.text.trim()) throw new Error(`Screen text is empty after OCR/manual input for ${replayCase.id}.`);
+      for (let index = 1; index <= loops; index += 1) {
+        const result = await runLoop(client, replayCase, index, screen.text, imagePath);
+        caseReport.loops.push({
+          loop: result.loop,
+          ok: result.ok,
+          expectedFunction: result.expectedFunction,
+          checks: result.checks,
+          turns: result.turns.map((turn) => ({
+            label: turn.label,
+            completed: turn.completed,
+            failed: turn.failed,
+            latencyMs: turn.latencyMs,
+            requestId: turn.requestId,
+            actionTimings: turn.actionTimings,
+            renderedText: turn.renderedText,
+            parsed_output: turn.structured,
+            final_rendered_output: turn.renderedText,
+            raw_model_output: null,
+          })),
+        });
+        if (!result.ok) break;
+      }
+      caseReport.ok = caseReport.loops.length === loops && caseReport.loops.every((item: any) => item.ok);
+      report.cases.push(caseReport);
+      if (!caseReport.ok) break;
     }
-    report.loops = loopResults.map((item) => ({
-      loop: item.loop,
-      ok: item.ok,
-      expectedFunction: item.expectedFunction,
-      checks: item.checks,
-      initial: {
-        completed: item.initial.completed,
-        failed: item.initial.failed,
-        latencyMs: item.initial.latencyMs,
-        renderedText: item.initial.renderedText,
-        parsed_output: item.initial.structured,
-        final_rendered_output: item.initial.renderedText,
-        raw_model_output: null,
-      },
-      followup: {
-        completed: item.followup.completed,
-        failed: item.followup.failed,
-        latencyMs: item.followup.latencyMs,
-        renderedText: item.followup.renderedText,
-        parsed_output: item.followup.structured,
-        final_rendered_output: item.followup.renderedText,
-        raw_model_output: null,
-      },
-    }));
-    report.ok = loopResults.length === loops && loopResults.every((item) => item.ok);
+    report.ok = report.cases.length === cases.length && report.cases.every((item: any) => item.ok);
     const traceStatus = await evaluate<any>(client, "window.callpilotDesktop.getSessionTraceStatus()");
     const endSession = await evaluate<any>(client, "window.callpilotDesktop.endSession()");
     report.trace = { status: traceStatus, endSession };
+    report.traceSummary = summarizeTrace(endSession?.tracePath || traceStatus?.path || "");
     if (!report.ok) process.exitCode = 1;
   } catch (error) {
     report.ok = false;
@@ -574,7 +758,7 @@ const run = async () => {
     const reportPath = path.join(reportsDir, `${String(report.runId)}.json`);
     fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf8");
     console.log(`Live coding replay report: ${reportPath}`);
-    console.log(JSON.stringify({ ok: report.ok, provider: requestedProvider, modelName, loops: (report.loops as any[])?.length ?? 0 }, null, 2));
+    console.log(JSON.stringify({ ok: report.ok, provider: requestedProvider, modelName, cases: report.cases?.length ?? 0 }, null, 2));
     client?.close();
     electron.kill();
     mockOpenAI.close();

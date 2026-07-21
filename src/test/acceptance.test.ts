@@ -524,13 +524,18 @@ test("acceptance: live coding replay E2E drives screenshot answer and follow-up 
   const pkg = read("package.json");
 
   assert.match(pkg, /test:e2e:live-coding-replay/);
+  assert.match(pkg, /test:e2e:live-coding-replay:real/);
+  assert.match(runner, /ReplayCase/);
+  assert.match(runner, /--corpus/);
   assert.match(runner, /startSession/);
   assert.match(runner, /publishScreenContext/);
   assert.match(runner, /requestAnswer/);
   assert.match(runner, /recognizeScreenText/);
+  assert.match(runner, /ocr_ms/);
+  assert.match(runner, /vision_ms/);
+  assert.match(runner, /traceSummary/);
   assert.match(runner, /codingPayload/);
-  assert.match(runner, /initialPreservedVisibleFunction/);
-  assert.match(runner, /followupPreservedVisibleFunction/);
+  assert.match(runner, /PreservedVisibleFunction/);
   assert.match(runner, /raw_model_output_available:\s*false/);
   assert.match(runner, /parsed_output/);
   assert.match(runner, /final_rendered_output/);

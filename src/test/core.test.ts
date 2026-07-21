@@ -324,6 +324,9 @@ test("live coding prompt treats visible code without a full statement as bounded
   assert.match(prompt.system, /never invent a new unrelated practice problem/i);
   assert.match(prompt.system, /visible Python starter code/i);
   assert.match(prompt.user, /Preserve visible def\/class names, function signatures, parameters, and variables/i);
+  assert.match(prompt.user, /<visible_python_continuity_contract>/);
+  assert.match(prompt.user, /Visible Python signatures that must be preserved:/);
+  assert.match(prompt.user, /def hello\(\):/);
 });
 
 test("live coding retry detects solutions that rename visible starter code", () => {
@@ -412,6 +415,48 @@ test("live coding continuity detects OCR Python functions when the colon is miss
   assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), true);
   assert.equal(shouldRetryLiveCodingCompleteness(structured, prompt.user, JSON.stringify(structured)), true);
   assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /Visible Python continuity contract:/);
+  assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /def hello\(\):/);
+});
+
+test("live coding continuity detects OCR Python signatures with same-line body noise", () => {
+  const screenContext = classifyScreenText([
+    "Running CPython 3.13",
+    "def hello(): return © Screen",
+    "5 debe retornar el nombre del usuario",
+  ].join("\n"));
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "spanish", screenContext }),
+    "user_request: The candidate pressed Answer. task: Use visible coding context.",
+  );
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Retornar nombre", summary: "Retornar nombre", language: "Python", functionSignature: "def get_user_name()", constraints: [] },
+      solution: {
+        approachSteps: ["Return a username."],
+        code: "def get_user_name():\n    return \"Ejemplo Usuario\"",
+        complexity: { time: "O(1)", space: "O(1)", rationale: "Single value." },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "Devuelvo el nombre.", currentStep: "Implement" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.deepEqual(extractVisiblePythonSymbols(prompt.user), [{ kind: "function", name: "hello", signature: "def hello():" }]);
+  assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), true);
   assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /def hello\(\):/);
 });
 

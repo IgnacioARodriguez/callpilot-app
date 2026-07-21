@@ -72,7 +72,7 @@ export const extractVisiblePythonSymbols = (promptUser: string): VisiblePythonSy
   const text = screenContextText(promptUser);
   const symbols = new Map<string, VisiblePythonSymbol>();
   const lines = text.replace(/\r/g, "").split("\n");
-  const functionPattern = /^\s*(?:\d+\s+)?(async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)\n]*)\)\s*(?:->\s*([^:\n;]+))?\s*:?\s*$/;
+  const functionPattern = /^\s*(?:\d+\s+)?(async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)\n]*)\)\s*(?:->\s*([^:\n;]+))?\s*:?(?:\s+.*)?$/;
   const classPattern = /^\s*(?:\d+\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*\(([^)\n]*)\))?\s*:?\s*$/;
   for (const line of lines) {
     const match = line.match(functionPattern);

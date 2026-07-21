@@ -89,6 +89,33 @@ const localizedOutputLabels = (labels: string[], preferredLanguage: GlobalContex
   });
 };
 
+const normalizePythonSignature = (signature: string): string =>
+  signature
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),:=])\s*/g, "$1")
+    .replace(/\s*->\s*/g, "->")
+    .trim();
+
+const visiblePythonContinuityContract = (screenText: string): string => {
+  const signatures = new Set<string>();
+  for (const line of screenText.replace(/\r/g, "").split("\n")) {
+    const match = line.match(/^\s*(?:\d+\s+)?(async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)\n]*)\)\s*(?:->\s*([^:\n;]+))?\s*:?(?:\s+.*)?$/);
+    if (!match) continue;
+    const prefix = match[1] ?? "def";
+    const name = match[2]?.trim();
+    if (!name) continue;
+    const params = match[3] ?? "";
+    const returnType = match[4]?.trim();
+    signatures.add(normalizePythonSignature(`${prefix} ${name}(${params})${returnType ? ` -> ${returnType}` : ""}:`));
+  }
+  if (signatures.size === 0) return "";
+  return [
+    "Visible Python signatures that must be preserved:",
+    [...signatures].map((signature) => `- ${signature}`).join("\n"),
+    "Use these exact visible function names and signatures in solution.code unless the latest interviewer request explicitly asks to rename or change them.",
+  ].join("\n");
+};
+
 export const buildPromptWithEvidence = (context: GlobalContext, userInput: string, evidence: EvidenceSelection): BuiltPrompt => {
   const factualContext = withoutStaleCasualTurns(withoutAssistantTurns(context), userInput);
   const conversationContext = withoutStaleCasualTurns(context, userInput);
@@ -104,6 +131,9 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
   });
   const mode = modeById(context.activeMode);
   const screenTechnicalFocus = extractTechnicalScreenFocus(factualContext.screenContext.visibleText);
+  const pythonContinuityContract = context.activeMode === "live_coding"
+    ? visiblePythonContinuityContract(screenTechnicalFocus || factualContext.screenContext.visibleText)
+    : "";
   const outputLabels = localizedOutputLabels(mode.defaultOutputFormat, context.preferredLanguage);
   const includePersonalContext = shouldIncludePersonalContext(context, userInput);
   const includedSections: string[] = ["mode", "output_format"];
@@ -171,6 +201,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     screenTechnicalFocus ? `technical_focus:\n${screenTechnicalFocus}` : "",
     factualContext.screenContext.visibleText ? `raw_visible_text:\n${factualContext.screenContext.visibleText.slice(-2400)}` : "",
   ].filter(Boolean).join("\n"));
+  add("visible_python_continuity_contract", pythonContinuityContract);
   add("user_input", userInput);
 
   const system = [
