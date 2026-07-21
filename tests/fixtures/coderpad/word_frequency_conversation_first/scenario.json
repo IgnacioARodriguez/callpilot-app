@@ -1,0 +1,30 @@
+{
+  "id": "word_frequency_conversation_first",
+  "difficulty": "easy",
+  "stages": [
+    {
+      "id": "transcript_only",
+      "order": 0,
+      "image": null,
+      "code": null,
+      "transcript_delta": "stage_00_transcript_only/transcript_delta.json",
+      "expected": "stage_00_transcript_only/expected.json"
+    },
+    {
+      "id": "initial_code",
+      "order": 1,
+      "image": "stage_01_initial_code/coderpad.png",
+      "code": "stage_01_initial_code/code.py",
+      "transcript_delta": "stage_01_initial_code/transcript_delta.json",
+      "expected": "stage_01_initial_code/expected.json"
+    },
+    {
+      "id": "sorting_followup",
+      "order": 2,
+      "image": "stage_02_sorting_followup/coderpad.png",
+      "code": "stage_02_sorting_followup/code.py",
+      "transcript_delta": "stage_02_sorting_followup/transcript_delta.json",
+      "expected": "stage_02_sorting_followup/expected.json"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Hey, how's your morning going?"
+  },
+  {
+    "role": "candidate",
+    "text": "Pretty good, thanks. A bit early, but all good."
+  },
+  {
+    "role": "interviewer",
+    "text": "Same here. Okay, let's do a small data-processing task. Given a sentence, return how many times each word appears. Words are separated by spaces. That's enough for the first version."
+  },
+  {
+    "role": "candidate",
+    "text": "Should I keep punctuation attached to the word for now?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes. Don't overthink it yet."
+  }
+]

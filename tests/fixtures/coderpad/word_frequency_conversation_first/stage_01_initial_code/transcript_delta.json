@@ -1,0 +1,10 @@
+[
+  {
+    "role": "candidate",
+    "text": "I'll call it `count_words` and keep the processing separate from input/output."
+  },
+  {
+    "role": "interviewer",
+    "text": "Sounds good. Go ahead."
+  }
+]

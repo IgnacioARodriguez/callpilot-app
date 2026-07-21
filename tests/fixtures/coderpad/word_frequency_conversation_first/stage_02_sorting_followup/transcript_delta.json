@@ -1,0 +1,14 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Now make it case-insensitive and return a list of `(word, count)` sorted by descending count. Alphabetical for ties."
+  },
+  {
+    "role": "candidate",
+    "text": "Should punctuation still remain part of the word?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes, still unchanged."
+  }
+]

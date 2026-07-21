@@ -53,17 +53,28 @@ type ScenarioTranscriptTurn = {
 };
 
 type ScenarioExpected = {
-  expectedFunction: string;
-  mustContain: string[];
+  expectedFunction: string | null;
+  mustContain?: string[];
+  mustContainAny?: string[];
+  mustPreserve?: string[];
   mustNotContain: string[];
   semanticExpectations?: string[];
+};
+
+type LoadedScenarioExpected = {
+  expectedFunction: string | null;
+  mustContain: string[];
+  mustContainAny: string[];
+  mustPreserve: string[];
+  mustNotContain: string[];
+  semanticExpectations: string[];
 };
 
 type ScenarioStage = {
   id: string;
   order: number;
-  image: string;
-  code: string;
+  image: string | null;
+  code: string | null;
   transcript_delta: string;
   expected: string;
 };
@@ -75,12 +86,12 @@ type StageScenario = {
 };
 
 type LoadedScenarioStage = ScenarioStage & {
-  imagePath: string;
-  codePath: string;
+  imagePath: string | null;
+  codePath: string | null;
   transcriptPath: string;
   expectedPath: string;
   transcript: ScenarioTranscriptTurn[];
-  expectedRules: ScenarioExpected;
+  expectedRules: LoadedScenarioExpected;
 };
 
 type LoadedStageScenario = Omit<StageScenario, "stages"> & {
@@ -225,18 +236,18 @@ const readStageScenario = (): LoadedStageScenario | null => {
   const stages = [...parsed.stages]
     .sort((a, b) => a.order - b.order)
     .map((stage) => {
-      const imagePath = path.resolve(baseDir, stage.image);
-      const codePath = path.resolve(baseDir, stage.code);
+      const imagePath = typeof stage.image === "string" ? path.resolve(baseDir, stage.image) : null;
+      const codePath = typeof stage.code === "string" ? path.resolve(baseDir, stage.code) : null;
       const transcriptPath = path.resolve(baseDir, stage.transcript_delta);
       const expectedPath = path.resolve(baseDir, stage.expected);
-      requireFixtureFile(parsed.id, stage.id, "coderpad.png", imagePath);
-      requireFixtureFile(parsed.id, stage.id, "code.py", codePath);
+      if (imagePath) requireFixtureFile(parsed.id, stage.id, "coderpad.png", imagePath);
+      if (codePath) requireFixtureFile(parsed.id, stage.id, "code.py", codePath);
       requireFixtureFile(parsed.id, stage.id, "transcript_delta.json", transcriptPath);
       requireFixtureFile(parsed.id, stage.id, "expected.json", expectedPath);
       const transcript = readJsonFile<ScenarioTranscriptTurn[]>(transcriptPath);
       const expectedRules = readJsonFile<ScenarioExpected>(expectedPath);
       if (!Array.isArray(transcript)) throw new Error(`Invalid transcript_delta for ${parsed.id}/${stage.id}: ${transcriptPath}`);
-      if (!expectedRules?.expectedFunction) throw new Error(`Invalid expected.json for ${parsed.id}/${stage.id}: ${expectedPath}`);
+      if (!expectedRules || !("expectedFunction" in expectedRules)) throw new Error(`Invalid expected.json for ${parsed.id}/${stage.id}: ${expectedPath}`);
       return {
         ...stage,
         imagePath,
@@ -247,6 +258,8 @@ const readStageScenario = (): LoadedStageScenario | null => {
         expectedRules: {
           expectedFunction: expectedRules.expectedFunction,
           mustContain: Array.isArray(expectedRules.mustContain) ? expectedRules.mustContain.map(String) : [],
+          mustContainAny: Array.isArray(expectedRules.mustContainAny) ? expectedRules.mustContainAny.map(String) : [],
+          mustPreserve: Array.isArray(expectedRules.mustPreserve) ? expectedRules.mustPreserve.map(String) : [],
           mustNotContain: Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [],
           semanticExpectations: Array.isArray(expectedRules.semanticExpectations) ? expectedRules.semanticExpectations.map(String) : [],
         },
@@ -332,16 +345,36 @@ const mockOpenAI = http.createServer((request, response) => {
     await sleep(80);
     const payload = JSON.parse(body || "{}");
     const input = String(payload.input || "");
-    const functionName = extractExpectedFunction(input) || "hello";
-    const signatureMatch = input.match(new RegExp(`(?:async\\s+def|def)\\s+${functionName}\\s*\\(([^)\\n]*)\\)`, "m"));
-    const params = signatureMatch?.[1] ?? "";
     const latestActionableInput = input.match(/<latest_actionable_input>\s*([\s\S]*?)\s*<\/latest_actionable_input>/i)?.[1] ?? "";
+    const inferredFunctionName = /sentence|word appears|count_words|count words|frequency/i.test(latestActionableInput || input)
+      ? "count_words"
+      : "";
+    const functionName = extractExpectedFunction(input) || inferredFunctionName || "hello";
+    const signatureMatch = input.match(new RegExp(`(?:async\\s+def|def)\\s+${functionName}\\s*\\(([^)\\n]*)\\)`, "m"));
+    const params = signatureMatch?.[1] ?? (functionName === "count_words" ? "sentence" : "");
     const hasPriorLiveCodingSolution = /current_live_coding_solution|previous_solution_code|follow_up_rule/i.test(input);
     const wantsInput = hasPriorLiveCodingSolution
       && /input|entrada|ingres|type|typed|poner su nombre/i.test(latestActionableInput || input);
     const wantsNormalizeTests = functionName === "normalize_name" && /tests?|assert|empty|tabs?|whitespace/i.test(latestActionableInput || input);
     const wantsNormalizeCollapsedSpaces = functionName === "normalize_name" && /internal spaces|multiple spaces|underscores|espacios internos|varios espacios/i.test(latestActionableInput || input);
-    const code = functionName === "normalize_name" && wantsNormalizeTests
+    const wantsWordSorting = functionName === "count_words" && /case-insensitive|descending count|alphabetical|sorted|ties/i.test(latestActionableInput || input);
+    const code = functionName === "count_words" && wantsWordSorting
+      ? [
+        "def count_words(sentence):",
+        "    counts = {}",
+        "    for word in sentence.lower().split():",
+        "        counts[word] = counts.get(word, 0) + 1",
+        "    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))",
+      ].join("\n")
+      : functionName === "count_words"
+        ? [
+          "def count_words(sentence):",
+          "    counts = {}",
+          "    for word in sentence.split(\" \"):",
+          "        counts[word] = counts.get(word, 0) + 1",
+          "    return counts",
+        ].join("\n")
+        : functionName === "normalize_name" && wantsNormalizeTests
       ? [
         "def normalize_name(name):",
         "    limpio = \"_\".join(name.strip().lower().split())",
@@ -602,8 +635,12 @@ const publishTranscriptDelta = async (client: CdpClient, scenarioId: string, sta
 const transcriptPrompt = (scenarioId: string, stage: LoadedScenarioStage) => [
   `scenario_id: ${scenarioId}`,
   `stage_id: ${stage.id}`,
-  "Use the latest CoderPad screenshot as the source of truth.",
-  "Preserve visible Python function names, signatures, and custom variable names unless explicitly asked otherwise.",
+  stage.imagePath
+    ? "Use the latest CoderPad screenshot as the source of truth."
+    : "There is no current screenshot for this stage; answer from the technical transcript only and ignore small talk.",
+  stage.imagePath
+    ? "Preserve visible Python function names, signatures, and custom variable names unless explicitly asked otherwise."
+    : "No Python signature is visible yet; propose a reasonable one only if useful and do not claim it was provided.",
   "Apply only the interviewer request in this stage.",
   "",
   ...stage.transcript.map((turn) => `${turn.role}: ${turn.text}`),
@@ -624,12 +661,17 @@ const validateScenarioStageAnswer = (
   if (!rendered) failures.push("rendered answer is empty");
   if (answerRun.structured?.kind !== "coding") failures.push("structured answer is not coding");
   if (!code.trim()) failures.push("extracted solution code is empty");
-  if (!new RegExp(`\\bdef\\s+${stage.expectedRules.expectedFunction}\\s*\\(`).test(code)) {
+  if (stage.expectedRules.expectedFunction && !new RegExp(`\\bdef\\s+${stage.expectedRules.expectedFunction}\\s*\\(`).test(code)) {
     failures.push(`code does not preserve function ${stage.expectedRules.expectedFunction}`);
   }
-  if (!includesTerm(code, "limpio")) failures.push("code does not preserve variable limpio");
   for (const term of stage.expectedRules.mustContain) {
     if (!includesTerm(code, term)) failures.push(`code missing required term: ${term}`);
+  }
+  if (stage.expectedRules.mustContainAny.length > 0 && !stage.expectedRules.mustContainAny.some((term) => includesTerm(code, term))) {
+    failures.push(`code missing any required term: ${stage.expectedRules.mustContainAny.join(", ")}`);
+  }
+  for (const term of stage.expectedRules.mustPreserve) {
+    if (!includesTerm(code, term)) failures.push(`code does not preserve required term: ${term}`);
   }
   for (const term of stage.expectedRules.mustNotContain) {
     if (includesTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
@@ -870,8 +912,10 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
   for (const stage of scenario.stages) {
     const stageTimings: Record<string, number> = {};
     await timed(stageTimings, "publish_transcript_delta_ms", () => publishTranscriptDelta(client, scenario.id, stage));
-    const screen = await timed(stageTimings, "resolve_screen_text_ms", () => resolveScreenText(client, stage.imagePath, "", stageTimings));
-    if (!screen.text.trim()) {
+    const screen = stage.imagePath
+      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveScreenText(client, stage.imagePath ?? "", "", stageTimings))
+      : { text: "", ocrResult: null, visionResult: null };
+    if (stage.imagePath && !screen.text.trim()) {
       stages.push({
         id: stage.id,
         order: stage.order,
@@ -882,7 +926,9 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       ok = false;
       break;
     }
-    await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath));
+    if (stage.imagePath) {
+      await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath));
+    }
     const eventClient = await timed(stageTimings, "open_session_event_client_ms", () => getSessionEventClient());
     const answerRun = await requestAnswer(client, eventClient, stage.id, transcriptPrompt(scenario.id, stage));
     eventClient.close();
@@ -900,6 +946,7 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       expected: stage.expectedPath,
       transcriptDelta: stage.transcriptPath,
       screen: {
+        hasScreenshot: Boolean(stage.imagePath),
         textChars: screen.text.length,
         textPreview: screen.text.slice(0, 700),
         ocrOk: screen.ocrResult?.ok ?? null,
@@ -951,7 +998,7 @@ const run = async () => {
   const cases = stageScenario ? [] : readCases();
   if (stageScenario) {
     for (const stage of stageScenario.stages) {
-      if (!fs.existsSync(stage.imagePath)) throw new Error(`Screenshot not found for ${stageScenario.id}/${stage.id}: ${stage.imagePath}`);
+      if (stage.imagePath && !fs.existsSync(stage.imagePath)) throw new Error(`Screenshot not found for ${stageScenario.id}/${stage.id}: ${stage.imagePath}`);
     }
   } else {
     for (const replayCase of cases) {
