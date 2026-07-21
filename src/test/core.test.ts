@@ -2884,10 +2884,12 @@ test("OCR helpers normalize language and clean extracted text", () => {
   assert.equal(ocrConfidenceLabel(20), "low");
 });
 
-test("default stealth state is serializable and interactive", () => {
-  assert.equal(defaultStealthState.callPrivacyAllowed, false);
-  assert.equal(defaultStealthState.overlayVisible, true);
-  assert.equal(defaultStealthState.focusMode, "interactive");
+test("default stealth state is serializable and fully private", () => {
+  assert.equal(defaultStealthState.callPrivacyAllowed, true);
+  assert.equal(defaultStealthState.overlayVisible, false);
+  assert.equal(defaultStealthState.contentProtectionEnabled, true);
+  assert.equal(defaultStealthState.mousePassthroughEnabled, true);
+  assert.equal(defaultStealthState.focusMode, "passthrough");
   assert.doesNotThrow(() => JSON.stringify(defaultStealthState));
 });
 
@@ -3100,7 +3102,8 @@ test("live transcription settings expose professional provider plan", () => {
 });
 
 test("stealth reducer keeps passthrough focus consistent and resets", () => {
-  const blocked = reduceStealthState(defaultStealthState, { type: "set_mouse_passthrough", enabled: true });
+  const revokedDefault = reduceStealthState(defaultStealthState, { type: "set_call_privacy_allowed", allowed: false });
+  const blocked = reduceStealthState(revokedDefault, { type: "set_mouse_passthrough", enabled: true });
   assert.equal(blocked.mousePassthroughEnabled, false);
   assert.equal(blocked.focusMode, "interactive");
   const allowed = reduceStealthState(defaultStealthState, { type: "set_call_privacy_allowed", allowed: true });

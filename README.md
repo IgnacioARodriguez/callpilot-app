@@ -99,4 +99,4 @@ Privacy controls include:
 
 - `Share Safe`: enables approved-call privacy posture, hides the window, enables best-effort capture protection, and enables passthrough.
 - `Check`: runs a local privacy posture check and reports `safe`, `risk`, or `unknown`.
-- `Reset`: immediately returns to visible, interactive, not-approved defaults. Desktop shortcut: `Ctrl Alt R`.
+- `Reset`: immediately returns to the default full private sharing posture. Desktop shortcut: `Ctrl Alt R`.

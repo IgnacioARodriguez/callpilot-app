@@ -60,7 +60,7 @@ if (indexHtml.includes('src="/assets/') || indexHtml.includes('href="/assets/'))
   console.error("Package dist/index.html uses absolute asset paths that break under Electron file:// loading.");
   process.exit(1);
 }
-for (const needle of ["callPrivacyAllowed: false", "stealth:set-call-privacy-allowed", "stealth:apply-share-safe", "stealth:reset-privacy", "privacy:check", "screen:ocr", "ollama:list-models", "/api/tags", "setContentProtection", "setDisplayMediaRequestHandler", "loopback"]) {
+for (const needle of ["callPrivacyAllowed: true", "stealth:set-call-privacy-allowed", "stealth:apply-share-safe", "stealth:reset-privacy", "privacy:check", "screen:ocr", "ollama:list-models", "/api/tags", "setContentProtection", "setDisplayMediaRequestHandler", "loopback"]) {
   if (!mainSource.includes(needle)) {
     console.error(`Package electron/main.cjs is missing privacy capability: ${needle}`);
     process.exit(1);

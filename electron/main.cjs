@@ -79,11 +79,11 @@ const fetchWithRetry = async (url, options = {}, meta = {}) => {
 };
 
 const stealthState = {
-  callPrivacyAllowed: false,
-  overlayVisible: true,
-  contentProtectionEnabled: false,
-  mousePassthroughEnabled: false,
-  focusMode: "interactive",
+  callPrivacyAllowed: true,
+  overlayVisible: false,
+  contentProtectionEnabled: true,
+  mousePassthroughEnabled: true,
+  focusMode: "passthrough",
   shortcutLayerActive: true,
 };
 
@@ -2129,10 +2129,10 @@ const normalizeStealthState = () => {
 
 const applyShareSafeState = () => {
   stealthState.callPrivacyAllowed = true;
-  stealthState.overlayVisible = true;
+  stealthState.overlayVisible = false;
   stealthState.contentProtectionEnabled = true;
-  stealthState.mousePassthroughEnabled = false;
-  stealthState.focusMode = "interactive";
+  stealthState.mousePassthroughEnabled = true;
+  stealthState.focusMode = "passthrough";
   stealthState.shortcutLayerActive = true;
   normalizeStealthState();
 };
@@ -2218,11 +2218,13 @@ const assessPrivacyState = async () => {
     findings.push(`Local capture source check failed: ${error instanceof Error ? error.message : "unknown error"}.`);
   }
 
-  const status = stealthState.overlayVisible && stealthState.contentProtectionEnabled ? "safe" : "risk";
+  const status = stealthState.contentProtectionEnabled ? "safe" : "risk";
   return {
     status,
     summary: status === "safe"
-      ? "Protected sharing mode is active. CallPilot stays visible to you while using best-effort capture protection."
+      ? stealthState.overlayVisible
+        ? "Protected sharing mode is active. CallPilot stays visible to you while using best-effort capture protection."
+        : "Full private sharing mode is active. CallPilot is hidden locally with best-effort capture protection and passthrough enabled."
       : stealthState.overlayVisible
         ? "CallPilot is visible locally, but capture protection is not enabled."
         : "CallPilot is hidden locally; protected interview overlays should stay visible to you.",
