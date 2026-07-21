@@ -1,0 +1,18 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Tiny clarification before you touch anything: if the same id appears later with a different type, the first event wins. We do not recategorize it."
+  },
+  {
+    "role": "candidate",
+    "text": "So if a1 is click first and purchase later, we keep click and ignore the later line entirely?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly. Just say how you'd keep that straight for now. No code change yet."
+  },
+  {
+    "role": "candidate",
+    "text": "Makes sense. I was about to wonder if we need a map from id to type, but I think the current seen set is enough for that behavior."
+  }
+]

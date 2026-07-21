@@ -1,0 +1,50 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      ["malformed", "invalid", "bad line"],
+      ["ignore", "skip", "do not raise"],
+      ["sorted", "descending", "alphabet"],
+      ["keep", "preserve", "window", "existing"]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_event_types",
+    "mustContain": [
+      "def count_event_types(lines):",
+      "try",
+      "except",
+      "continue",
+      "sorted",
+      "counts.items()"
+    ],
+    "mustContainAny": [
+      "-item[1]",
+      "-pair[1]",
+      "reverse=True"
+    ],
+    "mustPreserve": [
+      "recent_events",
+      "seen_ids",
+      "counts",
+      "event_type"
+    ],
+    "mustNotContain": [
+      "deque",
+      "popleft",
+      "raise",
+      "input(",
+      "pytest",
+      "unittest"
+    ],
+    "semanticExpectations": [
+      "Debe ignorar lineas malformadas sin lanzar.",
+      "Debe cambiar el retorno a lista de tuplas ordenada por count desc y tipo asc.",
+      "Debe conservar la logica de ventana y set.",
+      "No debe introducir deque todavia."
+    ],
+    "semanticChecks": {
+      "sortedEventMetrics": true
+    }
+  }
+}

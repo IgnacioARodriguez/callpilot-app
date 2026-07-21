@@ -1,0 +1,14 @@
+[
+  {
+    "role": "candidate",
+    "text": "I'll write the simple version first. It is probably not the final version, but it matches what you asked so far."
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes, start there. Please keep it in a function rather than reading input."
+  },
+  {
+    "role": "candidate",
+    "text": "I'll call it count_event_types and keep lines as a list parameter. For now I won't guard every malformed line because you didn't ask yet."
+  }
+]

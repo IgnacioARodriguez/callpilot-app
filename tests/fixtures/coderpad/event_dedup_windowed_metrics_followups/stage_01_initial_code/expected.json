@@ -1,0 +1,41 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      ["simple", "first version", "start"],
+      ["split", "parse", "pipe"],
+      ["seen_ids", "seen", "duplicate", "dedupe"],
+      ["counts", "count", "event_type"]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_event_types",
+    "mustContain": [
+      "def count_event_types(lines):",
+      "seen_ids",
+      "counts",
+      "split(\"|\")"
+    ],
+    "mustPreserve": [
+      "count_event_types",
+      "lines",
+      "counts",
+      "seen_ids",
+      "event_id",
+      "event_type"
+    ],
+    "mustNotContain": [
+      "deque",
+      "popleft",
+      "sorted(",
+      "input(",
+      "datetime",
+      "time_window"
+    ],
+    "semanticExpectations": [
+      "Debe preservar la funcion count_event_types y la estructura visible.",
+      "Debe contar solo la primera aparicion de cada event_id.",
+      "No debe adelantarse a ventana temporal, sorting ni parsing robusto."
+    ]
+  }
+}

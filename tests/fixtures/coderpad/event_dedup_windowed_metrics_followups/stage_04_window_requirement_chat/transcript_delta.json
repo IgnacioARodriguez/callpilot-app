@@ -1,0 +1,22 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Okay, now timestamps matter, but don't code it yet. A duplicate id should only be considered a duplicate if it is within five minutes of the earlier accepted event."
+  },
+  {
+    "role": "candidate",
+    "text": "Five minutes means 300 seconds if timestamps are integer seconds, right?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes. Assume the events arrive sorted by timestamp for now. I know that's a big assumption, but keep it simple."
+  },
+  {
+    "role": "candidate",
+    "text": "So I need to expire old ids as I move forward, otherwise an id from ten minutes ago would still block a new event. I won't use deque yet unless you want optimization."
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly, just explain that plan. We'll implement after."
+  }
+]

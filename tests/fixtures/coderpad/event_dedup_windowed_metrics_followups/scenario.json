@@ -1,0 +1,89 @@
+{
+  "id": "event_dedup_windowed_metrics_followups",
+  "difficulty": "hard",
+  "language": "python",
+  "sessionMode": "single_session",
+  "visualSourceOfTruth": "latest_screenshot",
+  "stages": [
+    {
+      "id": "transcript_only_problem_intro",
+      "order": 0,
+      "purpose": "Oral introduction and initial planning with no screenshot.",
+      "answerAction": "chat",
+      "image": null,
+      "code": null,
+      "transcript_delta": "stage_00_transcript_only/transcript_delta.json",
+      "expected": "stage_00_transcript_only/expected.json"
+    },
+    {
+      "id": "initial_implementation",
+      "order": 1,
+      "purpose": "First rudimentary implementation.",
+      "answerAction": "both",
+      "image": "stage_01_initial_code/coderpad.png",
+      "code": "stage_01_initial_code/code.py",
+      "transcript_delta": "stage_01_initial_code/transcript_delta.json",
+      "expected": "stage_01_initial_code/expected.json"
+    },
+    {
+      "id": "duplicate_semantics_clarification",
+      "order": 2,
+      "purpose": "Clarify duplicate semantics without changing code yet.",
+      "answerAction": "chat",
+      "image": "stage_02_duplicate_semantics_chat/coderpad.png",
+      "code": "stage_02_duplicate_semantics_chat/code.py",
+      "transcript_delta": "stage_02_duplicate_semantics_chat/transcript_delta.json",
+      "expected": "stage_02_duplicate_semantics_chat/expected.json"
+    },
+    {
+      "id": "visible_duplicate_count_bug",
+      "order": 3,
+      "purpose": "Visible bug where duplicate events are counted before dedupe.",
+      "answerAction": "coding",
+      "image": "stage_03_visible_duplicate_bug/coderpad.png",
+      "code": "stage_03_visible_duplicate_bug/code.py",
+      "transcript_delta": "stage_03_visible_duplicate_bug/transcript_delta.json",
+      "expected": "stage_03_visible_duplicate_bug/expected.json"
+    },
+    {
+      "id": "sliding_window_requirement",
+      "order": 4,
+      "purpose": "Discuss five-minute window requirement before implementing.",
+      "answerAction": "chat",
+      "image": "stage_04_window_requirement_chat/coderpad.png",
+      "code": "stage_04_window_requirement_chat/code.py",
+      "transcript_delta": "stage_04_window_requirement_chat/transcript_delta.json",
+      "expected": "stage_04_window_requirement_chat/expected.json"
+    },
+    {
+      "id": "window_membership_stale_bug",
+      "order": 5,
+      "purpose": "Fix stale event ids after window expiration.",
+      "answerAction": "both",
+      "image": "stage_05_window_bug/coderpad.png",
+      "code": "stage_05_window_bug/code.py",
+      "transcript_delta": "stage_05_window_bug/transcript_delta.json",
+      "expected": "stage_05_window_bug/expected.json"
+    },
+    {
+      "id": "return_contract_and_malformed_input",
+      "order": 6,
+      "purpose": "Handle malformed input and change return contract.",
+      "answerAction": "coding",
+      "image": "stage_06_contract_and_malformed/coderpad.png",
+      "code": "stage_06_contract_and_malformed/code.py",
+      "transcript_delta": "stage_06_contract_and_malformed/transcript_delta.json",
+      "expected": "stage_06_contract_and_malformed/expected.json"
+    },
+    {
+      "id": "final_tests_and_deque_optimization",
+      "order": 7,
+      "purpose": "Add tests and optimize window eviction with deque.",
+      "answerAction": "both",
+      "image": "stage_07_tests_and_deque/coderpad.png",
+      "code": "stage_07_tests_and_deque/code.py",
+      "transcript_delta": "stage_07_tests_and_deque/transcript_delta.json",
+      "expected": "stage_07_tests_and_deque/expected.json"
+    }
+  ]
+}

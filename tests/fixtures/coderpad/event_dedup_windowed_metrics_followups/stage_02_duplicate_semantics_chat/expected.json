@@ -1,0 +1,36 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      ["first", "first event", "first occurrence"],
+      ["ignore", "skip", "duplicate"],
+      ["seen", "seen_ids", "set"],
+      ["no code", "no change", "current", "enough"]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_event_types",
+    "mustContain": [
+      "def count_event_types(lines):",
+      "seen_ids",
+      "counts"
+    ],
+    "mustPreserve": [
+      "count_event_types",
+      "seen_ids",
+      "counts"
+    ],
+    "mustNotContain": [
+      "id_to_type",
+      "deque",
+      "popleft",
+      "sorted(",
+      "window"
+    ],
+    "semanticExpectations": [
+      "Debe tratar este checkpoint como chat-only.",
+      "Debe explicar que la primera aparicion gana.",
+      "No debe reescribir la solucion ni introducir estructuras futuras."
+    ]
+  }
+}

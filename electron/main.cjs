@@ -1906,8 +1906,13 @@ const remoteControlPage = () => `<!doctype html>
     .scroll-pad { border: 3px solid #111111; border-radius: 32px; background: #ffffff; color: #111111; display: grid; place-items: center; min-height: 360px; touch-action: none; user-select: none; }
     .scroll-pad strong { font-size: 22px; }
     .buttons { display: grid; gap: 10px; }
-    button { min-height: 58px; border: 3px solid #111111; border-radius: 9px; background: #ffffff; color: #ff3045; font: inherit; font-size: 20px; font-weight: 850; touch-action: manipulation; }
-    button:active { transform: translateY(1px); background: #f3f3f3; }
+    button { min-height: 58px; border: 3px solid #111111; border-radius: 9px; background: #ffffff; color: #111111; font: inherit; font-size: 20px; font-weight: 850; touch-action: manipulation; }
+    button:active { transform: translateY(1px); filter: brightness(0.96); }
+    .button-answer { background: #16a34a; color: #ffffff; border-color: #0f6b32; }
+    .button-answer-code { background: #2563eb; color: #ffffff; border-color: #1d4ed8; }
+    .button-screenshot { background: #f59e0b; color: #111111; border-color: #b45309; }
+    .button-reset { background: #dc2626; color: #ffffff; border-color: #991b1b; }
+    .button-stop { background: #f3f4f6; color: #111111; border-color: #6b7280; }
     .hidden { display: none; }
   </style>
 </head>
@@ -1919,12 +1924,11 @@ const remoteControlPage = () => `<!doctype html>
       <strong>Scroll</strong>
     </section>
     <div class="buttons">
-      <button data-action="answer">Answer</button>
-      <button data-action="stop_answer">Stop</button>
-      <button data-action="reset_exercise" data-live-only>Reset</button>
-      <button data-action="reset_session" data-technical-only>Reset</button>
-      <button data-action="reset_session" data-live-only>Restart Session</button>
-      <button data-action="screenshot" data-live-only>Screenshot</button>
+      <button class="button-answer" data-action="answer">Answer</button>
+      <button class="button-answer-code" data-action="answer_code" data-live-only>Answer code</button>
+      <button class="button-screenshot" data-action="screenshot" data-live-only>Screenshot</button>
+      <button class="button-reset" data-action="reset_session">Reset</button>
+      <button class="button-stop" data-action="stop_answer">Stop</button>
     </div>
   </main>
   <script>
@@ -2059,7 +2063,7 @@ const handleRemoteControlCommand = (command) => {
     finishSessionTrace();
     return { ok: true };
   }
-  if (["stop_answer", "reset_exercise", "reset_session", "screenshot", "scroll"].includes(type)) {
+  if (["answer_code", "stop_answer", "reset_exercise", "reset_session", "screenshot", "scroll"].includes(type)) {
     sendRemoteControlCommand(normalized);
     return { ok: true };
   }

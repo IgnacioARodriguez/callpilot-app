@@ -439,6 +439,17 @@ export default function OverlayApp() {
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onRemoteControlCommand?.((command) => {
+      if (command.type === "reset_session" || command.type === "reset_exercise") {
+        setMessages([]);
+        setActiveAnswerRequestId(null);
+        setIsRequestingAnswer(false);
+        setActivity({ state: "idle", label: "Reset", updatedAt: Date.now() });
+        activeAssistantId.current = null;
+        assistantIdByRequest.current = {};
+        lastSequenceByRequest.current = {};
+        liveTranscriptByRole.current = {};
+        return;
+      }
       if (command.type !== "scroll" || command.target !== "chat") return;
       messagesRef.current?.scrollBy({ top: command.delta ?? 0, behavior: "smooth" });
     });

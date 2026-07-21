@@ -175,6 +175,54 @@ const createEmptyCodingPayload = (): CodingAnswerPayload => ({
   patch: { kind: "none", code: null },
 });
 
+type LiveCodingScreenCapture = {
+  index: number;
+  visibleText: string;
+  screenshotPath: string;
+  displayName: string;
+  capturedAt: number;
+};
+
+const normalizeScreenLine = (line: string): string =>
+  line.replace(/\s+/g, " ").trim().toLowerCase();
+
+const mergeScreenTextWithOverlap = (left: string, right: string): string => {
+  const leftLines = left.replace(/\r/g, "").split("\n");
+  const rightLines = right.replace(/\r/g, "").split("\n");
+  const maxOverlap = Math.min(14, leftLines.length, rightLines.length);
+  let overlap = 0;
+  for (let size = maxOverlap; size >= 2; size -= 1) {
+    const leftTail = leftLines.slice(-size).map(normalizeScreenLine).join("\n");
+    const rightHead = rightLines.slice(0, size).map(normalizeScreenLine).join("\n");
+    if (leftTail && leftTail === rightHead) {
+      overlap = size;
+      break;
+    }
+  }
+  return [...leftLines, ...rightLines.slice(overlap)].join("\n").trim();
+};
+
+const formatLiveCodingScreenCaptures = (captures: LiveCodingScreenCapture[]): string => {
+  if (captures.length === 0) return "";
+  const mergedText = captures.reduce(
+    (current, capture) => current ? mergeScreenTextWithOverlap(current, capture.visibleText) : capture.visibleText.trim(),
+    "",
+  );
+  const metadata = captures.map((capture) => [
+    `capture ${capture.index}: ${capture.screenshotPath || "no screenshot path"}`,
+    capture.displayName ? `display: ${capture.displayName}` : "",
+  ].filter(Boolean).join(" | "));
+  return [
+    `Combined live coding screenshots: ${captures.length} ready`,
+    "The following OCR text is ordered from earlier/top capture to later/lower capture. Adjacent captures may overlap; repeated lines were deduplicated when exact OCR overlap was detected.",
+    "",
+    mergedText,
+    "",
+    "Capture metadata:",
+    ...metadata,
+  ].filter(Boolean).join("\n");
+};
+
 const loadSavedSession = (): Partial<SavedSession> => {
   try {
     const raw = window.localStorage.getItem(CURRENT_SESSION_KEY);
@@ -328,6 +376,7 @@ function App() {
   const [privacyCheck, setPrivacyCheck] = React.useState<PrivacyCheckResult | null>(null);
   const transcriptBuffer = React.useMemo(() => new TranscriptBuffer(transcript), [transcript]);
   const transcriptRef = React.useRef(transcript);
+  const liveCodingScreenCapturesRef = React.useRef<LiveCodingScreenCapture[]>([]);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const recordingChunksRef = React.useRef<BlobPart[]>([]);
   const recordingStreamRef = React.useRef<MediaStream | null>(null);
@@ -1403,11 +1452,12 @@ function App() {
   const getManualAnswerPrompt = React.useCallback(() => {
     const latestPrompt = getLatestInterviewPrompt().trim();
     const screen = screenText.trim();
+    const screenBudget = activeMode === "live_coding" ? 6000 : 1800;
     if (latestPrompt) {
       if (activeMode === "live_coding" && screen) {
         return [
           latestPrompt,
-          `visible_screen: ${screen.slice(-1800)}`,
+          `visible_screen: ${screen.slice(-screenBudget)}`,
           currentCodingPayload?.solution.code.trim()
             ? [
               "current_live_coding_solution:",
@@ -1432,7 +1482,7 @@ function App() {
       activeMode === "live_coding"
         ? "task: Use the latest transcript and visible coding context to provide the next useful coding help, solution, explanation, or correction."
         : "task: Use the latest transcript and interview context to provide the next useful thing to say, or a brief clarification if no answer is needed.",
-      screen ? `visible_screen: ${screen.slice(-1800)}` : "",
+      screen ? `visible_screen: ${screen.slice(-screenBudget)}` : "",
       activeMode === "live_coding" && currentCodingPayload?.solution.code.trim()
         ? [
           "current_live_coding_solution:",
@@ -1476,11 +1526,14 @@ function App() {
     setFollowUpChange("");
     setCurrentCodingPayload(null);
     setTranscriptDraft("");
+    liveCodingScreenCapturesRef.current = [];
     window.localStorage.removeItem(CURRENT_SESSION_KEY);
   }, [transcript]);
 
   const resetSessionRuntimeContext = React.useCallback(() => {
     const now = Date.now();
+    const activeRequestId = activeAnswerRequestIdRef.current;
+    if (activeRequestId) void window.callpilotDesktop?.cancelAnswer?.(activeRequestId).catch(() => undefined);
     const emptyTranscript = new TranscriptBuffer().snapshot();
     setSessionIdentity({ id: `session-${now}`, title: undefined, createdAt: new Date(now).toISOString() });
     setTranscript(emptyTranscript);
@@ -1498,6 +1551,8 @@ function App() {
     activeAnswerRequestIdRef.current = null;
     firstDetailChunkSeenRef.current = false;
     recentSpeechRef.current = [];
+    liveCodingScreenCapturesRef.current = [];
+    lastAutoAnsweredAtRef.current = 0;
     recentPublishedTranscriptRef.current = { speaker: "unknown", text: "", timestamp: 0 };
     lastNativelyPartialAnswerRef.current = { text: "", timestamp: 0 };
     nativelyPartialStabilityRef.current = {};
@@ -1508,6 +1563,8 @@ function App() {
   }, []);
 
   const resetLiveCodingExercise = React.useCallback(() => {
+    const activeRequestId = activeAnswerRequestIdRef.current;
+    if (activeRequestId) void window.callpilotDesktop?.cancelAnswer?.(activeRequestId).catch(() => undefined);
     const emptyTranscript = new TranscriptBuffer().snapshot();
     setTranscript(emptyTranscript);
     transcriptRef.current = emptyTranscript;
@@ -1522,6 +1579,8 @@ function App() {
     activeLatencyRunIdRef.current = null;
     activeAnswerRequestIdRef.current = null;
     firstDetailChunkSeenRef.current = false;
+    liveCodingScreenCapturesRef.current = [];
+    lastAutoAnsweredAtRef.current = 0;
     turnAssemblerRef.current = createTurnAssemblerState();
     setIsGenerating(false);
     isGeneratingRef.current = false;
@@ -1548,6 +1607,16 @@ function App() {
     setLiveAssistStatus("New session ready");
     setSessionMessage("New session started with a clean slate");
   }, [resetSessionRuntimeContext]);
+
+  const dispatchResetCommand = React.useCallback(async (type: "reset_exercise" | "reset_session") => {
+    const result = await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type }).catch(() => undefined);
+    if (result?.ok) return;
+    if (type === "reset_exercise") {
+      resetLiveCodingExercise();
+      return;
+    }
+    resetFullSession();
+  }, [resetFullSession, resetLiveCodingExercise]);
 
   const handleFinalTranscript = React.useCallback((text: string, source: "manual" | "stt" = "stt", speaker: TranscriptSpeaker = "interviewer") => {
     const normalized = normalizeTechnicalTranscript(text).trim();
@@ -3216,6 +3285,13 @@ function App() {
       setRemoteControlStatus(status);
     });
     const disposeCommand = window.callpilotDesktop?.onRemoteControlCommand?.((command) => {
+      if (command.type === "answer_code") {
+        const prompt = [
+          getManualAnswerPrompt(),
+          "remote_action: Answer code was pressed. Prioritize the coding workspace: return or update the complete solution.code when a concrete code answer is appropriate, while keeping any chat narration short.",
+        ].filter(Boolean).join("\n");
+        void ask(prompt);
+      }
       if (command.type === "stop_answer") void cancelAnswer();
       if (command.type === "reset_exercise") resetLiveCodingExercise();
       if (command.type === "reset_session") resetFullSession();
@@ -3225,7 +3301,7 @@ function App() {
       disposeStatus?.();
       disposeCommand?.();
     };
-  }, [activeMode, cancelAnswer, captureScreenshot, resetFullSession, resetLiveCodingExercise]);
+  }, [activeMode, ask, cancelAnswer, captureScreenshot, getManualAnswerPrompt, resetFullSession, resetLiveCodingExercise]);
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onManualAnswerRequest?.((payload) => {
@@ -3289,20 +3365,44 @@ function App() {
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onScreenContextPublished?.((payload) => {
-      const nextScreenText = [
-        payload.visibleText?.trim() ? payload.visibleText.trim() : "",
-        payload.screenshotPath ? `Screenshot: ${payload.screenshotPath}` : "",
-        payload.displayName ? `Display: ${payload.displayName}` : "",
-        payload.source ? `Source: ${payload.source}` : "",
-      ].filter(Boolean).join("\n");
+      const visibleText = payload.visibleText?.trim() ? payload.visibleText.trim() : "";
+      const shouldAccumulate = activeMode === "live_coding"
+        && payload.source === "coding_overlay"
+        && Boolean(visibleText);
+      const nextScreenText = shouldAccumulate
+        ? (() => {
+          const captures = [
+            ...liveCodingScreenCapturesRef.current,
+            {
+              index: liveCodingScreenCapturesRef.current.length + 1,
+              visibleText,
+              screenshotPath: payload.screenshotPath ?? "",
+              displayName: payload.displayName ?? "",
+              capturedAt: typeof payload.capturedAt === "number" ? payload.capturedAt : Date.now(),
+            },
+          ].slice(-5);
+          liveCodingScreenCapturesRef.current = captures.map((capture, index) => ({ ...capture, index: index + 1 }));
+          return formatLiveCodingScreenCaptures(liveCodingScreenCapturesRef.current);
+        })()
+        : (() => {
+          liveCodingScreenCapturesRef.current = [];
+          return [
+            visibleText,
+            payload.screenshotPath ? `Screenshot: ${payload.screenshotPath}` : "",
+            payload.displayName ? `Display: ${payload.displayName}` : "",
+            payload.source ? `Source: ${payload.source}` : "",
+          ].filter(Boolean).join("\n");
+        })();
       if (!nextScreenText.trim()) return;
       updateScreenContext(nextScreenText);
       setDesktopStatus(payload.screenshotPath
-        ? "Live coding screenshot set as active screen context"
+        ? shouldAccumulate
+          ? `${liveCodingScreenCapturesRef.current.length} live coding screenshot${liveCodingScreenCapturesRef.current.length === 1 ? "" : "s"} ready`
+          : "Live coding screenshot set as active screen context"
         : "Live coding screen context updated");
     });
     return () => dispose?.();
-  }, []);
+  }, [activeMode]);
 
   React.useEffect(() => {
     const e2eEnabled = window.localStorage.getItem("callpilot_e2e_desktop_smoke") === "1";
@@ -3613,12 +3713,12 @@ function App() {
                 </button>
               )}
               {selectedSetup === "live_coding" && (
-                <button className="status" onClick={resetLiveCodingExercise}>
+                <button className="status" onClick={() => void dispatchResetCommand("reset_exercise")}>
                   <RotateCcw size={16} />
                   New exercise
                 </button>
               )}
-              <button className="status" onClick={resetFullSession}>
+              <button className="status" onClick={() => void dispatchResetCommand("reset_session")}>
                 <Trash2 size={16} />
                 New session
               </button>

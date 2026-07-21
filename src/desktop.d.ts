@@ -87,7 +87,7 @@ export interface ShortcutHealth {
 }
 
 export type RemoteControlCommand =
-  | { type: "stop_answer" | "reset_exercise" | "reset_session" | "screenshot"; timestamp?: number }
+  | { type: "answer_code" | "stop_answer" | "reset_exercise" | "reset_session" | "screenshot"; timestamp?: number }
   | { type: "scroll"; target?: "chat" | "code" | "reasoning"; delta?: number; timestamp?: number };
 
 export interface RemoteControlStatus {

@@ -1,0 +1,26 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Hey Ignacio, before we jump in, how's the day going?"
+  },
+  {
+    "role": "candidate",
+    "text": "Good, thanks. I have CoderPad open but I don't see the full prompt yet, so I'll probably repeat assumptions back as we go."
+  },
+  {
+    "role": "interviewer",
+    "text": "That's fine. We'll do something a bit messy but not huge at first. Imagine we get event log lines in the format timestamp pipe event_id pipe event_type. For now I want counts by event_type, but if the same event_id appears more than once, only count the first occurrence."
+  },
+  {
+    "role": "candidate",
+    "text": "Okay, so parse each line, track ids I've already accepted, and increment the type count only for the first time I see an id. Are timestamps relevant yet?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Not yet. Don't over-engineer it yet. The timestamp is there because we'll probably use it later, but the first version can be simple."
+  },
+  {
+    "role": "candidate",
+    "text": "Got it. I might start with split on the pipe and a dictionary for counts. I won't try to normalize the type unless you ask."
+  }
+]

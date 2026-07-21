@@ -1,0 +1,49 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      ["deque", "popleft"],
+      ["test", "assert"],
+      ["duplicate", "expiry", "malformed", "sorting"],
+      ["O(1)", "complexity", "front removal"]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_event_types",
+    "mustContain": [
+      "from collections import deque",
+      "deque",
+      "popleft",
+      "assert",
+      "sorted",
+      "counts.items()"
+    ],
+    "mustContainAny": [
+      "-item[1]",
+      "-pair[1]",
+      "reverse=True"
+    ],
+    "mustPreserve": [
+      "count_event_types",
+      "seen_ids",
+      "recent_events",
+      "counts"
+    ],
+    "mustNotContain": [
+      "pop(0)",
+      "pytest",
+      "unittest",
+      "input("
+    ],
+    "semanticExpectations": [
+      "Debe optimizar la cola de eventos recientes con deque y popleft.",
+      "Debe mantener set y deque sincronizados al expirar eventos.",
+      "Debe incluir asserts para duplicado dentro de ventana, duplicado despues de expirar, malformed input y sorting.",
+      "Debe explicar complejidad sin cambiar el contrato final."
+    ],
+    "semanticChecks": {
+      "sortedEventMetrics": true,
+      "usesDequeWindow": true
+    }
+  }
+}

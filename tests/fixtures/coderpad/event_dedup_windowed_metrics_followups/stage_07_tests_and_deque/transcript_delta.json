@@ -1,0 +1,22 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Last pass: add quick asserts and optimize the front removal. `pop(0)` is okay for the toy version, but call out and fix the cost."
+  },
+  {
+    "role": "candidate",
+    "text": "So use collections.deque for recent events, because popleft is O(1). Keep the set in sync exactly like before."
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes. Include tests for duplicate within window, duplicate after expiry, malformed line, and sorting ties."
+  },
+  {
+    "role": "candidate",
+    "text": "I will add simple asserts below the function. No pytest, just direct checks."
+  },
+  {
+    "role": "interviewer",
+    "text": "Great. Also explain complexity. Then we're done."
+  }
+]

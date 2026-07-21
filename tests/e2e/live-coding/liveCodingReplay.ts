@@ -65,6 +65,8 @@ type CodingWorkspaceExpected = {
   semanticExpectations?: string[];
   semanticChecks?: {
     sortedWordFrequency?: boolean;
+    sortedEventMetrics?: boolean;
+    usesDequeWindow?: boolean;
   };
 };
 
@@ -90,6 +92,8 @@ type LoadedCodingWorkspaceExpected = {
   semanticExpectations: string[];
   semanticChecks: {
     sortedWordFrequency: boolean;
+    sortedEventMetrics: boolean;
+    usesDequeWindow: boolean;
   };
 };
 
@@ -109,6 +113,7 @@ type LoadedScenarioExpected = {
 type ScenarioStage = {
   id: string;
   order: number;
+  answerAction?: "chat" | "coding" | "both";
   image: string | null;
   code: string | null;
   transcript_delta: string;
@@ -277,6 +282,8 @@ const loadCodingWorkspaceExpected = (expectedRules: CodingWorkspaceExpected): Lo
   semanticExpectations: Array.isArray(expectedRules.semanticExpectations) ? expectedRules.semanticExpectations.map(String) : [],
   semanticChecks: {
     sortedWordFrequency: Boolean(expectedRules.semanticChecks?.sortedWordFrequency),
+    sortedEventMetrics: Boolean(expectedRules.semanticChecks?.sortedEventMetrics),
+    usesDequeWindow: Boolean(expectedRules.semanticChecks?.usesDequeWindow),
   },
 });
 
@@ -406,6 +413,171 @@ const createOutputPayload = (text: string) => ({
   output: [{ type: "message", content: [{ type: "output_text", text }] }],
 });
 
+const mockEventDedupConversation = (stageId: string) => {
+  if (/transcript_only/.test(stageId)) {
+    return "I'd say: I'll keep this simple for now: parse each pipe-separated line, track seen event_id values to dedupe, and count event_type only for the first occurrence. I won't add the time window yet because the interviewer said timestamps are for later.";
+  }
+  if (/initial_implementation/.test(stageId)) {
+    return "I'd say: I'll start with the simple first version: split each pipe-separated line, use seen_ids to skip duplicate event_id values, and update counts by event_type only for accepted events.";
+  }
+  if (/duplicate_semantics/.test(stageId)) {
+    return "I'd say: the first event wins, so the current seen_ids set is enough: once an event_id is seen, later duplicates are skipped even if their type differs. No code change yet.";
+  }
+  if (/visible_duplicate_count_bug/.test(stageId)) {
+    return "I'd say: the bug is ordering. We count before checking seen_ids, so a duplicate already changed counts. I’ll move the count update after the duplicate skip.";
+  }
+  if (/sliding_window|window_requirement/.test(stageId)) {
+    return "I'd say: now the set needs to represent only the last five minutes, 300 seconds. Since timestamps arrive sorted, I can expire old recent_events as time moves forward before checking duplicates.";
+  }
+  if (/window_membership_stale_bug|window_membership|window_bug/.test(stageId)) {
+    return "I'd say: recent_events and seen_ids drifted. When an old tuple expires, I also need to discard that id from seen_ids, otherwise the set stays stale.";
+  }
+  if (/return_contract|malformed/.test(stageId)) {
+    return "I'd say: I'll keep the window logic, add guards to skip malformed lines without raising, then change only the final return to sorted event metrics by count descending and type alphabetically.";
+  }
+  if (/final_tests|deque/.test(stageId)) {
+    return "I'd say: final pass is replacing pop(0) with a deque and popleft for O(1) front removal, while keeping seen_ids synchronized. Then I’ll add direct asserts for duplicates, expiry, malformed input, and sorting ties.";
+  }
+  return "I'd say: I'll keep the existing event dedup logic and make only the next requested change.";
+};
+
+const mockEventDedupCode = (stageId: string) => {
+  if (/final_tests|deque/.test(stageId)) {
+    return [
+      "from collections import deque",
+      "",
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    recent_events = deque()",
+      "    for line in lines:",
+      "        parts = line.split(\"|\")",
+      "        if len(parts) != 3:",
+      "            continue",
+      "        timestamp_raw, event_id, event_type = parts",
+      "        if not event_id or not event_type:",
+      "            continue",
+      "        try:",
+      "            timestamp = int(timestamp_raw)",
+      "        except ValueError:",
+      "            continue",
+      "",
+      "        while recent_events and timestamp - recent_events[0][0] > 300:",
+      "            old_timestamp, old_id = recent_events.popleft()",
+      "            seen_ids.discard(old_id)",
+      "",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "",
+      "        seen_ids.add(event_id)",
+      "        recent_events.append((timestamp, event_id))",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "",
+      "    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))",
+      "",
+      "assert count_event_types([\"0|a1|click\", \"10|a1|view\"]) == [(\"click\", 1)]",
+      "assert count_event_types([\"0|a1|click\", \"301|a1|view\"]) == [(\"click\", 1), (\"view\", 1)]",
+      "assert count_event_types([\"bad line\", \"x|a1|click\", \"1||view\"]) == []",
+      "assert count_event_types([\"0|a1|view\", \"1|a2|click\"]) == [(\"click\", 1), (\"view\", 1)]",
+    ].join("\n");
+  }
+  if (/return_contract|malformed/.test(stageId)) {
+    return [
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    recent_events = []",
+      "    for line in lines:",
+      "        parts = line.split(\"|\")",
+      "        if len(parts) != 3:",
+      "            continue",
+      "        timestamp_raw, event_id, event_type = parts",
+      "        if not event_id or not event_type:",
+      "            continue",
+      "        try:",
+      "            timestamp = int(timestamp_raw)",
+      "        except ValueError:",
+      "            continue",
+      "",
+      "        while recent_events and timestamp - recent_events[0][0] > 300:",
+      "            old_timestamp, old_id = recent_events.pop(0)",
+      "            seen_ids.discard(old_id)",
+      "",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "",
+      "        seen_ids.add(event_id)",
+      "        recent_events.append((timestamp, event_id))",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "",
+      "    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))",
+    ].join("\n");
+  }
+  if (/window_membership_stale_bug|window_membership|window_bug/.test(stageId)) {
+    return [
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    recent_events = []",
+      "    for line in lines:",
+      "        timestamp, event_id, event_type = line.split(\"|\")",
+      "        timestamp = int(timestamp)",
+      "",
+      "        while recent_events and timestamp - recent_events[0][0] > 300:",
+      "            old_timestamp, old_id = recent_events.pop(0)",
+      "            seen_ids.discard(old_id)",
+      "",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "",
+      "        seen_ids.add(event_id)",
+      "        recent_events.append((timestamp, event_id))",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "    return counts",
+    ].join("\n");
+  }
+  if (/sliding_window|window_requirement/.test(stageId)) {
+    return [
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    for line in lines:",
+      "        timestamp, event_id, event_type = line.split(\"|\")",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "        seen_ids.add(event_id)",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "    return counts",
+    ].join("\n");
+  }
+  if (/visible_duplicate_count_bug/.test(stageId)) {
+    return [
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    for line in lines:",
+      "        timestamp, event_id, event_type = line.split(\"|\")",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "        seen_ids.add(event_id)",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "    return counts",
+    ].join("\n");
+  }
+  return [
+    "def count_event_types(lines):",
+    "    counts = {}",
+    "    seen_ids = set()",
+    "    for line in lines:",
+    "        timestamp, event_id, event_type = line.split(\"|\")",
+    "        if event_id in seen_ids:",
+    "            continue",
+    "        seen_ids.add(event_id)",
+    "        counts[event_type] = counts.get(event_type, 0) + 1",
+    "    return counts",
+  ].join("\n");
+};
+
 const mockOpenAI = http.createServer((request, response) => {
   if (request.method !== "POST" || request.url !== "/v1/responses") {
     response.writeHead(404);
@@ -424,9 +596,30 @@ const mockOpenAI = http.createServer((request, response) => {
     const wantsConversationAssist = payload.stream === true
       && !payload.text?.format
       && /conversation side-channel|panel izquierdo|chat/i.test(`${instructions}\n${input}`);
-    const stageId = input.match(/stage_id:\s*([^\n]+)/i)?.[1]?.trim() ?? "";
+    const stageId = input.match(/stage_id:\s*([A-Za-z0-9_-]+)/i)?.[1]?.trim() ?? "";
     const latestActionableInput = input.match(/<latest_actionable_input>\s*([\s\S]*?)\s*<\/latest_actionable_input>/i)?.[1] ?? "";
     const actionText = latestActionableInput || input;
+    const wantsEventDedup = /event_dedup_windowed_metrics_followups|count_event_types|event_id|event_type|recent_events/.test(input);
+    if (wantsEventDedup) {
+      if (wantsConversationAssist) {
+        const conversationText = mockEventDedupConversation(stageId);
+        if (payload.stream === true) {
+          response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+          response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: conversationText })}\n\n`);
+          response.write("data: [DONE]\n\n");
+          response.end();
+          return;
+        }
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(createOutputPayload(conversationText)));
+        return;
+      }
+      const code = mockEventDedupCode(stageId);
+      const structured = makeCodingPayload(code, /bug|requirement|contract|final_tests/.test(stageId) ? "follow_up_change" : "initial_solution", "Event dedup windowed metrics");
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(createOutputPayload(JSON.stringify(structured))));
+      return;
+    }
     const inferredFunctionName = /sentence|word appears|count_words|count words|frequency/i.test(latestActionableInput || input)
       ? "count_words"
       : "";
@@ -760,6 +953,7 @@ const publishTranscriptDelta = async (client: CdpClient, scenarioId: string, sta
 const transcriptPrompt = (scenarioId: string, stage: LoadedScenarioStage) => [
   `scenario_id: ${scenarioId}`,
   `stage_id: ${stage.id}`,
+  `answer_action: ${stage.answerAction ?? "both"}`,
   stage.imagePath
     ? "Use the latest CoderPad screenshot as the source of truth."
     : "There is no current screenshot for this stage; answer from the technical transcript only and ignore small talk.",
@@ -784,6 +978,21 @@ const validatesSortedWordFrequency = (code: string) => {
     && /\.items\s*\(\s*\)/.test(code)
     && (countDescThenWordAsc || helperTuple);
 };
+
+const validatesSortedEventMetrics = (code: string) => {
+  const compact = code.replace(/\s+/g, " ");
+  const lambdaSort = /key\s*=\s*lambda\s+([A-Za-z_][\w]*)\s*:\s*\(\s*-\s*\1\s*\[\s*1\s*\]\s*,\s*\1\s*\[\s*0\s*\]\s*\)/.test(compact);
+  const namedSortKey = /return\s+\(\s*-\s*[A-Za-z_][\w]*\s*\[\s*1\s*\]\s*,\s*[A-Za-z_][\w]*\s*\[\s*0\s*\]\s*\)/.test(compact);
+  return /\bsorted\s*\(/.test(code)
+    && /\.items\s*\(\s*\)/.test(code)
+    && (lambdaSort || namedSortKey || /reverse\s*=\s*True/.test(code));
+};
+
+const validatesDequeWindow = (code: string) =>
+  /from\s+collections\s+import\s+deque/.test(code)
+  && /\bdeque\s*\(/.test(code)
+  && /\.popleft\s*\(/.test(code)
+  && /seen_ids\.(?:discard|remove)\s*\(/.test(code);
 
 const validateScenarioStageAnswer = (
   scenarioId: string,
@@ -818,6 +1027,12 @@ const validateScenarioStageAnswer = (
   }
   if (codingRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
     failures.push("code does not sort word frequencies by descending count and ascending word");
+  }
+  if (codingRules.semanticChecks.sortedEventMetrics && !validatesSortedEventMetrics(code)) {
+    failures.push("code does not sort event metrics by descending count and ascending event type");
+  }
+  if (codingRules.semanticChecks.usesDequeWindow && !validatesDequeWindow(code)) {
+    failures.push("code does not use deque/popleft while keeping seen_ids synchronized");
   }
   if (conversationRules) {
     if (!conversationAssist) failures.push("conversation assist is empty");
@@ -1120,6 +1335,7 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
     stages.push({
       id: stage.id,
       order: stage.order,
+      answerAction: stage.answerAction ?? "both",
       ok: validation.ok,
       failures: validation.failures,
       screenshot: stage.imagePath,

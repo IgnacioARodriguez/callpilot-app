@@ -1,0 +1,50 @@
+[
+  {
+    "stage": "transcript_only_problem_intro",
+    "image": null,
+    "action": "chat",
+    "instructions": null
+  },
+  {
+    "stage": "initial_implementation",
+    "image": "stage_01_initial_code/coderpad.png",
+    "action": "both",
+    "instructions": "stage_01_initial_code/capture_instructions.md"
+  },
+  {
+    "stage": "duplicate_semantics_clarification",
+    "image": "stage_02_duplicate_semantics_chat/coderpad.png",
+    "action": "chat",
+    "instructions": "stage_02_duplicate_semantics_chat/capture_instructions.md"
+  },
+  {
+    "stage": "visible_duplicate_count_bug",
+    "image": "stage_03_visible_duplicate_bug/coderpad.png",
+    "action": "coding",
+    "instructions": "stage_03_visible_duplicate_bug/capture_instructions.md"
+  },
+  {
+    "stage": "sliding_window_requirement",
+    "image": "stage_04_window_requirement_chat/coderpad.png",
+    "action": "chat",
+    "instructions": "stage_04_window_requirement_chat/capture_instructions.md"
+  },
+  {
+    "stage": "window_membership_stale_bug",
+    "image": "stage_05_window_bug/coderpad.png",
+    "action": "both",
+    "instructions": "stage_05_window_bug/capture_instructions.md"
+  },
+  {
+    "stage": "return_contract_and_malformed_input",
+    "image": "stage_06_contract_and_malformed/coderpad.png",
+    "action": "coding",
+    "instructions": "stage_06_contract_and_malformed/capture_instructions.md"
+  },
+  {
+    "stage": "final_tests_and_deque_optimization",
+    "image": "stage_07_tests_and_deque/coderpad.png",
+    "action": "both",
+    "instructions": "stage_07_tests_and_deque/capture_instructions.md"
+  }
+]
