@@ -368,6 +368,51 @@ test("live coding retry detects solutions that rename visible starter code", () 
   assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), true);
   assert.equal(shouldRetryLiveCodingCompleteness(structured, prompt.user, JSON.stringify(structured)), true);
   assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /visible Python def\/class starter code/i);
+  assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /def hello\(\):/);
+});
+
+test("live coding continuity detects OCR Python functions when the colon is missing", () => {
+  const screenContext = classifyScreenText([
+    "1 def hello()",
+    "2     return \"hello\"",
+    "5 debe retornar el nombre del usuario",
+  ].join("\n"));
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "spanish", screenContext }),
+    "user_request: The candidate pressed Answer. task: Use visible coding context.",
+  );
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Retornar nombre de usuario", summary: "Retornar el nombre del usuario", language: "Python", functionSignature: "def get_user_name()", constraints: [] },
+      solution: {
+        approachSteps: ["Return a username."],
+        code: "def get_user_name():\n    # Return a static username.\n    return \"Ejemplo Usuario\"",
+        complexity: { time: "O(1)", space: "O(1)", rationale: "Single return value." },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "Devuelvo un nombre de usuario.", currentStep: "Implement function" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.deepEqual(extractVisiblePythonSymbols(prompt.user), [{ kind: "function", name: "hello", signature: "def hello():" }]);
+  assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), true);
+  assert.equal(shouldRetryLiveCodingCompleteness(structured, prompt.user, JSON.stringify(structured)), true);
+  assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /Visible Python continuity contract:/);
+  assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /def hello\(\):/);
 });
 
 test("live coding retry detects Python signature changes without explicit request", () => {

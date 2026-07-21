@@ -71,7 +71,12 @@ const normalizePythonSignature = (signature: string): string =>
 export const extractVisiblePythonSymbols = (promptUser: string): VisiblePythonSymbol[] => {
   const text = screenContextText(promptUser);
   const symbols = new Map<string, VisiblePythonSymbol>();
-  for (const match of text.matchAll(/\b(async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)\n]*)\)\s*(?:->\s*([^:\n]+))?\s*:/g)) {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const functionPattern = /^\s*(?:\d+\s+)?(async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)\n]*)\)\s*(?:->\s*([^:\n;]+))?\s*:?\s*$/;
+  const classPattern = /^\s*(?:\d+\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*\(([^)\n]*)\))?\s*:?\s*$/;
+  for (const line of lines) {
+    const match = line.match(functionPattern);
+    if (!match) continue;
     const prefix = match[1] ?? "def";
     const name = match[2]?.trim();
     if (!name) continue;
@@ -80,7 +85,9 @@ export const extractVisiblePythonSymbols = (promptUser: string): VisiblePythonSy
     const signature = normalizePythonSignature(`${prefix} ${name}(${params})${returnType ? ` -> ${returnType}` : ""}:`);
     symbols.set(`function:${name}`, { kind: "function", name, signature });
   }
-  for (const match of text.matchAll(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*\(([^)\n]*)\))?\s*:/g)) {
+  for (const line of lines) {
+    const match = line.match(classPattern);
+    if (!match) continue;
     const name = match[1]?.trim();
     if (!name) continue;
     const bases = match[2];
@@ -92,6 +99,17 @@ export const extractVisiblePythonSymbols = (promptUser: string): VisiblePythonSy
 
 export const extractVisibleCodeSymbols = (promptUser: string): string[] =>
   extractVisiblePythonSymbols(promptUser).map((symbol) => symbol.name);
+
+const visiblePythonContinuityContract = (promptUser: string): string => {
+  const symbols = extractVisiblePythonSymbols(promptUser);
+  if (symbols.length === 0) return "";
+  const signatures = symbols.map((symbol) => `- ${symbol.signature}`).join("\n");
+  return [
+    "Visible Python continuity contract:",
+    signatures,
+    "The final solution.code must keep these visible names and function signatures unless the latest request explicitly asks to rename or change them.",
+  ].join("\n");
+};
 
 export const violatesVisibleCodeContinuity = (
   structured: StructuredAnswerPayload | null,
@@ -142,6 +160,7 @@ export const shouldRetryLiveCodingCompleteness = (
 };
 
 export const buildLiveCodingCompletenessRetryPrompt = (prompt: BuiltPrompt): BuiltPrompt => {
+  const continuityContract = visiblePythonContinuityContract(prompt.user);
   const retryInstruction = [
     "Your last answer was incomplete or returned an empty scaffold.",
     "Fill the coding payload with a real solution, brief inline comments, time/space complexity, and the key invariant.",
@@ -152,10 +171,10 @@ export const buildLiveCodingCompletenessRetryPrompt = (prompt: BuiltPrompt): Bui
   ].join(" ");
   return {
     ...prompt,
-    user: `${prompt.user}\n\n<answer_completeness_retry>\n${retryInstruction}\n</answer_completeness_retry>`,
+    user: `${prompt.user}\n\n<answer_completeness_retry>\n${retryInstruction}${continuityContract ? `\n\n${continuityContract}` : ""}\n</answer_completeness_retry>`,
     debug: {
       ...prompt.debug,
-      approximateChars: prompt.debug.approximateChars + retryInstruction.length,
+      approximateChars: prompt.debug.approximateChars + retryInstruction.length + continuityContract.length,
     },
   };
 };

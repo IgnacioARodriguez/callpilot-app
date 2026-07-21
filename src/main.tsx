@@ -47,6 +47,7 @@ import {
   reduceStealthState,
   repairLiveCodingAnswerCoverage,
   shouldRetryLiveCodingCompleteness,
+  violatesVisibleCodeContinuity,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
   shouldSendNativelyFrame,
@@ -930,6 +931,30 @@ function App() {
           result = retryResult;
           parsedStructured = parseStructuredAnswerPayload(result.text);
         }
+      }
+      if (
+        result.ok
+        && contextForAnswer.activeMode === "live_coding"
+        && violatesVisibleCodeContinuity(parsedStructured, builtPrompt.user)
+      ) {
+        const error = "El modelo cambió la firma Python visible después del reintento.";
+        emitAnswerTiming("live_coding_visible_code_continuity_failed", {
+          parsedStructured: Boolean(parsedStructured),
+        });
+        void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
+          requestId,
+          ok: false,
+          reason: "visible_code_continuity_failed",
+          overlapCount: 0,
+          unsupportedTerms: [],
+        });
+        result = {
+          ...result,
+          ok: false,
+          text: "",
+          error,
+        };
+        parsedStructured = null;
       }
       emitAnswerTiming("parse_completed", {
         parsedStructured: Boolean(parsedStructured),
