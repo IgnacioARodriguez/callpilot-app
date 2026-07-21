@@ -2235,11 +2235,12 @@ const assessPrivacyState = async () => {
 
 const syncWindowState = () => {
   normalizeStealthState();
+  const sessionPassthroughEnabled = Boolean(stealthState.mousePassthroughEnabled && activeSessionTrace);
   for (const windowRef of [mainWindow, overlayWindow, codingWindow]) {
     if (!windowRef) continue;
     windowRef.setAlwaysOnTop(true, "screen-saver");
     windowRef.setContentProtection(Boolean(stealthState.contentProtectionEnabled));
-    windowRef.setIgnoreMouseEvents(Boolean(stealthState.mousePassthroughEnabled), { forward: true });
+    windowRef.setIgnoreMouseEvents(windowRef !== mainWindow && sessionPassthroughEnabled, { forward: true });
   }
   if (mainWindow && stealthState.overlayVisible && !overlayWindow) {
     if (!mainWindow.isVisible()) mainWindow.showInactive();
@@ -2536,6 +2537,7 @@ ipcMain.handle("session:end", () => {
   closeOverlayWindow();
   closeCodingWindow();
   mainWindow?.show();
+  syncWindowState();
   const tracePath = finishSessionTrace();
   return { ok: true, tracePath };
 });

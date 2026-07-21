@@ -113,7 +113,8 @@ test("Electron privacy controls are gated by callPrivacyAllowed", () => {
   assert.match(main, /privacy:check/);
   assert.match(main, /CommandOrControl\+Alt\+R/);
   assert.match(main, /setContentProtection\(Boolean\(stealthState\.contentProtectionEnabled\)\)/);
-  assert.match(main, /setIgnoreMouseEvents\(Boolean\(stealthState\.mousePassthroughEnabled\)/);
+  assert.match(main, /const sessionPassthroughEnabled = Boolean\(stealthState\.mousePassthroughEnabled && activeSessionTrace\)/);
+  assert.match(main, /setIgnoreMouseEvents\(windowRef !== mainWindow && sessionPassthroughEnabled/);
   assert.match(main, /stealthState\.overlayVisible\s*=\s*stealthState\.callPrivacyAllowed\s*\?\s*Boolean\(visible\)\s*:\s*true/);
   assert.match(main, /stealthState\.contentProtectionEnabled\s*=\s*stealthState\.callPrivacyAllowed\s*\?\s*Boolean\(enabled\)\s*:\s*false/);
   assert.match(main, /stealthState\.mousePassthroughEnabled\s*=\s*stealthState\.callPrivacyAllowed\s*\?\s*Boolean\(enabled\)\s*:\s*false/);
