@@ -1,0 +1,26 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Assume this can be a hundred thousand tasks. The repeated scans won't scale. How would you improve it?"
+  },
+  {
+    "role": "candidate",
+    "text": "I'd build indegree counts and reverse dependency edges, then keep currently ready tasks in a heap ordered by priority and original position."
+  },
+  {
+    "role": "interviewer",
+    "text": "Good. Please modify the existing solution. Don't lose the malformed-input behavior or blocked reasons."
+  },
+  {
+    "role": "candidate",
+    "text": "Right. I need to preserve `normalize_tasks`, the output contract, stable ties, and the simplified missing-versus-cycle rule."
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly. Also, the code is spread across several screens now; use the current screenshots together, not the earlier version."
+  },
+  {
+    "role": "candidate",
+    "text": "Understood. I'll replace only the scheduling core with the graph and heap structures."
+  }
+]

@@ -694,6 +694,38 @@ test("acceptance: extreme event dedup replay fixture declares panel-specific ans
   assert.match(stage7Expected, /usesDequeWindow/);
 });
 
+test("acceptance: priority scheduler extreme replay fixture declares multi-screenshot stages", () => {
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const scenario = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/scenario.json");
+  const manifest = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/screenshot_manifest.json");
+  const readme = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/README.md");
+  const stage7Expected = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/stage_07_long_blocked_classification/expected.json");
+  const stage8Expected = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/stage_08_heap_optimization/expected.json");
+  const stage9Expected = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/stage_09_final_tests/expected.json");
+
+  assert.match(runner, /images\?:\s*string\[\]/);
+  assert.match(runner, /imagePaths:\s*string\[\]/);
+  assert.match(runner, /resolveStageScreenText/);
+  assert.match(runner, /screenshotCount/);
+  assert.match(scenario, /priority_dependency_task_scheduler_extreme/);
+  assert.match(scenario, /"difficulty":\s*"extreme"/);
+  assert.match(scenario, /"answerAction":\s*"chat"/);
+  assert.match(scenario, /"answerAction":\s*"coding"/);
+  assert.match(scenario, /"answerAction":\s*"both"/);
+  assert.match(scenario, /"images":\s*\[/);
+  assert.match(scenario, /coderpad_top\.png/);
+  assert.match(scenario, /coderpad_middle\.png/);
+  assert.match(scenario, /coderpad_bottom\.png/);
+  assert.match(manifest, /accumulateWithOtherImagesInStage/);
+  assert.match(readme, /top\/middle\/bottom/);
+  assert.match(stage7Expected, /integratesAllCurrentScreenshots/);
+  assert.match(stage7Expected, /missing_dependency/);
+  assert.match(stage8Expected, /heapq\.heappush/);
+  assert.match(stage8Expected, /usesIndegree/);
+  assert.match(stage9Expected, /testsCycle/);
+  assert.match(stage9Expected, /pythonAssertions/);
+});
+
 test("acceptance: live coding controls separate exercise reset from full session reset", () => {
   const app = read("src/main.tsx");
   const overlay = read("src/overlay/OverlayApp.tsx");

@@ -1,0 +1,30 @@
+{
+  "conversationAssist": {
+    "maxWords": 90,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "clarificationOnly": true,
+      "explicitlyAvoidsCodeChange": true,
+      "doesNotAddValidationYet": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "schedule_tasks",
+    "mustPreserve": [
+      "def schedule_tasks(tasks):",
+      "remaining",
+      "scheduled"
+    ],
+    "mustContain": [],
+    "mustNotContain": [
+      "seen_ids",
+      "duplicate",
+      "raise ValueError"
+    ],
+    "semanticChecks": {
+      "workspaceUnchanged": true
+    }
+  }
+}

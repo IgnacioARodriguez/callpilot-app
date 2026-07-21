@@ -1,0 +1,30 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Let's finish by adding tests for the whole story: base ordering, stable ties, dependencies, dirty input, missing dependencies, and cycles."
+  },
+  {
+    "role": "candidate",
+    "text": "I added regular asserts so we can run them directly in CoderPad."
+  },
+  {
+    "role": "interviewer",
+    "text": "Good. What edge case are we still missing?"
+  },
+  {
+    "role": "candidate",
+    "text": "Empty input, and I also want the duplicate-id test to prove we keep the first valid occurrence."
+  },
+  {
+    "role": "interviewer",
+    "text": "Add those. Then explain complexity without giving me a lecture."
+  },
+  {
+    "role": "candidate",
+    "text": "Normalization and graph construction are linear in tasks plus dependency edges. Each task enters and leaves the heap once, so scheduling adds a log factor. The final complexity is roughly O((V + E) log V), with linear auxiliary graph storage."
+  },
+  {
+    "role": "interviewer",
+    "text": "That's enough. Keep the tests visible in the coding panel."
+  }
+]

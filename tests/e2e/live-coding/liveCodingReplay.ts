@@ -63,7 +63,7 @@ type CodingWorkspaceExpected = {
   mustPreserve?: string[];
   mustNotContain: string[];
   semanticExpectations?: string[];
-  semanticChecks?: {
+  semanticChecks?: Record<string, boolean | undefined> & {
     sortedWordFrequency?: boolean;
     sortedEventMetrics?: boolean;
     usesDequeWindow?: boolean;
@@ -77,7 +77,7 @@ type ConversationAssistExpected = {
   mustContainAny?: string[];
   mustContainGroups?: string[][];
   mustNotContain?: string[];
-  semanticChecks?: {
+  semanticChecks?: Record<string, boolean | undefined> & {
     naturalSpokenTone?: boolean;
     noCodeBlock?: boolean;
     noLongCode?: boolean;
@@ -102,7 +102,7 @@ type LoadedCodingWorkspaceExpected = {
   mustPreserve: string[];
   mustNotContain: string[];
   semanticExpectations: string[];
-  semanticChecks: {
+  semanticChecks: Record<string, boolean> & {
     sortedWordFrequency: boolean;
     sortedEventMetrics: boolean;
     usesDequeWindow: boolean;
@@ -116,7 +116,7 @@ type LoadedConversationAssistExpected = {
   mustContainAny: string[];
   mustContainGroups: string[][];
   mustNotContain: string[];
-  semanticChecks: {
+  semanticChecks: Record<string, boolean> & {
     naturalSpokenTone: boolean;
     noCodeBlock: boolean;
     noLongCode: boolean;
@@ -138,7 +138,8 @@ type ScenarioStage = {
   id: string;
   order: number;
   answerAction?: "chat" | "coding" | "both";
-  image: string | null;
+  image?: string | null;
+  images?: string[];
   code: string | null;
   transcript_delta: string;
   expected: string;
@@ -152,6 +153,7 @@ type StageScenario = {
 
 type LoadedScenarioStage = ScenarioStage & {
   imagePath: string | null;
+  imagePaths: string[];
   codePath: string | null;
   transcriptPath: string;
   expectedPath: string;
@@ -284,6 +286,9 @@ const readCases = (): ReplayCase[] => {
 
 const readJsonFile = <T>(filePath: string): T => JSON.parse(fs.readFileSync(filePath, "utf8"));
 
+const loadSemanticChecks = (checks: Record<string, boolean | undefined> | undefined): Record<string, boolean> =>
+  Object.fromEntries(Object.entries(checks ?? {}).map(([key, value]) => [key, Boolean(value)]));
+
 const defaultConversationAssistForbiddenTerms = [
   "```",
   "def ",
@@ -305,6 +310,7 @@ const loadCodingWorkspaceExpected = (expectedRules: CodingWorkspaceExpected): Lo
   mustNotContain: Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [],
   semanticExpectations: Array.isArray(expectedRules.semanticExpectations) ? expectedRules.semanticExpectations.map(String) : [],
   semanticChecks: {
+    ...loadSemanticChecks(expectedRules.semanticChecks),
     sortedWordFrequency: Boolean(expectedRules.semanticChecks?.sortedWordFrequency),
     sortedEventMetrics: Boolean(expectedRules.semanticChecks?.sortedEventMetrics),
     usesDequeWindow: Boolean(expectedRules.semanticChecks?.usesDequeWindow),
@@ -328,6 +334,7 @@ const loadConversationAssistExpected = (expectedRules: ConversationAssistExpecte
       : [],
     mustNotContain: [...defaultForbidden, ...explicitForbidden],
     semanticChecks: {
+      ...loadSemanticChecks(expectedRules.semanticChecks),
       naturalSpokenTone: Boolean(expectedRules.semanticChecks?.naturalSpokenTone),
       noCodeBlock: Boolean(expectedRules.semanticChecks?.noCodeBlock),
       noLongCode: Boolean(expectedRules.semanticChecks?.noLongCode),
@@ -358,11 +365,18 @@ const readStageScenario = (): LoadedStageScenario | null => {
   const stages = [...parsed.stages]
     .sort((a, b) => a.order - b.order)
     .map((stage) => {
-      const imagePath = typeof stage.image === "string" ? path.resolve(baseDir, stage.image) : null;
+      const imagePaths = Array.isArray(stage.images)
+        ? stage.images.map((image) => path.resolve(baseDir, String(image)))
+        : typeof stage.image === "string"
+          ? [path.resolve(baseDir, stage.image)]
+          : [];
+      const imagePath = imagePaths[0] ?? null;
       const codePath = typeof stage.code === "string" ? path.resolve(baseDir, stage.code) : null;
       const transcriptPath = path.resolve(baseDir, stage.transcript_delta);
       const expectedPath = path.resolve(baseDir, stage.expected);
-      if (imagePath) requireFixtureFile(parsed.id, stage.id, "coderpad.png", imagePath);
+      imagePaths.forEach((currentImagePath, index) => {
+        requireFixtureFile(parsed.id, stage.id, `coderpad screenshot ${index + 1}`, currentImagePath);
+      });
       if (codePath) requireFixtureFile(parsed.id, stage.id, "code.py", codePath);
       requireFixtureFile(parsed.id, stage.id, "transcript_delta.json", transcriptPath);
       requireFixtureFile(parsed.id, stage.id, "expected.json", expectedPath);
@@ -374,6 +388,7 @@ const readStageScenario = (): LoadedStageScenario | null => {
       return {
         ...stage,
         imagePath,
+        imagePaths,
         codePath,
         transcriptPath,
         expectedPath,
@@ -974,6 +989,42 @@ const publishScreen = async (client: CdpClient, text: string, imagePath: string)
   if (!result?.ok) throw new Error(`screen:publish-context failed: ${result?.error || "unknown"}`);
 };
 
+const resolveStageScreenText = async (
+  client: CdpClient,
+  imagePaths: string[],
+  timings: Record<string, number>,
+) => {
+  if (imagePaths.length === 0) {
+    return { text: "", images: [], ocrResult: null, visionResult: null };
+  }
+  const images = [];
+  for (let index = 0; index < imagePaths.length; index += 1) {
+    const imagePath = imagePaths[index];
+    const imageTimings: Record<string, number> = {};
+    const screen = await resolveScreenText(client, imagePath, "", imageTimings);
+    timings[`resolve_screen_text_${index + 1}_ms`] = Object.values(imageTimings).reduce((sum, value) => sum + value, 0);
+    images.push({
+      path: imagePath,
+      text: screen.text,
+      ocrResult: screen.ocrResult,
+      visionResult: screen.visionResult,
+    });
+  }
+  const text = images
+    .map((image, index) => [
+      `[screenshot ${index + 1}/${images.length}: ${path.basename(image.path)}]`,
+      image.text,
+    ].filter(Boolean).join("\n"))
+    .join("\n\n")
+    .trim();
+  return {
+    text,
+    images,
+    ocrResult: images[0]?.ocrResult ?? null,
+    visionResult: images[0]?.visionResult ?? null,
+  };
+};
+
 const publishTranscriptDelta = async (client: CdpClient, scenarioId: string, stage: LoadedScenarioStage) => {
   for (let index = 0; index < stage.transcript.length; index += 1) {
     const turn = stage.transcript[index];
@@ -1070,6 +1121,90 @@ const validateConversationSemanticChecks = (text: string, checks: LoadedConversa
     if (!hasAny(text, [/duplic|expir|malform|orden|sort/])) failures.push("conversation assist does not cover the expected test scenario families");
     if (!hasAny(text, [/o 1|complej|complexity|frente|front/])) failures.push("conversation assist does not describe the front-removal complexity improvement");
   }
+  if (checks.initialPlan) {
+    if (!hasAny(text, [/prioridad|priority/])) failures.push("conversation assist does not mention priority ordering");
+    if (!hasAny(text, [/simple|direct|rudiment|basico|natural|primero/])) failures.push("conversation assist does not frame the first pass as simple/natural");
+  }
+  if (checks.mentionsStableTiesConceptually || checks.stableTieByOriginalPosition) {
+    if (!hasAny(text, [/estable|stable|empate|tie|orden original|aparicion|input order/])) failures.push("conversation assist does not mention stable ordering for ties");
+  }
+  if (checks.doesNotPrematurelyOptimize) {
+    if (!hasAny(text, [/simple|direct|rudiment|no opt|sin optim|todavia no|por ahora/])) {
+      failures.push("conversation assist does not keep the first pass intentionally simple");
+    }
+  }
+  if (checks.doesNotInventDependencies || checks.doesNotAddValidationYet) {
+    if (!hasAny(text, [/por ahora|todavia no|si lo piden|sin meter|mantener|solo/])) {
+      failures.push("conversation assist does not avoid future requirements clearly");
+    }
+  }
+  if (checks.distinguishesSmallTalkFromTask) {
+    if (!hasAny(text, [/ignorar|separar|small talk|ruido|foco|problema/])) failures.push("conversation assist does not separate small talk from the task");
+  }
+  if (checks.acknowledgesRudimentaryComplexity) {
+    if (!hasAny(text, [/o n 2|n 2|cuadr|rudiment|no opt|simple/])) failures.push("conversation assist does not acknowledge the rudimentary complexity");
+  }
+  if (checks.clarificationOnly || checks.explicitlyAvoidsCodeChange) {
+    if (!hasAny(text, [/sin cambiar|no cambi|mantendr|aclar|confirm|mismo codigo|no toc/])) failures.push("conversation assist does not treat the turn as clarification-only");
+  }
+  if (checks.bugExplanation) {
+    if (!hasAny(text, [/bug|fall|error|orden|antes|despues|membership|seen|duplic/])) failures.push("conversation assist does not explain the duplicate membership/order bug");
+  }
+  if (checks.describesLocalizedPatch) {
+    if (!hasAny(text, [/local|pequen|solo|minimo|mover|antes de agregar|check/])) failures.push("conversation assist does not describe a localized patch");
+  }
+  if (checks.multiStepFollowupPlan) {
+    if (!hasAny(text, [/paso|iter|primero|luego|despues|mantener/])) failures.push("conversation assist does not describe a step-by-step follow-up plan");
+  }
+  if (checks.mentionsReadyTasksConceptually) {
+    if (!hasAny(text, [/ready|listas|disponibles|dependencias satisfechas|pueden correr/])) failures.push("conversation assist does not mention ready tasks conceptually");
+  }
+  if (checks.mentionsNoProgressMeansBlocked) {
+    if (!hasAny(text, [/sin progreso|no progress|bloquead|blocked|atasc|no puedo avanzar/])) failures.push("conversation assist does not mention no-progress blocked detection");
+  }
+  if (checks.doesNotClassifyBlockedReasonsYet) {
+    if (hasAny(text, [/missing_dependency|cycle|ciclo|ausente/])) failures.push("conversation assist classifies blocked reasons before requested");
+  }
+  if (checks.contractChangePlan) {
+    if (!hasAny(text, [/contrato|return|devolver|scheduled|blocked|bloquead/])) failures.push("conversation assist does not mention the return-contract change");
+  }
+  if (checks.mentionsPreservingExistingApproach || checks.mentionsPreservingExistingContracts || checks.mentionsPreservingHelpersAndLoop) {
+    if (!hasAny(text, [/mantener|preserv|conservar|helper|normaliz|loop|contrato|existente/])) failures.push("conversation assist does not mention preserving existing behavior/helpers");
+  }
+  if (checks.dirtyInputPlan) {
+    if (!hasAny(text, [/malform|sucio|invalid|valid|normaliz|priority|id/])) failures.push("conversation assist does not mention dirty input/normalization");
+  }
+  if (checks.separatesNormalizationFromScheduling) {
+    if (!hasAny(text, [/normaliz|limpiar|parse/]) || !hasAny(text, [/scheduler|orden|schedule|planificar/])) {
+      failures.push("conversation assist does not separate normalization from scheduling");
+    }
+  }
+  if (checks.mentionsFirstValidDuplicatePolicy) {
+    if (!hasAny(text, [/primer|first/]) || !hasAny(text, [/duplic|id repet|valid/])) failures.push("conversation assist does not mention first-valid duplicate policy");
+  }
+  if (checks.multiScreenshotContextPlan) {
+    if (!hasAny(text, [/pantalla|captura|screenshot|scroll|arriba|medio|abajo|vista completa|codigo largo/])) failures.push("conversation assist does not mention using the multi-screenshot code context");
+  }
+  if (checks.usesSimplifiedClassificationRule) {
+    if (!hasAny(text, [/missing|ausente|conocid|known|cycle|ciclo|bloquead/])) failures.push("conversation assist does not describe the simplified blocked classification rule");
+  }
+  if (checks.optimizationPlan) {
+    if (!hasAny(text, [/optim|mejor|heap|grafo|graph|indegree|cola/])) failures.push("conversation assist does not describe the optimization plan");
+  }
+  if (checks.mentionsHeapAndDependencyGraphConceptually) {
+    if (!hasAny(text, [/heap|cola de prioridad|priority queue/]) || !hasAny(text, [/grafo|graph|indegree|depend/])) {
+      failures.push("conversation assist does not mention heap and dependency graph concepts");
+    }
+  }
+  if (checks.testsPlan) {
+    if (!hasAny(text, [/test|assert|prueb|casos/])) failures.push("conversation assist does not mention tests/assertions");
+  }
+  if (checks.mentionsRequestedCoverage) {
+    if (!hasAny(text, [/vacio|empty|empate|tie|depend|duplic|malform|missing|cycle|ciclo/])) failures.push("conversation assist does not mention requested test coverage families");
+  }
+  if (checks.givesConciseComplexityExplanation) {
+    if (!hasAny(text, [/complej|complexity|o n|log|e\b|edges|aristas/])) failures.push("conversation assist does not give a concise complexity explanation");
+  }
   return failures;
 };
 
@@ -1099,6 +1234,91 @@ const validatesDequeWindow = (code: string) =>
   && /\bdeque\s*\(/.test(code)
   && /\.popleft\s*\(/.test(code)
   && /seen_ids\.(?:discard|remove)\s*\(/.test(code);
+
+const validateCodingSemanticChecks = (
+  code: string,
+  rendered: string,
+  stage: LoadedScenarioStage,
+  checks: LoadedCodingWorkspaceExpected["semanticChecks"],
+) => {
+  const failures: string[] = [];
+  const compact = code.replace(/\s+/g, " ");
+  const hasCodeAny = (patterns: RegExp[]) => patterns.some((pattern) => pattern.test(code) || pattern.test(compact));
+  if (checks.integratesAllCurrentScreenshots && stage.imagePaths.length > 1) {
+    if (!hasCodeAny([/def\s+normalize_tasks\s*\(/]) || !hasCodeAny([/def\s+schedule_tasks\s*\(/])) {
+      failures.push("code does not preserve functions spread across the multi-screenshot context");
+    }
+  }
+  if (checks.returnsIdsInPriorityOrder && !hasCodeAny([/priority/, /sorted\s*\(/, /\.sort\s*\(/])) {
+    failures.push("code does not order tasks by priority");
+  }
+  if ((checks.stableForEqualPriority || checks.stableTieByOriginalPosition) && !hasCodeAny([/enumerate\s*\(/, /original_?position/, /\bposition\b/, /\bindex\b/, /\border\b/])) {
+    failures.push("code does not preserve stable tie order by original position");
+  }
+  if (checks.emptyInputReturnsEmptyList && !hasCodeAny([/return\s+\[\]/, /scheduled\s*=\s*\[\]/])) {
+    failures.push("code does not have a clear empty-input path");
+  }
+  if (checks.keepsInitialReadableApproach && hasCodeAny([/heapq/, /indegree/, /networkx/])) {
+    failures.push("initial code introduces advanced scheduler machinery too early");
+  }
+  if (checks.workspaceUnchanged && stage.codePath) {
+    const fixtureCode = fs.existsSync(stage.codePath) ? fs.readFileSync(stage.codePath, "utf8").trim() : "";
+    if (fixtureCode && normalizeText(code) !== normalizeText(fixtureCode)) failures.push("chat-only stage changed the coding workspace");
+  }
+  if (checks.membershipCheckBeforeAdd && !hasCodeAny([/if\s+[^:\n]*in\s+seen_ids\s*:/, /seen_ids\.add\s*\(/])) {
+    failures.push("code does not show duplicate membership check and seen_ids update");
+  }
+  if (checks.keepsFirstSelectedDuplicate && !hasCodeAny([/continue/, /seen_ids/])) {
+    failures.push("code does not skip later duplicate ids");
+  }
+  if (checks.localizedFix && hasCodeAny([/heapq/, /indegree/, /networkx/])) {
+    failures.push("localized bug fix introduces unrelated optimization machinery");
+  }
+  if (checks.dependenciesMustBeScheduledFirst && !hasCodeAny([/depends_on/, /scheduled_ids/, /all\s*\(/])) {
+    failures.push("code does not enforce dependencies before scheduling a task");
+  }
+  if (checks.returnsScheduledAndBlocked || checks.preservesReturnContract) {
+    if (!hasCodeAny([/return\s+\{\s*["']scheduled["']/, /["']blocked["']\s*:/])) failures.push("code does not return scheduled and blocked collections");
+  }
+  if (checks.blockedPreservesInputOrder && !hasCodeAny([/remaining/, /for\s+task\s+in\s+normalized/, /for\s+task\s+in\s+tasks/])) {
+    failures.push("code does not appear to preserve blocked input order");
+  }
+  if (checks.noProgressStopsLoop && !hasCodeAny([/progress/, /break/])) {
+    failures.push("code does not stop the dependency loop when no progress is possible");
+  }
+  if (checks.skipsMissingId && !hasCodeAny([/get\s*\(\s*["']id["']/, /continue/])) failures.push("code does not skip tasks missing id");
+  if (checks.acceptsIntegerLikeStringPriority && !hasCodeAny([/int\s*\(/])) failures.push("code does not convert integer-like string priorities");
+  if (checks.skipsNonConvertiblePriority && !hasCodeAny([/try\s*:/, /except/, /ValueError/, /TypeError/])) failures.push("code does not safely skip non-convertible priorities");
+  if (checks.requiresDependsOnList && !hasCodeAny([/isinstance\s*\([^)]*depends_on[^)]*list/, /depends_on.*list/])) failures.push("code does not require depends_on to be a list");
+  if (checks.keepsFirstValidDuplicateId && !hasCodeAny([/seen_ids/, /continue/])) failures.push("code does not preserve first valid duplicate id");
+  if (checks.preservesOriginalPositionOfValidTasks && !hasCodeAny([/original_?position/, /position/, /enumerate\s*\(/])) failures.push("code does not preserve original position of valid tasks");
+  if (checks.keepsNormalizationBehavior || checks.preservesDirtyInputHandling) {
+    if (!hasCodeAny([/def\s+normalize_tasks\s*\(/, /try\s*:/, /int\s*\(/])) failures.push("code does not preserve normalization/dirty-input behavior");
+  }
+  if (checks.scheduledEntriesContainIdAndPriority && !hasCodeAny([/["']id["']\s*:/, /["']priority["']\s*:/])) {
+    failures.push("scheduled entries do not clearly contain id and priority");
+  }
+  if (checks.missingDependencyUsesKnownIds && !hasCodeAny([/known_ids/, /missing_dependency/])) failures.push("code does not classify missing dependencies using known_ids");
+  if (checks.remainingKnownDependenciesClassifiedAsCycle && !hasCodeAny([/cycle/, /remaining/])) failures.push("code does not classify remaining known-dependency tasks as cycle");
+  if (checks.usesReverseAdjacency && !hasCodeAny([/dependents/, /\.append\s*\(/, /depends_on/])) failures.push("code does not build reverse adjacency/dependents");
+  if (checks.usesIndegree && !hasCodeAny([/indegree/, /-= 1|=\s*indegree\[[^\]]+\]\s*-\s*1/])) failures.push("code does not maintain indegree counts");
+  if (checks.usesHeapForReadyTasks && !hasCodeAny([/heapq\.heappush/, /heapq\.heappop/])) failures.push("code does not use heapq for ready tasks");
+  if (checks.preservesBlockedReasonContract && !hasCodeAny([/missing_dependency/, /cycle/, /reason/])) failures.push("code does not preserve blocked reason contract");
+  if (checks.testsBaseCase || checks.testsEmptyInput) {
+    if (!hasCodeAny([/assert\s+schedule_tasks\s*\(\s*\[\s*\]/])) failures.push("code does not test empty/base input");
+  }
+  if (checks.testsStableTies && !hasCodeAny([/assert\s+schedule_tasks/, /priority/, /\bb\b/, /\bc\b/])) failures.push("code does not test stable priority ties");
+  if (checks.testsDependencyOrdering && !hasCodeAny([/assert\s+schedule_tasks/, /depends_on/, /network|db/])) failures.push("code does not test dependency ordering");
+  if (checks.testsDirtyInput && !hasCodeAny([/priority.*["']2["']|["']2["'].*priority/, /malformed|bad|good/])) failures.push("code does not test dirty input normalization");
+  if (checks.testsFirstValidDuplicatePreserved && !hasCodeAny([/duplicate|good|seen|priority.*99/])) failures.push("code does not test first valid duplicate preservation");
+  if (checks.testsMissingDependency && !hasCodeAny([/missing_dependency/, /missing/])) failures.push("code does not test missing dependency");
+  if (checks.testsCycle && !hasCodeAny([/cycle/, /depends_on/])) failures.push("code does not test cycle blocking");
+  if (checks.finalCodeExecutable && !hasCodeAny([/def\s+schedule_tasks\s*\(/, /assert\s+schedule_tasks/])) failures.push("final code is not shaped as executable code plus assertions");
+  if (checks.complexityIsReasonable && !hasAny(rendered, [/o n|o\(|log|complej|complexity|heap|indegree|edges|aristas/])) {
+    failures.push("rendered answer does not include a reasonable complexity explanation");
+  }
+  return failures;
+};
 
 const validatePythonAssertions = (code: string, assertions: string[]) => {
   if (assertions.length === 0) return [];
@@ -1157,6 +1377,7 @@ const validateScenarioStageAnswer = (
     if (codingRules.semanticChecks.usesDequeWindow && !validatesDequeWindow(code)) {
       failures.push("code does not use deque/popleft while keeping seen_ids synchronized");
     }
+    failures.push(...validateCodingSemanticChecks(code, rendered, stage, codingRules.semanticChecks));
     failures.push(...validatePythonAssertions(code, codingRules.pythonAssertions));
   }
   const expectsConversation = (stage.answerAction ?? "both") !== "coding";
@@ -1441,21 +1662,22 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
   for (const stage of scenario.stages) {
     const stageTimings: Record<string, number> = {};
     await timed(stageTimings, "publish_transcript_delta_ms", () => publishTranscriptDelta(client, scenario.id, stage));
-    const screen = stage.imagePath
-      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveScreenText(client, stage.imagePath ?? "", "", stageTimings))
+    const screen = stage.imagePaths.length > 0
+      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveStageScreenText(client, stage.imagePaths, stageTimings))
       : { text: "", ocrResult: null, visionResult: null };
-    if (stage.imagePath && !screen.text.trim()) {
+    if (stage.imagePaths.length > 0 && !screen.text.trim()) {
       stages.push({
         id: stage.id,
         order: stage.order,
         ok: false,
         failures: [`${scenario.id}/${stage.id}: screen text is empty after OCR/vision`],
         screenshot: stage.imagePath,
+        screenshots: stage.imagePaths,
       });
       ok = false;
       break;
     }
-    if (stage.imagePath) {
+    if (stage.imagePaths.length > 0) {
       await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath));
     }
     const eventClient = await timed(stageTimings, "open_session_event_client_ms", () => getSessionEventClient());
@@ -1478,11 +1700,21 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       ok: validation.ok,
       failures: validation.failures,
       screenshot: stage.imagePath,
+      screenshots: stage.imagePaths,
       codeFixture: stage.codePath,
       expected: stage.expectedPath,
       transcriptDelta: stage.transcriptPath,
       screen: {
-        hasScreenshot: Boolean(stage.imagePath),
+        hasScreenshot: stage.imagePaths.length > 0,
+        screenshotCount: stage.imagePaths.length,
+        images: screen.images?.map((image: any) => ({
+          path: image.path,
+          textChars: image.text.length,
+          textPreview: image.text.slice(0, 300),
+          ocrOk: image.ocrResult?.ok ?? null,
+          ocrConfidence: image.ocrResult?.confidence ?? null,
+          visionOk: image.visionResult?.ok ?? null,
+        })) ?? [],
         textChars: screen.text.length,
         textPreview: screen.text.slice(0, 700),
         ocrOk: screen.ocrResult?.ok ?? null,
@@ -1539,7 +1771,9 @@ const run = async () => {
   const cases = stageScenario ? [] : readCases();
   if (stageScenario) {
     for (const stage of stageScenario.stages) {
-      if (stage.imagePath && !fs.existsSync(stage.imagePath)) throw new Error(`Screenshot not found for ${stageScenario.id}/${stage.id}: ${stage.imagePath}`);
+      for (const imagePath of stage.imagePaths) {
+        if (!fs.existsSync(imagePath)) throw new Error(`Screenshot not found for ${stageScenario.id}/${stage.id}: ${imagePath}`);
+      }
     }
   } else {
     for (const replayCase of cases) {

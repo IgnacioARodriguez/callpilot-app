@@ -1,0 +1,42 @@
+{
+  "conversationAssist": {
+    "maxWords": 90,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "bugExplanation": true,
+      "describesLocalizedPatch": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "schedule_tasks",
+    "mustPreserve": [
+      "def schedule_tasks(tasks):",
+      "remaining",
+      "scheduled",
+      "seen_ids",
+      "best_position",
+      "best_task"
+    ],
+    "mustContain": [
+      "if best_task[\"id\"] in seen_ids",
+      "seen_ids.add"
+    ],
+    "mustNotContain": [
+      "heapq",
+      "depends_on",
+      "indegree",
+      "class Task"
+    ],
+    "semanticChecks": {
+      "membershipCheckBeforeAdd": true,
+      "keepsFirstSelectedDuplicate": true,
+      "localizedFix": true
+    },
+    "pythonAssertions": [
+      "assert schedule_tasks([{'id': 'a', 'priority': 3}, {'id': 'b', 'priority': 2}, {'id': 'a', 'priority': 1}]) == ['a', 'b']",
+      "assert schedule_tasks([]) == []"
+    ]
+  }
+}

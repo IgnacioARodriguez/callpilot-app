@@ -1,0 +1,26 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Now tasks may have `depends_on`, a list of task ids. A task can only run after all its dependencies ran."
+  },
+  {
+    "role": "candidate",
+    "text": "Do we assume dependencies reference tasks in the input?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Not necessarily. Missing dependencies should leave the task blocked."
+  },
+  {
+    "role": "candidate",
+    "text": "And cycles?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Also blocked. Don't solve classification yet; just tell me what you'd change before coding."
+  },
+  {
+    "role": "candidate",
+    "text": "I'd keep the existing selection style for now, but only consider tasks whose dependency ids are already scheduled. If a full pass makes no progress, the remaining tasks are blocked."
+  }
+]

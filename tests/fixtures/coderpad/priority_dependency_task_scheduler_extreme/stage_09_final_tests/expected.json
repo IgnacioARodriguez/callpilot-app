@@ -1,0 +1,62 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "testsPlan": true,
+      "mentionsRequestedCoverage": true,
+      "givesConciseComplexityExplanation": true,
+      "multiScreenshotContextPlan": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "schedule_tasks",
+    "mustPreserve": [
+      "def normalize_tasks(tasks):",
+      "def schedule_tasks(tasks):",
+      "tasks_by_id",
+      "known_ids",
+      "indegree",
+      "dependents",
+      "ready",
+      "scheduled",
+      "scheduled_ids",
+      "blocked"
+    ],
+    "mustContain": [
+      "assert schedule_tasks",
+      "all scheduler tests passed",
+      "heapq.heappush",
+      "heapq.heappop"
+    ],
+    "mustNotContain": [
+      "pytest",
+      "unittest.TestCase",
+      "networkx",
+      "while remaining"
+    ],
+    "semanticChecks": {
+      "integratesAllCurrentScreenshots": true,
+      "testsBaseCase": true,
+      "testsStableTies": true,
+      "testsDependencyOrdering": true,
+      "testsDirtyInput": true,
+      "testsFirstValidDuplicatePreserved": true,
+      "testsMissingDependency": true,
+      "testsCycle": true,
+      "testsEmptyInput": true,
+      "finalCodeExecutable": true,
+      "complexityIsReasonable": true
+    },
+    "pythonAssertions": [
+      "assert schedule_tasks([]) == {'scheduled': [], 'blocked': []}",
+      "assert schedule_tasks([{'id': 'a', 'priority': 2}, {'id': 'b', 'priority': 5}, {'id': 'c', 'priority': 5}])['scheduled'] == [{'id': 'b', 'priority': 5}, {'id': 'c', 'priority': 5}, {'id': 'a', 'priority': 2}]",
+      "assert schedule_tasks([{'id': 'db', 'priority': 9, 'depends_on': ['network']}, {'id': 'network', 'priority': 1}])['scheduled'][0]['id'] == 'network'",
+      "assert schedule_tasks([{'id': 'good', 'priority': '2'}, {'id': 'good', 'priority': 99}])['scheduled'] == [{'id': 'good', 'priority': 2}]",
+      "assert schedule_tasks([{'id': 'a', 'priority': 1, 'depends_on': ['missing']}])['blocked'] == [{'id': 'a', 'reason': 'missing_dependency'}]",
+      "assert schedule_tasks([{'id': 'a', 'priority': 1, 'depends_on': ['b']}, {'id': 'b', 'priority': 1, 'depends_on': ['a']}])['blocked'] == [{'id': 'a', 'reason': 'cycle'}, {'id': 'b', 'reason': 'cycle'}]"
+    ]
+  }
+}

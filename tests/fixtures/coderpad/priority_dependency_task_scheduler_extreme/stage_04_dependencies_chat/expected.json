@@ -1,0 +1,33 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "multiStepFollowupPlan": true,
+      "mentionsReadyTasksConceptually": true,
+      "mentionsNoProgressMeansBlocked": true,
+      "doesNotClassifyBlockedReasonsYet": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "schedule_tasks",
+    "mustPreserve": [
+      "def schedule_tasks(tasks):",
+      "remaining",
+      "scheduled",
+      "seen_ids"
+    ],
+    "mustContain": [],
+    "mustNotContain": [
+      "depends_on",
+      "blocked",
+      "indegree",
+      "heapq"
+    ],
+    "semanticChecks": {
+      "workspaceUnchanged": true
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "initialPlan": true,
+      "mentionsStableTiesConceptually": true,
+      "doesNotInventDependencies": true,
+      "distinguishesSmallTalkFromTask": true
+    }
+  },
+  "codingWorkspace": null,
+  "integrationChecks": {
+    "imageIsNull": true,
+    "sameSessionRequiredForNextStage": true,
+    "mustNotRequestScreenshot": true
+  }
+}

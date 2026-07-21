@@ -1,0 +1,119 @@
+{
+  "scenario": "priority_dependency_task_scheduler_extreme",
+  "screenshots": [
+    {
+      "stage": "initial_simple_implementation",
+      "image": "stage_01_initial_simple/coderpad.png",
+      "viewport": "single",
+      "purpose": "Mostrar la implementación rudimentaria completa y su salida.",
+      "captureInstructions": "stage_01_initial_simple/capture_instructions.md"
+    },
+    {
+      "stage": "duplicate_id_clarification",
+      "image": "stage_02_duplicate_clarification/coderpad.png",
+      "viewport": "single",
+      "purpose": "Probar que una aclaración de dominio no dispara cambios de código.",
+      "captureInstructions": "stage_02_duplicate_clarification/capture_instructions.md"
+    },
+    {
+      "stage": "visible_duplicate_order_bug",
+      "image": "stage_03_visible_order_bug/coderpad.png",
+      "viewport": "single",
+      "purpose": "Mostrar el bug de comprobar pertenencia después de insertar en el set.",
+      "captureInstructions": "stage_03_visible_order_bug/capture_instructions.md"
+    },
+    {
+      "stage": "dependency_requirement_discussion",
+      "image": "stage_04_dependencies_chat/coderpad.png",
+      "viewport": "single",
+      "purpose": "Mostrar el código actual antes de introducir dependencias.",
+      "captureInstructions": "stage_04_dependencies_chat/capture_instructions.md"
+    },
+    {
+      "stage": "dependency_contract_change",
+      "image": "stage_05_contract_change/coderpad.png",
+      "viewport": "single",
+      "purpose": "Mostrar el primer contrato con scheduled/blocked y dependencias.",
+      "captureInstructions": "stage_05_contract_change/capture_instructions.md"
+    },
+    {
+      "stage": "dirty_input_handling",
+      "image": "stage_06_dirty_input/coderpad.png",
+      "viewport": "single",
+      "purpose": "Mostrar la separación entre normalización y scheduling con input sucio que todavía rompe.",
+      "captureInstructions": "stage_06_dirty_input/capture_instructions.md"
+    },
+    {
+      "stage": "long_blocked_classification",
+      "image": "stage_07_long_blocked_classification/coderpad_top.png",
+      "viewport": "top",
+      "purpose": "Normalización y validación de input.",
+      "captureInstructions": "stage_07_long_blocked_classification/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    },
+    {
+      "stage": "long_blocked_classification",
+      "image": "stage_07_long_blocked_classification/coderpad_middle.png",
+      "viewport": "middle",
+      "purpose": "Clasificación y estado principal del scheduler.",
+      "captureInstructions": "stage_07_long_blocked_classification/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    },
+    {
+      "stage": "long_blocked_classification",
+      "image": "stage_07_long_blocked_classification/coderpad_bottom.png",
+      "viewport": "bottom",
+      "purpose": "Final del scheduler, datos y salida.",
+      "captureInstructions": "stage_07_long_blocked_classification/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    },
+    {
+      "stage": "heap_graph_optimization",
+      "image": "stage_08_heap_optimization/coderpad_top.png",
+      "viewport": "top",
+      "purpose": "Imports y normalización preservada.",
+      "captureInstructions": "stage_08_heap_optimization/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    },
+    {
+      "stage": "heap_graph_optimization",
+      "image": "stage_08_heap_optimization/coderpad_middle.png",
+      "viewport": "middle",
+      "purpose": "Construcción del grafo, indegree y heap.",
+      "captureInstructions": "stage_08_heap_optimization/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    },
+    {
+      "stage": "heap_graph_optimization",
+      "image": "stage_08_heap_optimization/coderpad_bottom.png",
+      "viewport": "bottom",
+      "purpose": "Procesamiento del heap, bloqueados, return y salida.",
+      "captureInstructions": "stage_08_heap_optimization/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    },
+    {
+      "stage": "final_assertions_and_complexity",
+      "image": "stage_09_final_tests/coderpad_top.png",
+      "viewport": "top",
+      "purpose": "Normalización final.",
+      "captureInstructions": "stage_09_final_tests/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    },
+    {
+      "stage": "final_assertions_and_complexity",
+      "image": "stage_09_final_tests/coderpad_middle.png",
+      "viewport": "middle",
+      "purpose": "Scheduler optimizado final.",
+      "captureInstructions": "stage_09_final_tests/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    },
+    {
+      "stage": "final_assertions_and_complexity",
+      "image": "stage_09_final_tests/coderpad_bottom.png",
+      "viewport": "bottom",
+      "purpose": "Asserts finales y consola exitosa.",
+      "captureInstructions": "stage_09_final_tests/capture_instructions.md",
+      "accumulateWithOtherImagesInStage": true
+    }
+  ]
+}

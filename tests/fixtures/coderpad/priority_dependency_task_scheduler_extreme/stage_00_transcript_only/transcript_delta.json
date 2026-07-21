@@ -1,0 +1,34 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Hey Ignacio, can you hear me? Sorry, my calendar notification just covered half the screen."
+  },
+  {
+    "role": "candidate",
+    "text": "Yeah, I can hear you. No worries."
+  },
+  {
+    "role": "interviewer",
+    "text": "Cool. Let's build a small task scheduler. We receive tasks with an id and a priority, and we want the order we'd execute them. Higher priority first."
+  },
+  {
+    "role": "candidate",
+    "text": "Do equal priorities preserve the input order?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes, let's do stable ordering. And don't worry about dependencies yet."
+  },
+  {
+    "role": "candidate",
+    "text": "Okay. I'd start with the simplest thing: keep the original position, repeatedly select the highest-priority remaining task, and return its ids."
+  },
+  {
+    "role": "interviewer",
+    "text": "That's fine. What would you say before coding this?"
+  },
+  {
+    "role": "candidate",
+    "text": "That I'm intentionally starting with a readable version, even if selecting repeatedly isn't optimal, and I'll verify ties and empty input first."
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "role": "interviewer",
+    "text": "The input isn't as clean as I first said. Sorry. Skip malformed tasks instead of crashing."
+  },
+  {
+    "role": "candidate",
+    "text": "What counts as malformed? Missing id, non-integer priority, and `depends_on` not being a list?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes. Also skip duplicate ids after the first valid one."
+  },
+  {
+    "role": "candidate",
+    "text": "Should a string priority like `'2'` be accepted?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes, if it converts cleanly to an integer."
+  },
+  {
+    "role": "candidate",
+    "text": "Okay. I'll keep validation in `normalize_tasks` and leave scheduling behavior alone."
+  }
+]

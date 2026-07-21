@@ -1,0 +1,45 @@
+{
+  "conversationAssist": {
+    "maxWords": 120,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "initialPlan": true,
+      "acknowledgesRudimentaryComplexity": true,
+      "doesNotPrematurelyOptimize": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "schedule_tasks",
+    "mustPreserve": [
+      "def schedule_tasks(tasks):",
+      "remaining",
+      "scheduled",
+      "best_position",
+      "best_task"
+    ],
+    "mustContain": [
+      "priority",
+      "scheduled.append"
+    ],
+    "mustNotContain": [
+      "heapq",
+      "depends_on",
+      "indegree",
+      "blocked",
+      "class Task"
+    ],
+    "semanticChecks": {
+      "returnsIdsInPriorityOrder": true,
+      "stableForEqualPriority": true,
+      "emptyInputReturnsEmptyList": true,
+      "keepsInitialReadableApproach": true
+    },
+    "pythonAssertions": [
+      "assert schedule_tasks([]) == []",
+      "assert schedule_tasks([{'id': 'a', 'priority': 1}]) == ['a']",
+      "assert schedule_tasks([{'id': 'a', 'priority': 2}, {'id': 'b', 'priority': 5}, {'id': 'c', 'priority': 2}]) == ['b', 'a', 'c']"
+    ]
+  }
+}
