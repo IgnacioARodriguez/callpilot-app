@@ -1,0 +1,45 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "staleSetBug": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_event_types",
+    "mustContain": [
+      "recent_events",
+      "seen_ids",
+      "while recent_events",
+      "pop(0)"
+    ],
+    "mustContainAny": [
+      "seen_ids.remove",
+      "seen_ids.discard"
+    ],
+    "mustPreserve": [
+      "count_event_types",
+      "recent_events",
+      "seen_ids",
+      "counts"
+    ],
+    "mustNotContain": [
+      "deque",
+      "popleft",
+      "sorted(",
+      "return []"
+    ],
+    "semanticExpectations": [
+      "Debe remover tambien del set cuando expira un evento.",
+      "Debe mantener el contrato de retorno como diccionario de conteos.",
+      "No debe optimizar con deque todavia."
+    ],
+    "pythonAssertions": [
+      "events = ['0|a1|click', '301|a1|purchase']",
+      "assert count_event_types(events) == {'click': 1, 'purchase': 1}"
+    ]
+  }
+}

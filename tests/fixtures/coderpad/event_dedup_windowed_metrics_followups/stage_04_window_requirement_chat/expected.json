@@ -1,0 +1,35 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "windowPlan": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_event_types",
+    "mustContain": [
+      "def count_event_types(lines):",
+      "seen_ids",
+      "counts"
+    ],
+    "mustPreserve": [
+      "count_event_types",
+      "seen_ids",
+      "counts"
+    ],
+    "mustNotContain": [
+      "deque",
+      "popleft",
+      "recent_events",
+      "while"
+    ],
+    "semanticExpectations": [
+      "Debe ser chat-only: explicar la ventana sin implementar aun.",
+      "Debe mencionar expiracion de ids antiguos.",
+      "No debe introducir deque todavia."
+    ]
+  }
+}

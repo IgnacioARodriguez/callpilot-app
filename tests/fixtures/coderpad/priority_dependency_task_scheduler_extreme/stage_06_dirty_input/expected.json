@@ -1,0 +1,52 @@
+{
+  "conversationAssist": {
+    "maxWords": 120,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "dirtyInputPlan": true,
+      "separatesNormalizationFromScheduling": true,
+      "mentionsFirstValidDuplicatePolicy": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "schedule_tasks",
+    "mustPreserve": [
+      "def normalize_tasks(tasks):",
+      "def schedule_tasks(tasks):",
+      "normalized",
+      "position",
+      "remaining",
+      "scheduled",
+      "scheduled_ids",
+      "blocked"
+    ],
+    "mustContain": [
+      "try",
+      "int(",
+      "isinstance",
+      "seen_ids"
+    ],
+    "mustNotContain": [
+      "pydantic",
+      "pandas",
+      "dataclass",
+      "raise ValueError"
+    ],
+    "semanticChecks": {
+      "skipsMissingId": true,
+      "acceptsIntegerLikeStringPriority": true,
+      "skipsNonConvertiblePriority": true,
+      "requiresDependsOnList": true,
+      "keepsFirstValidDuplicateId": true,
+      "preservesOriginalPositionOfValidTasks": true
+    },
+    "pythonAssertions": [
+      "assert normalize_tasks([]) == []",
+      "assert [task['id'] for task in normalize_tasks([{'id': 'a', 'priority': '2'}, {'priority': 3}, {'id': 'b', 'priority': 'x'}, {'id': 'c', 'priority': 1, 'depends_on': 'a'}])] == ['a']",
+      "assert [task['id'] for task in normalize_tasks([{'id': 'a', 'priority': 1}, {'id': 'a', 'priority': 9}])] == ['a']",
+      "assert schedule_tasks([{'id': 'network', 'priority': '2'}, {'id': 'db', 'priority': 5, 'depends_on': ['network']}]) == {'scheduled': ['network', 'db'], 'blocked': []}"
+    ]
+  }
+}

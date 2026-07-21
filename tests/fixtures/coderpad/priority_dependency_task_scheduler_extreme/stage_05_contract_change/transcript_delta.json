@@ -1,0 +1,22 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Okay, implement that. Also change the output: return both the scheduled ids and the blocked ids."
+  },
+  {
+    "role": "candidate",
+    "text": "A dictionary with `scheduled` and `blocked`?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes. Keep blocked ids in their original input order."
+  },
+  {
+    "role": "candidate",
+    "text": "Got it. I'll adapt what we already have rather than starting over."
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly."
+  }
+]

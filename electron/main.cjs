@@ -79,11 +79,11 @@ const fetchWithRetry = async (url, options = {}, meta = {}) => {
 };
 
 const stealthState = {
-  callPrivacyAllowed: false,
+  callPrivacyAllowed: true,
   overlayVisible: true,
-  contentProtectionEnabled: false,
-  mousePassthroughEnabled: false,
-  focusMode: "interactive",
+  contentProtectionEnabled: true,
+  mousePassthroughEnabled: true,
+  focusMode: "passthrough",
   shortcutLayerActive: true,
 };
 
@@ -216,6 +216,9 @@ const liveCodingChatPromptInstructions = [
   "Use the transcript, previous assistant answers, and visible screen context to keep continuity.",
   "Write like a candidate thinking out loud: 'Voy a...', 'Empezaria por...', 'Ahora cambiaria...'.",
   "Explain the immediate plan and reasoning in simple terms, not a polished final report.",
+  "Name the central constraint or bug for the current step in the spoken preview, so the interviewer hears why the next code change is correct.",
+  "Start with the most natural simple version for the current request. Do not jump to optimal data structures, future follow-ups, sorting, parsing hardening, or windowing unless the interviewer has already asked for them.",
+  "When the transcript says a feature is for later, explicitly frame it as later and keep the current step intentionally simple.",
   "For follow-ups, explain how you would adapt the existing solution and what small issue or requirement changed.",
   "You may use compact inline flows like strip -> lower -> return, but do not include full code blocks.",
   "Do not return JSON, markdown fences, code blocks, schema fields, headings, formal sections, or complexity sections.",
@@ -1903,11 +1906,19 @@ const remoteControlPage = () => `<!doctype html>
     body.waiting main { display: none; }
     body.waiting .no-session { display: grid; }
     .mode { color: #555555; font-size: 12px; text-align: right; }
-    .scroll-pad { border: 3px solid #111111; border-radius: 32px; background: #ffffff; color: #111111; display: grid; place-items: center; min-height: 360px; touch-action: none; user-select: none; }
+    .scroll-pads { display: grid; gap: 12px; min-height: 0; }
+    .scroll-pads--coding { grid-template-rows: repeat(2, minmax(150px, 1fr)); }
+    .scroll-pad { border: 3px solid #111111; border-radius: 32px; background: #ffffff; color: #111111; display: grid; place-items: center; min-height: 280px; touch-action: none; user-select: none; }
+    .scroll-pads--coding .scroll-pad { min-height: 150px; }
     .scroll-pad strong { font-size: 22px; }
     .buttons { display: grid; gap: 10px; }
-    button { min-height: 58px; border: 3px solid #111111; border-radius: 9px; background: #ffffff; color: #ff3045; font: inherit; font-size: 20px; font-weight: 850; touch-action: manipulation; }
-    button:active { transform: translateY(1px); background: #f3f3f3; }
+    button { min-height: 58px; border: 3px solid #111111; border-radius: 9px; background: #ffffff; color: #111111; font: inherit; font-size: 20px; font-weight: 850; touch-action: manipulation; }
+    button:active { transform: translateY(1px); filter: brightness(0.96); }
+    .button-answer { background: #16a34a; color: #ffffff; border-color: #0f6b32; }
+    .button-answer-code { background: #2563eb; color: #ffffff; border-color: #1d4ed8; }
+    .button-screenshot { background: #f59e0b; color: #111111; border-color: #b45309; }
+    .button-reset { background: #dc2626; color: #ffffff; border-color: #991b1b; }
+    .button-stop { background: #f3f4f6; color: #111111; border-color: #6b7280; }
     .hidden { display: none; }
   </style>
 </head>
@@ -1915,30 +1926,38 @@ const remoteControlPage = () => `<!doctype html>
   <div class="no-session">No session running</div>
   <main>
     <div id="mode" class="mode"></div>
-    <section id="scrollPad" class="scroll-pad">
-      <strong>Scroll</strong>
-    </section>
+    <div id="scrollPads" class="scroll-pads">
+      <section class="scroll-pad" data-scroll-target="chat" data-technical-only>
+        <strong>Chat scroll</strong>
+      </section>
+      <section class="scroll-pad" data-scroll-target="code" data-live-only>
+        <strong>Code scroll</strong>
+      </section>
+      <section class="scroll-pad" data-scroll-target="reasoning" data-live-only>
+        <strong>Reasoning scroll</strong>
+      </section>
+    </div>
     <div class="buttons">
-      <button data-action="answer">Answer</button>
-      <button data-action="stop_answer">Stop</button>
-      <button data-action="reset_exercise" data-live-only>Reset</button>
-      <button data-action="reset_session" data-technical-only>Reset</button>
-      <button data-action="reset_session" data-live-only>Restart Session</button>
-      <button data-action="screenshot" data-live-only>Screenshot</button>
+      <button class="button-answer" data-action="answer">Answer</button>
+      <button class="button-answer-code" data-action="answer_code" data-live-only>Answer code</button>
+      <button class="button-screenshot" data-action="screenshot" data-live-only>Screenshot</button>
+      <button class="button-reset" data-action="reset_session">Reset</button>
+      <button class="button-stop" data-action="stop_answer">Stop</button>
+      <button class="button-stop" data-action="end_session">End</button>
     </div>
   </main>
   <script>
     let currentMode = "technical_interview";
-    let pendingDelta = 0;
-    let lastTouchY = null;
+    const scrollState = new Map();
     const mode = document.getElementById("mode");
-    const scrollPad = document.getElementById("scrollPad");
+    const scrollPads = document.getElementById("scrollPads");
     const applyMode = (nextMode) => {
       const hasSession = nextMode === "live_coding" || nextMode === "technical_interview";
       document.body.classList.toggle("waiting", !hasSession);
       if (!hasSession) return;
       currentMode = nextMode === "live_coding" ? "live_coding" : "technical_interview";
       mode.textContent = currentMode === "live_coding" ? "Live Coding" : "Technical";
+      scrollPads.classList.toggle("scroll-pads--coding", currentMode === "live_coding");
       document.querySelectorAll("[data-live-only]").forEach((item) => item.classList.toggle("hidden", currentMode !== "live_coding"));
       document.querySelectorAll("[data-technical-only]").forEach((item) => item.classList.toggle("hidden", currentMode === "live_coding"));
     };
@@ -1962,32 +1981,43 @@ const remoteControlPage = () => `<!doctype html>
         });
       } catch {}
     };
-    const flushScroll = () => {
-      if (!pendingDelta) return;
-      const delta = Math.max(-1200, Math.min(1200, Math.round(pendingDelta)));
-      pendingDelta = 0;
-      void send({ type: "scroll", target: currentMode === "live_coding" ? "code" : "chat", delta });
+    const stateForPad = (pad) => {
+      if (!scrollState.has(pad)) scrollState.set(pad, { pendingDelta: 0, lastTouchY: null });
+      return scrollState.get(pad);
     };
-    window.setInterval(flushScroll, 120);
-    scrollPad.addEventListener("touchstart", (event) => {
-      lastTouchY = event.touches[0] ? event.touches[0].clientY : null;
-    }, { passive: false });
-    scrollPad.addEventListener("touchmove", (event) => {
-      event.preventDefault();
-      const y = event.touches[0] ? event.touches[0].clientY : null;
-      if (y === null || lastTouchY === null) return;
-      pendingDelta += lastTouchY - y;
-      lastTouchY = y;
-    }, { passive: false });
-    scrollPad.addEventListener("touchend", () => {
-      lastTouchY = null;
-      flushScroll();
+    const flushScroll = (pad) => {
+      const state = stateForPad(pad);
+      if (!state.pendingDelta) return;
+      const delta = Math.max(-1200, Math.min(1200, Math.round(state.pendingDelta)));
+      state.pendingDelta = 0;
+      void send({ type: "scroll", target: pad.dataset.scrollTarget, delta });
+    };
+    window.setInterval(() => {
+      document.querySelectorAll("[data-scroll-target]").forEach(flushScroll);
+    }, 120);
+    document.querySelectorAll("[data-scroll-target]").forEach((pad) => {
+      pad.addEventListener("touchstart", (event) => {
+        stateForPad(pad).lastTouchY = event.touches[0] ? event.touches[0].clientY : null;
+      }, { passive: false });
+      pad.addEventListener("touchmove", (event) => {
+        event.preventDefault();
+        const state = stateForPad(pad);
+        const y = event.touches[0] ? event.touches[0].clientY : null;
+        if (y === null || state.lastTouchY === null) return;
+        state.pendingDelta += state.lastTouchY - y;
+        state.lastTouchY = y;
+      }, { passive: false });
+      pad.addEventListener("touchend", () => {
+        const state = stateForPad(pad);
+        state.lastTouchY = null;
+        flushScroll(pad);
+      });
+      pad.addEventListener("wheel", (event) => {
+        event.preventDefault();
+        stateForPad(pad).pendingDelta += event.deltaY;
+        flushScroll(pad);
+      }, { passive: false });
     });
-    scrollPad.addEventListener("wheel", (event) => {
-      event.preventDefault();
-      pendingDelta += event.deltaY;
-      flushScroll();
-    }, { passive: false });
     document.querySelectorAll("[data-action]").forEach((button) => {
       button.addEventListener("click", () => send({ type: button.dataset.action }));
     });
@@ -2059,7 +2089,7 @@ const handleRemoteControlCommand = (command) => {
     finishSessionTrace();
     return { ok: true };
   }
-  if (["stop_answer", "reset_exercise", "reset_session", "screenshot", "scroll"].includes(type)) {
+  if (["answer_code", "stop_answer", "reset_exercise", "reset_session", "screenshot", "scroll"].includes(type)) {
     sendRemoteControlCommand(normalized);
     return { ok: true };
   }
@@ -2124,8 +2154,8 @@ const applyShareSafeState = () => {
   stealthState.callPrivacyAllowed = true;
   stealthState.overlayVisible = true;
   stealthState.contentProtectionEnabled = true;
-  stealthState.mousePassthroughEnabled = false;
-  stealthState.focusMode = "interactive";
+  stealthState.mousePassthroughEnabled = true;
+  stealthState.focusMode = "passthrough";
   stealthState.shortcutLayerActive = true;
   normalizeStealthState();
 };
@@ -2211,11 +2241,13 @@ const assessPrivacyState = async () => {
     findings.push(`Local capture source check failed: ${error instanceof Error ? error.message : "unknown error"}.`);
   }
 
-  const status = stealthState.overlayVisible && stealthState.contentProtectionEnabled ? "safe" : "risk";
+  const status = stealthState.contentProtectionEnabled ? "safe" : "risk";
   return {
     status,
     summary: status === "safe"
-      ? "Protected sharing mode is active. CallPilot stays visible to you while using best-effort capture protection."
+      ? stealthState.overlayVisible
+        ? "Private sharing mode is active. CallPilot stays visible to you with best-effort capture protection and passthrough enabled."
+        : "Hidden private sharing mode is active. CallPilot is hidden locally with best-effort capture protection and passthrough enabled."
       : stealthState.overlayVisible
         ? "CallPilot is visible locally, but capture protection is not enabled."
         : "CallPilot is hidden locally; protected interview overlays should stay visible to you.",
@@ -2226,11 +2258,12 @@ const assessPrivacyState = async () => {
 
 const syncWindowState = () => {
   normalizeStealthState();
+  const sessionPassthroughEnabled = Boolean(stealthState.mousePassthroughEnabled && activeSessionTrace);
   for (const windowRef of [mainWindow, overlayWindow, codingWindow]) {
     if (!windowRef) continue;
     windowRef.setAlwaysOnTop(true, "screen-saver");
     windowRef.setContentProtection(Boolean(stealthState.contentProtectionEnabled));
-    windowRef.setIgnoreMouseEvents(Boolean(stealthState.mousePassthroughEnabled), { forward: true });
+    windowRef.setIgnoreMouseEvents(windowRef !== mainWindow && sessionPassthroughEnabled, { forward: true });
   }
   if (mainWindow && stealthState.overlayVisible && !overlayWindow) {
     if (!mainWindow.isVisible()) mainWindow.showInactive();
@@ -2527,6 +2560,7 @@ ipcMain.handle("session:end", () => {
   closeOverlayWindow();
   closeCodingWindow();
   mainWindow?.show();
+  syncWindowState();
   const tracePath = finishSessionTrace();
   return { ok: true, tracePath };
 });
@@ -2546,18 +2580,24 @@ ipcMain.handle("session:trace-event", (_event, type, payload = {}) => {
   writeActiveSessionTrace("active");
   return { ok: true };
 });
-ipcMain.handle("answer:request", (_event, questionOverride) => {
-  const override = typeof questionOverride === "string" ? questionOverride.trim() : "";
+ipcMain.handle("answer:request", (_event, input) => {
+  const override = typeof input === "string"
+    ? input.trim()
+    : typeof input?.questionOverride === "string" ? input.questionOverride.trim() : "";
+  const audience = input?.audience === "chat" || input?.audience === "coding" || input?.audience === "both"
+    ? input.audience
+    : undefined;
   appendTraceEvent("manual_answer_requested", {
     hasQuestionOverride: Boolean(override),
     questionOverride: override ? textSummary(override, 180) : undefined,
+    audience,
   });
   writeActiveSessionTrace("active");
   if (!mainWindow || mainWindow.webContents.isDestroyed()) {
     sendToOverlay("answer:manual-status", { ok: false, status: "main_window_unavailable" });
     return { ok: false, error: "main_window_unavailable" };
   }
-  mainWindow.webContents.send("answer:manual-request", override ? { questionOverride: override } : undefined);
+  mainWindow.webContents.send("answer:manual-request", override || audience ? { questionOverride: override, audience } : undefined);
   sendToOverlay("answer:manual-status", { ok: true, status: "sent_to_main" });
   return { ok: true };
 });

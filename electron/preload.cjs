@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   endSession: () => ipcRenderer.invoke("session:end"),
   getSessionTraceStatus: () => ipcRenderer.invoke("session:trace-status"),
   recordSessionEvent: (type, payload) => ipcRenderer.invoke("session:trace-event", type, payload),
-  requestAnswer: (questionOverride) => ipcRenderer.invoke("answer:request", questionOverride),
+  requestAnswer: (input) => ipcRenderer.invoke("answer:request", input),
   cancelAnswer: (requestId) => ipcRenderer.invoke("answer:cancel", requestId),
   publishTranscriptMessage: (message) => ipcRenderer.invoke("transcript:publish", message),
   publishLiveTranscript: (message) => ipcRenderer.invoke("transcript:publish-live", message),

@@ -1,0 +1,40 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "eventDedupPlan": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_event_types",
+    "mustContain": [
+      "def count_event_types(lines):",
+      "if event_id in seen_ids",
+      "continue",
+      "seen_ids.add(event_id)",
+      "counts[event_type]"
+    ],
+    "mustPreserve": [
+      "count_event_types",
+      "seen_ids",
+      "counts",
+      "event_id",
+      "event_type"
+    ],
+    "mustNotContain": [
+      "deque",
+      "popleft",
+      "sorted(",
+      "window",
+      "300"
+    ],
+    "semanticExpectations": [
+      "Debe corregir el orden: dedupe antes de incrementar counts.",
+      "Debe mantener la funcion y variables visibles.",
+      "No debe implementar ventana temporal todavia."
+    ]
+  }
+}

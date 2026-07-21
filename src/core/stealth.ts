@@ -29,11 +29,11 @@ export type StealthAction =
   | { type: "reset" };
 
 export const defaultStealthState: StealthState = {
-  callPrivacyAllowed: false,
+  callPrivacyAllowed: true,
   overlayVisible: true,
-  contentProtectionEnabled: false,
-  mousePassthroughEnabled: false,
-  focusMode: "interactive",
+  contentProtectionEnabled: true,
+  mousePassthroughEnabled: true,
+  focusMode: "passthrough",
   shortcutLayerActive: true,
 };
 
@@ -64,8 +64,8 @@ export const applyShareSafeState = (state: StealthState = defaultStealthState): 
     callPrivacyAllowed: true,
     overlayVisible: true,
     contentProtectionEnabled: true,
-    mousePassthroughEnabled: false,
-    focusMode: "interactive",
+    mousePassthroughEnabled: true,
+    focusMode: "passthrough",
     shortcutLayerActive: true,
   });
 
@@ -104,10 +104,12 @@ export const assessPrivacyState = (
     findings.push("Mouse passthrough is enabled.");
   }
 
-  if (normalized.overlayVisible && normalized.contentProtectionEnabled) {
+  if (normalized.contentProtectionEnabled) {
     return {
       status: "safe",
-      summary: "Protected sharing mode is active. CallPilot stays visible to you while using best-effort capture protection.",
+      summary: normalized.overlayVisible
+        ? "Private sharing mode is active. CallPilot stays visible to you with best-effort capture protection and passthrough enabled."
+        : "Hidden private sharing mode is active. CallPilot is hidden locally with best-effort capture protection and passthrough enabled.",
       findings,
       checkedAt,
     };

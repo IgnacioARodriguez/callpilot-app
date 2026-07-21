@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -63,9 +63,12 @@ type CodingWorkspaceExpected = {
   mustPreserve?: string[];
   mustNotContain: string[];
   semanticExpectations?: string[];
-  semanticChecks?: {
+  semanticChecks?: Record<string, boolean | undefined> & {
     sortedWordFrequency?: boolean;
+    sortedEventMetrics?: boolean;
+    usesDequeWindow?: boolean;
   };
+  pythonAssertions?: string[];
 };
 
 type ConversationAssistExpected = {
@@ -74,6 +77,17 @@ type ConversationAssistExpected = {
   mustContainAny?: string[];
   mustContainGroups?: string[][];
   mustNotContain?: string[];
+  semanticChecks?: Record<string, boolean | undefined> & {
+    naturalSpokenTone?: boolean;
+    noCodeBlock?: boolean;
+    noLongCode?: boolean;
+    eventDedupPlan?: boolean;
+    duplicateSemantics?: boolean;
+    windowPlan?: boolean;
+    staleSetBug?: boolean;
+    malformedSortingPlan?: boolean;
+    dequeTestsPlan?: boolean;
+  };
 };
 
 type ScenarioExpected = CodingWorkspaceExpected & {
@@ -88,9 +102,12 @@ type LoadedCodingWorkspaceExpected = {
   mustPreserve: string[];
   mustNotContain: string[];
   semanticExpectations: string[];
-  semanticChecks: {
+  semanticChecks: Record<string, boolean> & {
     sortedWordFrequency: boolean;
+    sortedEventMetrics: boolean;
+    usesDequeWindow: boolean;
   };
+  pythonAssertions: string[];
 };
 
 type LoadedConversationAssistExpected = {
@@ -99,6 +116,17 @@ type LoadedConversationAssistExpected = {
   mustContainAny: string[];
   mustContainGroups: string[][];
   mustNotContain: string[];
+  semanticChecks: Record<string, boolean> & {
+    naturalSpokenTone: boolean;
+    noCodeBlock: boolean;
+    noLongCode: boolean;
+    eventDedupPlan: boolean;
+    duplicateSemantics: boolean;
+    windowPlan: boolean;
+    staleSetBug: boolean;
+    malformedSortingPlan: boolean;
+    dequeTestsPlan: boolean;
+  };
 };
 
 type LoadedScenarioExpected = {
@@ -109,7 +137,9 @@ type LoadedScenarioExpected = {
 type ScenarioStage = {
   id: string;
   order: number;
-  image: string | null;
+  answerAction?: "chat" | "coding" | "both";
+  image?: string | null;
+  images?: string[];
   code: string | null;
   transcript_delta: string;
   expected: string;
@@ -123,6 +153,7 @@ type StageScenario = {
 
 type LoadedScenarioStage = ScenarioStage & {
   imagePath: string | null;
+  imagePaths: string[];
   codePath: string | null;
   transcriptPath: string;
   expectedPath: string;
@@ -255,6 +286,9 @@ const readCases = (): ReplayCase[] => {
 
 const readJsonFile = <T>(filePath: string): T => JSON.parse(fs.readFileSync(filePath, "utf8"));
 
+const loadSemanticChecks = (checks: Record<string, boolean | undefined> | undefined): Record<string, boolean> =>
+  Object.fromEntries(Object.entries(checks ?? {}).map(([key, value]) => [key, Boolean(value)]));
+
 const defaultConversationAssistForbiddenTerms = [
   "```",
   "def ",
@@ -276,13 +310,18 @@ const loadCodingWorkspaceExpected = (expectedRules: CodingWorkspaceExpected): Lo
   mustNotContain: Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [],
   semanticExpectations: Array.isArray(expectedRules.semanticExpectations) ? expectedRules.semanticExpectations.map(String) : [],
   semanticChecks: {
+    ...loadSemanticChecks(expectedRules.semanticChecks),
     sortedWordFrequency: Boolean(expectedRules.semanticChecks?.sortedWordFrequency),
+    sortedEventMetrics: Boolean(expectedRules.semanticChecks?.sortedEventMetrics),
+    usesDequeWindow: Boolean(expectedRules.semanticChecks?.usesDequeWindow),
   },
+  pythonAssertions: Array.isArray(expectedRules.pythonAssertions) ? expectedRules.pythonAssertions.map(String) : [],
 });
 
 const loadConversationAssistExpected = (expectedRules: ConversationAssistExpected | undefined): LoadedConversationAssistExpected | null => {
   if (!expectedRules) return null;
   const explicitForbidden = Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [];
+  const defaultForbidden = defaultConversationAssistForbiddenTerms.filter((term) => !/^(code|codigo|c.digo|def|class):?$/i.test(normalizeText(term)));
   return {
     maxWords: Number.isFinite(expectedRules.maxWords) ? Number(expectedRules.maxWords) : 130,
     mustContain: Array.isArray(expectedRules.mustContain) ? expectedRules.mustContain.map(String) : [],
@@ -293,7 +332,19 @@ const loadConversationAssistExpected = (expectedRules: ConversationAssistExpecte
         .map((group) => group.map(String).filter(Boolean))
         .filter((group) => group.length > 0)
       : [],
-    mustNotContain: [...defaultConversationAssistForbiddenTerms, ...explicitForbidden],
+    mustNotContain: [...defaultForbidden, ...explicitForbidden],
+    semanticChecks: {
+      ...loadSemanticChecks(expectedRules.semanticChecks),
+      naturalSpokenTone: Boolean(expectedRules.semanticChecks?.naturalSpokenTone),
+      noCodeBlock: Boolean(expectedRules.semanticChecks?.noCodeBlock),
+      noLongCode: Boolean(expectedRules.semanticChecks?.noLongCode),
+      eventDedupPlan: Boolean(expectedRules.semanticChecks?.eventDedupPlan),
+      duplicateSemantics: Boolean(expectedRules.semanticChecks?.duplicateSemantics),
+      windowPlan: Boolean(expectedRules.semanticChecks?.windowPlan),
+      staleSetBug: Boolean(expectedRules.semanticChecks?.staleSetBug),
+      malformedSortingPlan: Boolean(expectedRules.semanticChecks?.malformedSortingPlan),
+      dequeTestsPlan: Boolean(expectedRules.semanticChecks?.dequeTestsPlan),
+    },
   };
 };
 
@@ -314,11 +365,18 @@ const readStageScenario = (): LoadedStageScenario | null => {
   const stages = [...parsed.stages]
     .sort((a, b) => a.order - b.order)
     .map((stage) => {
-      const imagePath = typeof stage.image === "string" ? path.resolve(baseDir, stage.image) : null;
+      const imagePaths = Array.isArray(stage.images)
+        ? stage.images.map((image) => path.resolve(baseDir, String(image)))
+        : typeof stage.image === "string"
+          ? [path.resolve(baseDir, stage.image)]
+          : [];
+      const imagePath = imagePaths[0] ?? null;
       const codePath = typeof stage.code === "string" ? path.resolve(baseDir, stage.code) : null;
       const transcriptPath = path.resolve(baseDir, stage.transcript_delta);
       const expectedPath = path.resolve(baseDir, stage.expected);
-      if (imagePath) requireFixtureFile(parsed.id, stage.id, "coderpad.png", imagePath);
+      imagePaths.forEach((currentImagePath, index) => {
+        requireFixtureFile(parsed.id, stage.id, `coderpad screenshot ${index + 1}`, currentImagePath);
+      });
       if (codePath) requireFixtureFile(parsed.id, stage.id, "code.py", codePath);
       requireFixtureFile(parsed.id, stage.id, "transcript_delta.json", transcriptPath);
       requireFixtureFile(parsed.id, stage.id, "expected.json", expectedPath);
@@ -330,6 +388,7 @@ const readStageScenario = (): LoadedStageScenario | null => {
       return {
         ...stage,
         imagePath,
+        imagePaths,
         codePath,
         transcriptPath,
         expectedPath,
@@ -406,6 +465,171 @@ const createOutputPayload = (text: string) => ({
   output: [{ type: "message", content: [{ type: "output_text", text }] }],
 });
 
+const mockEventDedupConversation = (stageId: string) => {
+  if (/transcript_only/.test(stageId)) {
+    return "I'd say: I'll keep this simple for now: parse each pipe-separated line, track seen event_id values to dedupe, and count event_type only for the first occurrence. I won't add the time window yet because the interviewer said timestamps are for later.";
+  }
+  if (/initial_implementation/.test(stageId)) {
+    return "I'd say: I'll start with the simple first version: split each pipe-separated line, use seen_ids to skip duplicate event_id values, and update counts by event_type only for accepted events.";
+  }
+  if (/duplicate_semantics/.test(stageId)) {
+    return "I'd say: the first event wins, so the current seen_ids set is enough: once an event_id is seen, later duplicates are skipped even if their type differs. No code change yet.";
+  }
+  if (/visible_duplicate_count_bug/.test(stageId)) {
+    return "I'd say: the bug is ordering. We count before checking seen_ids, so a duplicate already changed counts. I’ll move the count update after the duplicate skip.";
+  }
+  if (/sliding_window|window_requirement/.test(stageId)) {
+    return "I'd say: now the set needs to represent only the last five minutes, 300 seconds. Since timestamps arrive sorted, I can expire old recent_events as time moves forward before checking duplicates.";
+  }
+  if (/window_membership_stale_bug|window_membership|window_bug/.test(stageId)) {
+    return "I'd say: recent_events and seen_ids drifted. When an old tuple expires, I also need to discard that id from seen_ids, otherwise the set stays stale.";
+  }
+  if (/return_contract|malformed/.test(stageId)) {
+    return "I'd say: I'll keep the window logic, add guards to skip malformed lines without raising, then change only the final return to sorted event metrics by count descending and type alphabetically.";
+  }
+  if (/final_tests|deque/.test(stageId)) {
+    return "I'd say: final pass is replacing pop(0) with a deque and popleft for O(1) front removal, while keeping seen_ids synchronized. Then I’ll add direct asserts for duplicates, expiry, malformed input, and sorting ties.";
+  }
+  return "I'd say: I'll keep the existing event dedup logic and make only the next requested change.";
+};
+
+const mockEventDedupCode = (stageId: string) => {
+  if (/final_tests|deque/.test(stageId)) {
+    return [
+      "from collections import deque",
+      "",
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    recent_events = deque()",
+      "    for line in lines:",
+      "        parts = line.split(\"|\")",
+      "        if len(parts) != 3:",
+      "            continue",
+      "        timestamp_raw, event_id, event_type = parts",
+      "        if not event_id or not event_type:",
+      "            continue",
+      "        try:",
+      "            timestamp = int(timestamp_raw)",
+      "        except ValueError:",
+      "            continue",
+      "",
+      "        while recent_events and timestamp - recent_events[0][0] > 300:",
+      "            old_timestamp, old_id = recent_events.popleft()",
+      "            seen_ids.discard(old_id)",
+      "",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "",
+      "        seen_ids.add(event_id)",
+      "        recent_events.append((timestamp, event_id))",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "",
+      "    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))",
+      "",
+      "assert count_event_types([\"0|a1|click\", \"10|a1|view\"]) == [(\"click\", 1)]",
+      "assert count_event_types([\"0|a1|click\", \"301|a1|view\"]) == [(\"click\", 1), (\"view\", 1)]",
+      "assert count_event_types([\"bad line\", \"x|a1|click\", \"1||view\"]) == []",
+      "assert count_event_types([\"0|a1|view\", \"1|a2|click\"]) == [(\"click\", 1), (\"view\", 1)]",
+    ].join("\n");
+  }
+  if (/return_contract|malformed/.test(stageId)) {
+    return [
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    recent_events = []",
+      "    for line in lines:",
+      "        parts = line.split(\"|\")",
+      "        if len(parts) != 3:",
+      "            continue",
+      "        timestamp_raw, event_id, event_type = parts",
+      "        if not event_id or not event_type:",
+      "            continue",
+      "        try:",
+      "            timestamp = int(timestamp_raw)",
+      "        except ValueError:",
+      "            continue",
+      "",
+      "        while recent_events and timestamp - recent_events[0][0] > 300:",
+      "            old_timestamp, old_id = recent_events.pop(0)",
+      "            seen_ids.discard(old_id)",
+      "",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "",
+      "        seen_ids.add(event_id)",
+      "        recent_events.append((timestamp, event_id))",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "",
+      "    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))",
+    ].join("\n");
+  }
+  if (/window_membership_stale_bug|window_membership|window_bug/.test(stageId)) {
+    return [
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    recent_events = []",
+      "    for line in lines:",
+      "        timestamp, event_id, event_type = line.split(\"|\")",
+      "        timestamp = int(timestamp)",
+      "",
+      "        while recent_events and timestamp - recent_events[0][0] > 300:",
+      "            old_timestamp, old_id = recent_events.pop(0)",
+      "            seen_ids.discard(old_id)",
+      "",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "",
+      "        seen_ids.add(event_id)",
+      "        recent_events.append((timestamp, event_id))",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "    return counts",
+    ].join("\n");
+  }
+  if (/sliding_window|window_requirement/.test(stageId)) {
+    return [
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    for line in lines:",
+      "        timestamp, event_id, event_type = line.split(\"|\")",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "        seen_ids.add(event_id)",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "    return counts",
+    ].join("\n");
+  }
+  if (/visible_duplicate_count_bug/.test(stageId)) {
+    return [
+      "def count_event_types(lines):",
+      "    counts = {}",
+      "    seen_ids = set()",
+      "    for line in lines:",
+      "        timestamp, event_id, event_type = line.split(\"|\")",
+      "        if event_id in seen_ids:",
+      "            continue",
+      "        seen_ids.add(event_id)",
+      "        counts[event_type] = counts.get(event_type, 0) + 1",
+      "    return counts",
+    ].join("\n");
+  }
+  return [
+    "def count_event_types(lines):",
+    "    counts = {}",
+    "    seen_ids = set()",
+    "    for line in lines:",
+    "        timestamp, event_id, event_type = line.split(\"|\")",
+    "        if event_id in seen_ids:",
+    "            continue",
+    "        seen_ids.add(event_id)",
+    "        counts[event_type] = counts.get(event_type, 0) + 1",
+    "    return counts",
+  ].join("\n");
+};
+
 const mockOpenAI = http.createServer((request, response) => {
   if (request.method !== "POST" || request.url !== "/v1/responses") {
     response.writeHead(404);
@@ -424,9 +648,30 @@ const mockOpenAI = http.createServer((request, response) => {
     const wantsConversationAssist = payload.stream === true
       && !payload.text?.format
       && /conversation side-channel|panel izquierdo|chat/i.test(`${instructions}\n${input}`);
-    const stageId = input.match(/stage_id:\s*([^\n]+)/i)?.[1]?.trim() ?? "";
+    const stageId = input.match(/stage_id:\s*([A-Za-z0-9_-]+)/i)?.[1]?.trim() ?? "";
     const latestActionableInput = input.match(/<latest_actionable_input>\s*([\s\S]*?)\s*<\/latest_actionable_input>/i)?.[1] ?? "";
     const actionText = latestActionableInput || input;
+    const wantsEventDedup = /event_dedup_windowed_metrics_followups|count_event_types|event_id|event_type|recent_events/.test(input);
+    if (wantsEventDedup) {
+      if (wantsConversationAssist) {
+        const conversationText = mockEventDedupConversation(stageId);
+        if (payload.stream === true) {
+          response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+          response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: conversationText })}\n\n`);
+          response.write("data: [DONE]\n\n");
+          response.end();
+          return;
+        }
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(createOutputPayload(conversationText)));
+        return;
+      }
+      const code = mockEventDedupCode(stageId);
+      const structured = makeCodingPayload(code, /bug|requirement|contract|final_tests/.test(stageId) ? "follow_up_change" : "initial_solution", "Event dedup windowed metrics");
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(createOutputPayload(JSON.stringify(structured))));
+      return;
+    }
     const inferredFunctionName = /sentence|word appears|count_words|count words|frequency/i.test(latestActionableInput || input)
       ? "count_words"
       : "";
@@ -744,6 +989,42 @@ const publishScreen = async (client: CdpClient, text: string, imagePath: string)
   if (!result?.ok) throw new Error(`screen:publish-context failed: ${result?.error || "unknown"}`);
 };
 
+const resolveStageScreenText = async (
+  client: CdpClient,
+  imagePaths: string[],
+  timings: Record<string, number>,
+) => {
+  if (imagePaths.length === 0) {
+    return { text: "", images: [], ocrResult: null, visionResult: null };
+  }
+  const images = [];
+  for (let index = 0; index < imagePaths.length; index += 1) {
+    const imagePath = imagePaths[index];
+    const imageTimings: Record<string, number> = {};
+    const screen = await resolveScreenText(client, imagePath, "", imageTimings);
+    timings[`resolve_screen_text_${index + 1}_ms`] = Object.values(imageTimings).reduce((sum, value) => sum + value, 0);
+    images.push({
+      path: imagePath,
+      text: screen.text,
+      ocrResult: screen.ocrResult,
+      visionResult: screen.visionResult,
+    });
+  }
+  const text = images
+    .map((image, index) => [
+      `[screenshot ${index + 1}/${images.length}: ${path.basename(image.path)}]`,
+      image.text,
+    ].filter(Boolean).join("\n"))
+    .join("\n\n")
+    .trim();
+  return {
+    text,
+    images,
+    ocrResult: images[0]?.ocrResult ?? null,
+    visionResult: images[0]?.visionResult ?? null,
+  };
+};
+
 const publishTranscriptDelta = async (client: CdpClient, scenarioId: string, stage: LoadedScenarioStage) => {
   for (let index = 0; index < stage.transcript.length; index += 1) {
     const turn = stage.transcript[index];
@@ -760,6 +1041,7 @@ const publishTranscriptDelta = async (client: CdpClient, scenarioId: string, sta
 const transcriptPrompt = (scenarioId: string, stage: LoadedScenarioStage) => [
   `scenario_id: ${scenarioId}`,
   `stage_id: ${stage.id}`,
+  `answer_action: ${stage.answerAction ?? "both"}`,
   stage.imagePath
     ? "Use the latest CoderPad screenshot as the source of truth."
     : "There is no current screenshot for this stage; answer from the technical transcript only and ignore small talk.",
@@ -771,7 +1053,160 @@ const transcriptPrompt = (scenarioId: string, stage: LoadedScenarioStage) => [
   ...stage.transcript.map((turn) => `${turn.role}: ${turn.text}`),
 ].join("\n");
 
-const includesTerm = (text: string, term: string) => text.toLowerCase().includes(term.toLowerCase());
+const normalizeText = (text: string) =>
+  text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_`"'(){}\[\],.;:!?|>=-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const includesTerm = (text: string, term: string) => {
+  const normalizedTerm = normalizeText(term);
+  if (!normalizedTerm) return text.toLowerCase().includes(term.toLowerCase());
+  return normalizeText(text).includes(normalizedTerm);
+};
+
+const includesCodeTerm = (code: string, term: string) => code.toLowerCase().includes(term.toLowerCase());
+
+const hasAny = (text: string, patterns: RegExp[]) => {
+  const normalized = normalizeText(text);
+  return patterns.some((pattern) => pattern.test(normalized));
+};
+
+const validateConversationSemanticChecks = (text: string, checks: LoadedConversationAssistExpected["semanticChecks"]) => {
+  const failures: string[] = [];
+  const normalized = normalizeText(text);
+  if (checks.naturalSpokenTone && !hasAny(text, [/\bi d say\b/, /\bi ll\b/, /\bvoy\b/, /\bempez/, /\bprimero\b/, /\bahora\b/, /\bmantendr/, /\bnecesito\b/, /\bconfirm/])) {
+    failures.push("conversation assist does not sound like a spoken candidate plan");
+  }
+  if (checks.noCodeBlock && /```|\bdef\s+\w+\s*\(|\bclass\s+\w+/.test(text)) {
+    failures.push("conversation assist includes a code block or full code shape");
+  }
+  if (checks.noLongCode && (normalized.match(/\b(if|for|while|return|continue|try|except)\b/g)?.length ?? 0) > 5) {
+    failures.push("conversation assist is contaminated with too much code-like detail");
+  }
+  if (checks.eventDedupPlan) {
+    if (!hasAny(text, [/split|separ|divid|parse|proces|line/])) failures.push("conversation assist does not describe reading/parsing event lines");
+    if (!hasAny(text, [/dedup|duplic|vist|seen|conjunto|id/])) failures.push("conversation assist does not describe event_id deduplication");
+    if (!hasAny(text, [/count|conte|cuenta|contador|tipo de evento|event type|event_type/])) failures.push("conversation assist does not describe counting event types");
+  }
+  if (checks.duplicateSemantics) {
+    if (!hasAny(text, [/primer|first/])) failures.push("conversation assist does not preserve first-occurrence semantics");
+    if (!hasAny(text, [/ignor|skip|saltar|omitir|no volv/])) failures.push("conversation assist does not describe ignoring later duplicates");
+    if (!hasAny(text, [/suficient|actual|sin necesidad|no necesito|conjunto|seen/])) failures.push("conversation assist does not explain why the current set-based state is enough");
+  }
+  if (checks.windowPlan) {
+    if (!hasAny(text, [/cinco|five|\b5\b|\b300\b/])) failures.push("conversation assist does not mention the five-minute/300-second window");
+    if (!hasAny(text, [/ventana|window|timestamp|tiempo/])) failures.push("conversation assist does not ground the plan in timestamp/window context");
+    if (!hasAny(text, [/expir|elimin|quit|remov|viejo|antigu|old/])) failures.push("conversation assist does not describe expiring old ids");
+    if (!hasAny(text, [/orden|llegan|sorted|timestamp/])) failures.push("conversation assist does not mention ordered arrival context");
+  }
+  if (checks.staleSetBug) {
+    if (!hasAny(text, [/coher|sincron|consistent|stale|obsolet|out of sync|drift|membres|actualiz|ya no deber/])) failures.push("conversation assist does not describe stale/out-of-sync state");
+    if (!hasAny(text, [/seen|conjunto|set|vist/])) failures.push("conversation assist does not mention the seen-id membership state");
+    if (!hasAny(text, [/elimin|quit|discard|remove|expir/])) failures.push("conversation assist does not describe removing expired ids from seen state");
+    if (!hasAny(text, [/recent events|recent_events|tupla|tuple|evento expir/])) failures.push("conversation assist does not connect the fix to recent_events");
+  }
+  if (checks.malformedSortingPlan) {
+    if (!hasAny(text, [/malform|invalid|bad line|linea mala|lineas malas/])) failures.push("conversation assist does not mention malformed input handling");
+    if (!hasAny(text, [/ignor|skip|saltar|omitir|no romper|sin lanzar/])) failures.push("conversation assist does not describe skipping malformed lines safely");
+    if (!hasAny(text, [/orden|sort|descendent|alfabet|alphabet/])) failures.push("conversation assist does not describe sorted return semantics");
+    if (!hasAny(text, [/mantener|preserv|conservar|ventana|window|existente/])) failures.push("conversation assist does not preserve the existing window logic");
+  }
+  if (checks.dequeTestsPlan) {
+    if (!hasAny(text, [/deque|popleft/])) failures.push("conversation assist does not mention deque/popleft optimization");
+    if (!hasAny(text, [/test|assert|prueb/])) failures.push("conversation assist does not mention tests/assertions");
+    if (!hasAny(text, [/duplic|expir|malform|orden|sort/])) failures.push("conversation assist does not cover the expected test scenario families");
+    if (!hasAny(text, [/o 1|complej|complexity|frente|front/])) failures.push("conversation assist does not describe the front-removal complexity improvement");
+  }
+  if (checks.initialPlan) {
+    if (!hasAny(text, [/prioridad|priority/])) failures.push("conversation assist does not mention priority ordering");
+    if (!hasAny(text, [/simple|direct|rudiment|basico|natural|primero/])) failures.push("conversation assist does not frame the first pass as simple/natural");
+  }
+  if (checks.mentionsStableTiesConceptually || checks.stableTieByOriginalPosition) {
+    if (!hasAny(text, [/estable|stable|empate|tie|orden original|aparicion|input order/])) failures.push("conversation assist does not mention stable ordering for ties");
+  }
+  if (checks.doesNotPrematurelyOptimize) {
+    if (!hasAny(text, [/simple|direct|rudiment|no opt|sin optim|todavia no|por ahora/])) {
+      failures.push("conversation assist does not keep the first pass intentionally simple");
+    }
+  }
+  if (checks.doesNotInventDependencies || checks.doesNotAddValidationYet) {
+    if (!hasAny(text, [/por ahora|todavia no|si lo piden|sin meter|mantener|solo/])) {
+      failures.push("conversation assist does not avoid future requirements clearly");
+    }
+  }
+  if (checks.distinguishesSmallTalkFromTask) {
+    if (!hasAny(text, [/ignorar|separar|small talk|ruido|foco|problema/])) failures.push("conversation assist does not separate small talk from the task");
+  }
+  if (checks.acknowledgesRudimentaryComplexity) {
+    if (!hasAny(text, [/o n 2|n 2|cuadr|rudiment|no opt|simple/])) failures.push("conversation assist does not acknowledge the rudimentary complexity");
+  }
+  if (checks.clarificationOnly || checks.explicitlyAvoidsCodeChange) {
+    if (!hasAny(text, [/sin cambiar|no cambi|mantendr|aclar|confirm|mismo codigo|no toc/])) failures.push("conversation assist does not treat the turn as clarification-only");
+  }
+  if (checks.bugExplanation) {
+    if (!hasAny(text, [/bug|fall|error|orden|antes|despues|membership|seen|duplic/])) failures.push("conversation assist does not explain the duplicate membership/order bug");
+  }
+  if (checks.describesLocalizedPatch) {
+    if (!hasAny(text, [/local|pequen|solo|minimo|mover|antes de agregar|check/])) failures.push("conversation assist does not describe a localized patch");
+  }
+  if (checks.multiStepFollowupPlan) {
+    if (!hasAny(text, [/paso|iter|primero|luego|despues|mantener/])) failures.push("conversation assist does not describe a step-by-step follow-up plan");
+  }
+  if (checks.mentionsReadyTasksConceptually) {
+    if (!hasAny(text, [/ready|listas|disponibles|dependencias satisfechas|pueden correr/])) failures.push("conversation assist does not mention ready tasks conceptually");
+  }
+  if (checks.mentionsNoProgressMeansBlocked) {
+    if (!hasAny(text, [/sin progreso|no progress|bloquead|blocked|atasc|no puedo avanzar/])) failures.push("conversation assist does not mention no-progress blocked detection");
+  }
+  if (checks.doesNotClassifyBlockedReasonsYet) {
+    if (hasAny(text, [/missing_dependency|cycle|ciclo|ausente/])) failures.push("conversation assist classifies blocked reasons before requested");
+  }
+  if (checks.contractChangePlan) {
+    if (!hasAny(text, [/contrato|return|devolver|scheduled|blocked|bloquead/])) failures.push("conversation assist does not mention the return-contract change");
+  }
+  if (checks.mentionsPreservingExistingApproach || checks.mentionsPreservingExistingContracts || checks.mentionsPreservingHelpersAndLoop) {
+    if (!hasAny(text, [/mantener|preserv|conservar|helper|normaliz|loop|contrato|existente/])) failures.push("conversation assist does not mention preserving existing behavior/helpers");
+  }
+  if (checks.dirtyInputPlan) {
+    if (!hasAny(text, [/malform|sucio|invalid|valid|normaliz|priority|id/])) failures.push("conversation assist does not mention dirty input/normalization");
+  }
+  if (checks.separatesNormalizationFromScheduling) {
+    if (!hasAny(text, [/normaliz|limpiar|parse/]) || !hasAny(text, [/scheduler|orden|schedule|planificar/])) {
+      failures.push("conversation assist does not separate normalization from scheduling");
+    }
+  }
+  if (checks.mentionsFirstValidDuplicatePolicy) {
+    if (!hasAny(text, [/primer|first/]) || !hasAny(text, [/duplic|id repet|valid/])) failures.push("conversation assist does not mention first-valid duplicate policy");
+  }
+  if (checks.multiScreenshotContextPlan) {
+    if (!hasAny(text, [/pantalla|captura|screenshot|scroll|arriba|medio|abajo|vista completa|codigo largo/])) failures.push("conversation assist does not mention using the multi-screenshot code context");
+  }
+  if (checks.usesSimplifiedClassificationRule) {
+    if (!hasAny(text, [/missing|ausente|conocid|known|cycle|ciclo|bloquead/])) failures.push("conversation assist does not describe the simplified blocked classification rule");
+  }
+  if (checks.optimizationPlan) {
+    if (!hasAny(text, [/optim|mejor|heap|grafo|graph|indegree|cola/])) failures.push("conversation assist does not describe the optimization plan");
+  }
+  if (checks.mentionsHeapAndDependencyGraphConceptually) {
+    if (!hasAny(text, [/heap|cola de prioridad|priority queue/]) || !hasAny(text, [/grafo|graph|indegree|depend/])) {
+      failures.push("conversation assist does not mention heap and dependency graph concepts");
+    }
+  }
+  if (checks.testsPlan) {
+    if (!hasAny(text, [/test|assert|prueb|casos/])) failures.push("conversation assist does not mention tests/assertions");
+  }
+  if (checks.mentionsRequestedCoverage) {
+    if (!hasAny(text, [/vacio|empty|empate|tie|depend|duplic|malform|missing|cycle|ciclo/])) failures.push("conversation assist does not mention requested test coverage families");
+  }
+  if (checks.givesConciseComplexityExplanation) {
+    if (!hasAny(text, [/complej|complexity|o n|log|e\b|edges|aristas/])) failures.push("conversation assist does not give a concise complexity explanation");
+  }
+  return failures;
+};
 
 const wordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
 
@@ -785,6 +1220,121 @@ const validatesSortedWordFrequency = (code: string) => {
     && (countDescThenWordAsc || helperTuple);
 };
 
+const validatesSortedEventMetrics = (code: string) => {
+  const compact = code.replace(/\s+/g, " ");
+  const lambdaSort = /key\s*=\s*lambda\s+([A-Za-z_][\w]*)\s*:\s*\(\s*-\s*\1\s*\[\s*1\s*\]\s*,\s*\1\s*\[\s*0\s*\]\s*\)/.test(compact);
+  const namedSortKey = /return\s+\(\s*-\s*[A-Za-z_][\w]*\s*\[\s*1\s*\]\s*,\s*[A-Za-z_][\w]*\s*\[\s*0\s*\]\s*\)/.test(compact);
+  return /\bsorted\s*\(/.test(code)
+    && /\.items\s*\(\s*\)/.test(code)
+    && (lambdaSort || namedSortKey || /reverse\s*=\s*True/.test(code));
+};
+
+const validatesDequeWindow = (code: string) =>
+  /from\s+collections\s+import\s+deque/.test(code)
+  && /\bdeque\s*\(/.test(code)
+  && /\.popleft\s*\(/.test(code)
+  && /seen_ids\.(?:discard|remove)\s*\(/.test(code);
+
+const validateCodingSemanticChecks = (
+  code: string,
+  rendered: string,
+  stage: LoadedScenarioStage,
+  checks: LoadedCodingWorkspaceExpected["semanticChecks"],
+) => {
+  const failures: string[] = [];
+  const compact = code.replace(/\s+/g, " ");
+  const hasCodeAny = (patterns: RegExp[]) => patterns.some((pattern) => pattern.test(code) || pattern.test(compact));
+  if (checks.integratesAllCurrentScreenshots && stage.imagePaths.length > 1) {
+    if (!hasCodeAny([/def\s+normalize_tasks\s*\(/]) || !hasCodeAny([/def\s+schedule_tasks\s*\(/])) {
+      failures.push("code does not preserve functions spread across the multi-screenshot context");
+    }
+  }
+  if (checks.returnsIdsInPriorityOrder && !hasCodeAny([/priority/, /sorted\s*\(/, /\.sort\s*\(/])) {
+    failures.push("code does not order tasks by priority");
+  }
+  if ((checks.stableForEqualPriority || checks.stableTieByOriginalPosition) && !hasCodeAny([/enumerate\s*\(/, /original_?position/, /\bposition\b/, /\bindex\b/, /\border\b/])) {
+    failures.push("code does not preserve stable tie order by original position");
+  }
+  if (checks.emptyInputReturnsEmptyList && !hasCodeAny([/return\s+\[\]/, /scheduled\s*=\s*\[\]/])) {
+    failures.push("code does not have a clear empty-input path");
+  }
+  if (checks.keepsInitialReadableApproach && hasCodeAny([/heapq/, /indegree/, /networkx/])) {
+    failures.push("initial code introduces advanced scheduler machinery too early");
+  }
+  if (checks.workspaceUnchanged && stage.codePath) {
+    const fixtureCode = fs.existsSync(stage.codePath) ? fs.readFileSync(stage.codePath, "utf8").trim() : "";
+    if (fixtureCode && normalizeText(code) !== normalizeText(fixtureCode)) failures.push("chat-only stage changed the coding workspace");
+  }
+  if (checks.membershipCheckBeforeAdd && !hasCodeAny([/if\s+[^:\n]*in\s+seen_ids\s*:/, /seen_ids\.add\s*\(/])) {
+    failures.push("code does not show duplicate membership check and seen_ids update");
+  }
+  if (checks.keepsFirstSelectedDuplicate && !hasCodeAny([/continue/, /seen_ids/])) {
+    failures.push("code does not skip later duplicate ids");
+  }
+  if (checks.localizedFix && hasCodeAny([/heapq/, /indegree/, /networkx/])) {
+    failures.push("localized bug fix introduces unrelated optimization machinery");
+  }
+  if (checks.dependenciesMustBeScheduledFirst && !hasCodeAny([/depends_on/, /scheduled_ids/, /all\s*\(/])) {
+    failures.push("code does not enforce dependencies before scheduling a task");
+  }
+  if (checks.returnsScheduledAndBlocked || checks.preservesReturnContract) {
+    if (!hasCodeAny([/return\s+\{\s*["']scheduled["']/, /["']blocked["']\s*:/])) failures.push("code does not return scheduled and blocked collections");
+  }
+  if (checks.blockedPreservesInputOrder && !hasCodeAny([/remaining/, /for\s+task\s+in\s+normalized/, /for\s+task\s+in\s+tasks/])) {
+    failures.push("code does not appear to preserve blocked input order");
+  }
+  if (checks.noProgressStopsLoop && !hasCodeAny([/progress/, /break/])) {
+    failures.push("code does not stop the dependency loop when no progress is possible");
+  }
+  if (checks.skipsMissingId && !hasCodeAny([/get\s*\(\s*["']id["']/, /continue/])) failures.push("code does not skip tasks missing id");
+  if (checks.acceptsIntegerLikeStringPriority && !hasCodeAny([/int\s*\(/])) failures.push("code does not convert integer-like string priorities");
+  if (checks.skipsNonConvertiblePriority && !hasCodeAny([/try\s*:/, /except/, /ValueError/, /TypeError/])) failures.push("code does not safely skip non-convertible priorities");
+  if (checks.requiresDependsOnList && !hasCodeAny([/isinstance\s*\([^)]*depends_on[^)]*list/, /depends_on.*list/])) failures.push("code does not require depends_on to be a list");
+  if (checks.keepsFirstValidDuplicateId && !hasCodeAny([/seen_ids/, /continue/])) failures.push("code does not preserve first valid duplicate id");
+  if (checks.preservesOriginalPositionOfValidTasks && !hasCodeAny([/original_?position/, /position/, /enumerate\s*\(/])) failures.push("code does not preserve original position of valid tasks");
+  if (checks.keepsNormalizationBehavior || checks.preservesDirtyInputHandling) {
+    if (!hasCodeAny([/def\s+normalize_tasks\s*\(/, /try\s*:/, /int\s*\(/])) failures.push("code does not preserve normalization/dirty-input behavior");
+  }
+  if (checks.scheduledEntriesContainIdAndPriority && !hasCodeAny([/["']id["']\s*:/, /["']priority["']\s*:/])) {
+    failures.push("scheduled entries do not clearly contain id and priority");
+  }
+  if (checks.missingDependencyUsesKnownIds && !hasCodeAny([/known_ids/, /missing_dependency/])) failures.push("code does not classify missing dependencies using known_ids");
+  if (checks.remainingKnownDependenciesClassifiedAsCycle && !hasCodeAny([/cycle/, /remaining/])) failures.push("code does not classify remaining known-dependency tasks as cycle");
+  if (checks.usesReverseAdjacency && !hasCodeAny([/dependents/, /\.append\s*\(/, /depends_on/])) failures.push("code does not build reverse adjacency/dependents");
+  if (checks.usesIndegree && !hasCodeAny([/indegree/, /-= 1|=\s*indegree\[[^\]]+\]\s*-\s*1/])) failures.push("code does not maintain indegree counts");
+  if (checks.usesHeapForReadyTasks && !hasCodeAny([/heapq\.heappush/, /heapq\.heappop/])) failures.push("code does not use heapq for ready tasks");
+  if (checks.preservesBlockedReasonContract && !hasCodeAny([/missing_dependency/, /cycle/, /reason/])) failures.push("code does not preserve blocked reason contract");
+  if (checks.testsBaseCase || checks.testsEmptyInput) {
+    if (!hasCodeAny([/assert\s+schedule_tasks\s*\(\s*\[\s*\]/])) failures.push("code does not test empty/base input");
+  }
+  if (checks.testsStableTies && !hasCodeAny([/assert\s+schedule_tasks/, /priority/, /\bb\b/, /\bc\b/])) failures.push("code does not test stable priority ties");
+  if (checks.testsDependencyOrdering && !hasCodeAny([/assert\s+schedule_tasks/, /depends_on/, /network|db/])) failures.push("code does not test dependency ordering");
+  if (checks.testsDirtyInput && !hasCodeAny([/priority.*["']2["']|["']2["'].*priority/, /malformed|bad|good/])) failures.push("code does not test dirty input normalization");
+  if (checks.testsFirstValidDuplicatePreserved && !hasCodeAny([/duplicate|good|seen|priority.*99/])) failures.push("code does not test first valid duplicate preservation");
+  if (checks.testsMissingDependency && !hasCodeAny([/missing_dependency/, /missing/])) failures.push("code does not test missing dependency");
+  if (checks.testsCycle && !hasCodeAny([/cycle/, /depends_on/])) failures.push("code does not test cycle blocking");
+  if (checks.finalCodeExecutable && !hasCodeAny([/def\s+schedule_tasks\s*\(/, /assert\s+schedule_tasks/])) failures.push("final code is not shaped as executable code plus assertions");
+  if (checks.complexityIsReasonable && !hasAny(rendered, [/o n|o\(|log|complej|complexity|heap|indegree|edges|aristas/])) {
+    failures.push("rendered answer does not include a reasonable complexity explanation");
+  }
+  return failures;
+};
+
+const validatePythonAssertions = (code: string, assertions: string[]) => {
+  if (assertions.length === 0) return [];
+  const tempDir = fs.mkdtempSync(path.join(reportsDir, "python-assert-"));
+  const filePath = path.join(tempDir, "solution_check.py");
+  fs.writeFileSync(filePath, [
+    code,
+    "",
+    "# Assertions supplied by the replay fixture; not included in model prompts.",
+    ...assertions,
+  ].join("\n"), "utf8");
+  const result = spawnSync("python", [filePath], { encoding: "utf8", timeout: 10000 });
+  if (result.status === 0) return [];
+  return [`python assertions failed: ${(result.stderr || result.stdout || "unknown").trim().slice(0, 500)}`];
+};
+
 const validateScenarioStageAnswer = (
   scenarioId: string,
   stage: LoadedScenarioStage,
@@ -796,30 +1346,42 @@ const validateScenarioStageAnswer = (
   const rendered = answerRun.renderedText.trim();
   const conversationAssist = answerRun.conversationAssistText.trim();
   const failures: string[] = [];
+  const expectsCoding = (stage.answerAction ?? "both") !== "chat";
   if (!answerRun.requestResult.ok) failures.push(`request was rejected: ${answerRun.requestResult.error || "unknown"}`);
   if (!answerRun.completed) failures.push("answer did not complete");
-  if (!rendered) failures.push("rendered answer is empty");
-  if (answerRun.structured?.kind !== "coding") failures.push("structured answer is not coding");
-  if (!code.trim()) failures.push("extracted solution code is empty");
-  if (codingRules.expectedFunction && !new RegExp(`\\bdef\\s+${codingRules.expectedFunction}\\s*\\(`).test(code)) {
-    failures.push(`code does not preserve function ${codingRules.expectedFunction}`);
+  if (expectsCoding) {
+    if (!rendered) failures.push("rendered answer is empty");
+    if (answerRun.structured?.kind !== "coding") failures.push("structured answer is not coding");
+    if (!code.trim()) failures.push("extracted solution code is empty");
+    if (codingRules.expectedFunction && !new RegExp(`\\bdef\\s+${codingRules.expectedFunction}\\s*\\(`).test(code)) {
+      failures.push(`code does not preserve function ${codingRules.expectedFunction}`);
+    }
+    for (const term of codingRules.mustContain) {
+      if (!includesCodeTerm(code, term)) failures.push(`code missing required term: ${term}`);
+    }
+    if (codingRules.mustContainAny.length > 0 && !codingRules.mustContainAny.some((term) => includesCodeTerm(code, term))) {
+      failures.push(`code missing any required term: ${codingRules.mustContainAny.join(", ")}`);
+    }
+    for (const term of codingRules.mustPreserve) {
+      if (!includesCodeTerm(code, term)) failures.push(`code does not preserve required term: ${term}`);
+    }
+    for (const term of codingRules.mustNotContain) {
+      if (includesCodeTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
+    }
+    if (codingRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
+      failures.push("code does not sort word frequencies by descending count and ascending word");
+    }
+    if (codingRules.semanticChecks.sortedEventMetrics && !validatesSortedEventMetrics(code)) {
+      failures.push("code does not sort event metrics by descending count and ascending event type");
+    }
+    if (codingRules.semanticChecks.usesDequeWindow && !validatesDequeWindow(code)) {
+      failures.push("code does not use deque/popleft while keeping seen_ids synchronized");
+    }
+    failures.push(...validateCodingSemanticChecks(code, rendered, stage, codingRules.semanticChecks));
+    failures.push(...validatePythonAssertions(code, codingRules.pythonAssertions));
   }
-  for (const term of codingRules.mustContain) {
-    if (!includesTerm(code, term)) failures.push(`code missing required term: ${term}`);
-  }
-  if (codingRules.mustContainAny.length > 0 && !codingRules.mustContainAny.some((term) => includesTerm(code, term))) {
-    failures.push(`code missing any required term: ${codingRules.mustContainAny.join(", ")}`);
-  }
-  for (const term of codingRules.mustPreserve) {
-    if (!includesTerm(code, term)) failures.push(`code does not preserve required term: ${term}`);
-  }
-  for (const term of codingRules.mustNotContain) {
-    if (includesTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
-  }
-  if (codingRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
-    failures.push("code does not sort word frequencies by descending count and ascending word");
-  }
-  if (conversationRules) {
+  const expectsConversation = (stage.answerAction ?? "both") !== "coding";
+  if (conversationRules && expectsConversation) {
     if (!conversationAssist) failures.push("conversation assist is empty");
     if (!answerRun.conversationAssistRequestId) failures.push("conversation assist request id was not captured");
     if (conversationAssist && wordCount(conversationAssist) > conversationRules.maxWords) {
@@ -839,6 +1401,7 @@ const validateScenarioStageAnswer = (
     for (const term of conversationRules.mustNotContain) {
       if (includesTerm(conversationAssist, term)) failures.push(`conversation assist contains forbidden term: ${term}`);
     }
+    failures.push(...validateConversationSemanticChecks(conversationAssist, conversationRules.semanticChecks));
   }
   return {
     ok: failures.length === 0,
@@ -913,13 +1476,19 @@ const resolveCasePaths = (replayCase: ReplayCase) => {
   };
 };
 
-const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, label: string, questionOverride = ""): Promise<AnswerRun> => {
+const requestAnswer = async (
+  mainClient: CdpClient,
+  eventClient: CdpClient,
+  label: string,
+  questionOverride = "",
+  audience: "chat" | "coding" | "both" = "both",
+): Promise<AnswerRun> => {
   const actionTimings: Record<string, number> = {};
   await timed(actionTimings, "install_event_capture_ms", () => installEventCapture(eventClient));
   await sleep(150);
   const started = Date.now();
   const requestResult = await timed(actionTimings, "request_answer_ipc_ms", () =>
-    evaluate<{ ok: boolean; requestId?: string; error?: string }>(mainClient, `window.callpilotDesktop.requestAnswer(${JSON.stringify(questionOverride)})`));
+    evaluate<{ ok: boolean; requestId?: string; error?: string }>(mainClient, `window.callpilotDesktop.requestAnswer(${JSON.stringify({ questionOverride, audience })})`));
   const expectedRequestId = requestResult.requestId;
   const events = await timed(actionTimings, "wait_for_terminal_answer_event_ms", () =>
     evaluate<Array<{ type: string; at: number; payload: any }>>(eventClient, `new Promise((resolve) => {
@@ -1093,25 +1662,32 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
   for (const stage of scenario.stages) {
     const stageTimings: Record<string, number> = {};
     await timed(stageTimings, "publish_transcript_delta_ms", () => publishTranscriptDelta(client, scenario.id, stage));
-    const screen = stage.imagePath
-      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveScreenText(client, stage.imagePath ?? "", "", stageTimings))
+    const screen = stage.imagePaths.length > 0
+      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveStageScreenText(client, stage.imagePaths, stageTimings))
       : { text: "", ocrResult: null, visionResult: null };
-    if (stage.imagePath && !screen.text.trim()) {
+    if (stage.imagePaths.length > 0 && !screen.text.trim()) {
       stages.push({
         id: stage.id,
         order: stage.order,
         ok: false,
         failures: [`${scenario.id}/${stage.id}: screen text is empty after OCR/vision`],
         screenshot: stage.imagePath,
+        screenshots: stage.imagePaths,
       });
       ok = false;
       break;
     }
-    if (stage.imagePath) {
+    if (stage.imagePaths.length > 0) {
       await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath));
     }
     const eventClient = await timed(stageTimings, "open_session_event_client_ms", () => getSessionEventClient());
-    const answerRun = await requestAnswer(client, eventClient, stage.id, transcriptPrompt(scenario.id, stage));
+    const answerRun = await requestAnswer(
+      client,
+      eventClient,
+      stage.id,
+      transcriptPrompt(scenario.id, stage),
+      stage.answerAction ?? "both",
+    );
     eventClient.close();
     answerRun.actionTimings = { ...stageTimings, ...answerRun.actionTimings };
     const validation = validateScenarioStageAnswer(scenario.id, stage, answerRun);
@@ -1120,14 +1696,25 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
     stages.push({
       id: stage.id,
       order: stage.order,
+      answerAction: stage.answerAction ?? "both",
       ok: validation.ok,
       failures: validation.failures,
       screenshot: stage.imagePath,
+      screenshots: stage.imagePaths,
       codeFixture: stage.codePath,
       expected: stage.expectedPath,
       transcriptDelta: stage.transcriptPath,
       screen: {
-        hasScreenshot: Boolean(stage.imagePath),
+        hasScreenshot: stage.imagePaths.length > 0,
+        screenshotCount: stage.imagePaths.length,
+        images: screen.images?.map((image: any) => ({
+          path: image.path,
+          textChars: image.text.length,
+          textPreview: image.text.slice(0, 300),
+          ocrOk: image.ocrResult?.ok ?? null,
+          ocrConfidence: image.ocrResult?.confidence ?? null,
+          visionOk: image.visionResult?.ok ?? null,
+        })) ?? [],
         textChars: screen.text.length,
         textPreview: screen.text.slice(0, 700),
         ocrOk: screen.ocrResult?.ok ?? null,
@@ -1184,7 +1771,9 @@ const run = async () => {
   const cases = stageScenario ? [] : readCases();
   if (stageScenario) {
     for (const stage of stageScenario.stages) {
-      if (stage.imagePath && !fs.existsSync(stage.imagePath)) throw new Error(`Screenshot not found for ${stageScenario.id}/${stage.id}: ${stage.imagePath}`);
+      for (const imagePath of stage.imagePaths) {
+        if (!fs.existsSync(imagePath)) throw new Error(`Screenshot not found for ${stageScenario.id}/${stage.id}: ${imagePath}`);
+      }
     }
   } else {
     for (const replayCase of cases) {

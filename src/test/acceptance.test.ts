@@ -664,25 +664,133 @@ test("acceptance: CoderPad staged replay keeps one live coding session across sc
   assert.match(sortingExpected, /sortedWordFrequency/);
 });
 
+test("acceptance: extreme event dedup replay fixture declares panel-specific answer actions", () => {
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const scenario = read("tests/fixtures/coderpad/event_dedup_windowed_metrics_followups/scenario.json");
+  const manifest = read("tests/fixtures/coderpad/event_dedup_windowed_metrics_followups/screenshot_manifest.json");
+  const readme = read("tests/fixtures/coderpad/event_dedup_windowed_metrics_followups/README.md");
+  const stage0Expected = read("tests/fixtures/coderpad/event_dedup_windowed_metrics_followups/stage_00_transcript_only/expected.json");
+  const stage5Expected = read("tests/fixtures/coderpad/event_dedup_windowed_metrics_followups/stage_05_window_bug/expected.json");
+  const stage7Expected = read("tests/fixtures/coderpad/event_dedup_windowed_metrics_followups/stage_07_tests_and_deque/expected.json");
+
+  assert.match(runner, /answerAction\?:\s*"chat"\s*\|\s*"coding"\s*\|\s*"both"/);
+  assert.match(runner, /answer_action:/);
+  assert.match(scenario, /event_dedup_windowed_metrics_followups/);
+  assert.match(scenario, /"difficulty":\s*"hard"/);
+  assert.match(scenario, /"answerAction":\s*"chat"/);
+  assert.match(scenario, /"answerAction":\s*"coding"/);
+  assert.match(scenario, /"answerAction":\s*"both"/);
+  assert.match(scenario, /"image":\s*null/);
+  assert.match(scenario, /stage_07_tests_and_deque\/coderpad\.png/);
+  assert.match(manifest, /stage_02_duplicate_semantics_chat\/coderpad\.png/);
+  assert.match(manifest, /stage_07_tests_and_deque\/capture_instructions\.md/);
+  assert.match(readme, /Do not create blank or artificial PNGs/);
+  assert.match(stage0Expected, /conversationAssist/);
+  assert.match(stage0Expected, /codingWorkspace/);
+  assert.match(stage0Expected, /No debe implementar todavia ventana temporal/);
+  assert.match(stage5Expected, /seen_ids\.discard|seen_ids\.remove/);
+  assert.match(stage5Expected, /stale/);
+  assert.match(stage7Expected, /from collections import deque/);
+  assert.match(stage7Expected, /usesDequeWindow/);
+});
+
+test("acceptance: priority scheduler extreme replay fixture declares multi-screenshot stages", () => {
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const scenario = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/scenario.json");
+  const manifest = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/screenshot_manifest.json");
+  const readme = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/README.md");
+  const stage7Expected = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/stage_07_long_blocked_classification/expected.json");
+  const stage8Expected = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/stage_08_heap_optimization/expected.json");
+  const stage9Expected = read("tests/fixtures/coderpad/priority_dependency_task_scheduler_extreme/stage_09_final_tests/expected.json");
+
+  assert.match(runner, /images\?:\s*string\[\]/);
+  assert.match(runner, /imagePaths:\s*string\[\]/);
+  assert.match(runner, /resolveStageScreenText/);
+  assert.match(runner, /screenshotCount/);
+  assert.match(scenario, /priority_dependency_task_scheduler_extreme/);
+  assert.match(scenario, /"difficulty":\s*"extreme"/);
+  assert.match(scenario, /"answerAction":\s*"chat"/);
+  assert.match(scenario, /"answerAction":\s*"coding"/);
+  assert.match(scenario, /"answerAction":\s*"both"/);
+  assert.match(scenario, /"images":\s*\[/);
+  assert.match(scenario, /coderpad_top\.png/);
+  assert.match(scenario, /coderpad_middle\.png/);
+  assert.match(scenario, /coderpad_bottom\.png/);
+  assert.match(manifest, /accumulateWithOtherImagesInStage/);
+  assert.match(readme, /top\/middle\/bottom/);
+  assert.match(stage7Expected, /integratesAllCurrentScreenshots/);
+  assert.match(stage7Expected, /missing_dependency/);
+  assert.match(stage8Expected, /heapq\.heappush/);
+  assert.match(stage8Expected, /usesIndegree/);
+  assert.match(stage9Expected, /testsCycle/);
+  assert.match(stage9Expected, /pythonAssertions/);
+});
+
 test("acceptance: live coding controls separate exercise reset from full session reset", () => {
   const app = read("src/main.tsx");
+  const overlay = read("src/overlay/OverlayApp.tsx");
+  const codingOverlay = read("src/overlay/CodingOverlayApp.tsx");
+  const desktopTypes = read("src/desktop.d.ts");
+  const electronMain = read("electron/main.cjs");
   const resetExerciseStart = app.indexOf("const resetLiveCodingExercise");
   const resetExerciseEnd = app.indexOf("const resetFullSession", resetExerciseStart);
   const resetExerciseBody = app.slice(resetExerciseStart, resetExerciseEnd);
   const resetFullStart = app.indexOf("const resetFullSession");
-  const resetFullEnd = app.indexOf("const handleFinalTranscript", resetFullStart);
+  const dispatchResetStart = app.indexOf("const dispatchResetCommand", resetFullStart);
+  const dispatchResetEnd = app.indexOf("const handleFinalTranscript", dispatchResetStart);
+  const dispatchResetBody = app.slice(dispatchResetStart, dispatchResetEnd);
+  const resetFullEnd = app.indexOf("const dispatchResetCommand", resetFullStart);
   const resetFullBody = app.slice(resetFullStart, resetFullEnd);
 
   assert.ok(resetExerciseStart > 0, "New exercise reset helper must exist");
   assert.ok(resetFullStart > 0, "New session reset helper must exist");
+  assert.ok(dispatchResetStart > 0, "Reset buttons must dispatch through the shared remote command path");
   assert.match(resetExerciseBody, /setCurrentCodingPayload\(null\)/);
   assert.doesNotMatch(resetExerciseBody, /setResumeText\(""\)/);
   assert.doesNotMatch(resetExerciseBody, /setJobDescription\(""\)/);
   assert.match(resetFullBody, /resetSessionRuntimeContext\(\)/);
   assert.match(resetFullBody, /setResumeText\(""\)/);
   assert.match(resetFullBody, /setJobDescription\(""\)/);
+  assert.match(dispatchResetBody, /dispatchRemoteControlCommand\?\.\(\{ type \}\)/);
+  assert.match(dispatchResetBody, /resetLiveCodingExercise\(\)/);
+  assert.match(dispatchResetBody, /resetFullSession\(\)/);
   assert.match(app, />\s*New exercise\s*</);
   assert.match(app, />\s*New session\s*</);
+  assert.match(overlay, /command\.type === "reset_session" \|\| command\.type === "reset_exercise"/);
+  assert.match(overlay, /setMessages\(\[\]\)/);
+  assert.match(overlay, /assistantIdByRequest\.current = \{\}/);
+  assert.match(codingOverlay, /command\.type === "reset_session" \|\| command\.type === "reset_exercise"/);
+  assert.match(codingOverlay, /setPayload\(emptyCodingAnswer\)/);
+  assert.match(codingOverlay, /setScreenshotCount\(0\)/);
+  assert.match(electronMain, /data-action="answer_code"/);
+  assert.match(electronMain, /button-answer/);
+  assert.match(electronMain, /button-answer-code/);
+  assert.match(electronMain, /button-screenshot/);
+  assert.match(electronMain, /button-reset/);
+  assert.match(electronMain, /"answer_code"/);
+  assert.match(desktopTypes, /"answer_code"/);
+  assert.match(app, /command\.type === "answer_code"/);
+});
+
+test("acceptance: live coding screenshots accumulate before Answer code", () => {
+  const app = read("src/main.tsx");
+  const codingOverlay = read("src/overlay/CodingOverlayApp.tsx");
+  const styles = read("src/styles.css");
+
+  assert.match(app, /type LiveCodingScreenCapture/);
+  assert.match(app, /mergeScreenTextWithOverlap/);
+  assert.match(app, /Combined live coding screenshots: \$\{captures\.length\} ready/);
+  assert.match(app, /payload\.source === "coding_overlay"/);
+  assert.match(app, /liveCodingScreenCapturesRef\.current = captures\.map/);
+  assert.match(app, /formatLiveCodingScreenCaptures\(liveCodingScreenCapturesRef\.current\)/);
+  assert.match(app, /const screenBudget = activeMode === "live_coding" \? 6000 : 1800/);
+  assert.match(app, /screen\.slice\(-screenBudget\)/);
+  assert.match(codingOverlay, /const \[screenshotCount, setScreenshotCount\]/);
+  assert.match(codingOverlay, /setScreenshotCount\(\(current\) => Math\.min\(5, current \+ 1\)\)/);
+  assert.match(codingOverlay, /Screenshots ready for Answer code/);
+  assert.match(codingOverlay, /cp-capture-count/);
+  assert.match(styles, /\.cp-coding__actions \.cp-capture-count/);
+  assert.match(styles, /\.cp-coding__actions \.cp-capture-count\.ready/);
 });
 
 test("acceptance: session start clears stale live transcription streams", () => {

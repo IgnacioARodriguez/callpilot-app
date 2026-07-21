@@ -1,5 +1,4 @@
 import React from "react";
-import { Camera } from "lucide-react";
 import { classifyScreenText, normalizeOcrLanguage, ocrConfidenceLabel, type CodingAnswerPayload, type StructuredAnswerPayload } from "../core";
 
 interface StructuredAnswerEvent {
@@ -117,6 +116,7 @@ export default function CodingOverlayApp() {
   const [payload, setPayload] = React.useState<CodingAnswerPayload>(emptyCodingAnswer);
   const [updatedAt, setUpdatedAt] = React.useState<number>(0);
   const [screenStatus, setScreenStatus] = React.useState("No screenshot selected");
+  const [screenshotCount, setScreenshotCount] = React.useState(0);
   const [isCapturingScreen, setIsCapturingScreen] = React.useState(false);
   const [isRequestingAnswer, setIsRequestingAnswer] = React.useState(false);
   const [activeAnswerRequestId, setActiveAnswerRequestId] = React.useState<string | null>(null);
@@ -149,7 +149,8 @@ export default function CodingOverlayApp() {
       if (event.source !== "coding_overlay") return;
       const classified = classifyScreenText(event.visibleText ?? "");
       const hasCodingSignal = classified.kind === "coding_problem" || classified.kind === "code_editor";
-      setScreenStatus(hasCodingSignal ? "Screenshot ready for Answer" : "No coding problem detected");
+      setScreenshotCount((current) => Math.min(5, current + 1));
+      setScreenStatus(hasCodingSignal ? "Screenshots ready for Answer code" : "Screenshot captured; no coding problem detected");
     });
     return () => dispose?.();
   }, []);
@@ -195,7 +196,7 @@ export default function CodingOverlayApp() {
         capturedAt,
       });
       setScreenStatus(published.ok
-        ? hasCodingSignal ? "Screenshot ready for Answer" : "No coding problem detected"
+        ? hasCodingSignal ? "Screenshot ready for Answer code" : "No coding problem detected"
         : `Context update failed: ${published.error ?? "unknown"}`);
     } catch (error) {
       setScreenStatus(error instanceof Error ? error.message : "Screenshot capture failed");
@@ -206,7 +207,7 @@ export default function CodingOverlayApp() {
 
   const requestAnswer = async () => {
     setIsRequestingAnswer(true);
-    const result = await window.callpilotDesktop?.requestAnswer?.().catch(() => ({ ok: false }));
+    const result = await window.callpilotDesktop?.requestAnswer?.({ audience: "coding" }).catch(() => ({ ok: false }));
     if (!result?.ok) {
       setIsRequestingAnswer(false);
       setScreenStatus("Answer request failed");
@@ -225,6 +226,7 @@ export default function CodingOverlayApp() {
     setPayload(emptyCodingAnswer);
     setUpdatedAt(0);
     setScreenStatus("New exercise ready");
+    setScreenshotCount(0);
     setActiveAnswerRequestId(null);
     setIsRequestingAnswer(false);
     await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_exercise" }).catch(() => undefined);
@@ -234,6 +236,7 @@ export default function CodingOverlayApp() {
     setPayload(emptyCodingAnswer);
     setUpdatedAt(0);
     setScreenStatus("New session ready");
+    setScreenshotCount(0);
     setActiveAnswerRequestId(null);
     setIsRequestingAnswer(false);
     await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_session" }).catch(() => undefined);
@@ -241,6 +244,15 @@ export default function CodingOverlayApp() {
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onRemoteControlCommand?.((command) => {
+      if (command.type === "reset_session" || command.type === "reset_exercise") {
+        setPayload(emptyCodingAnswer);
+        setUpdatedAt(0);
+        setScreenStatus(command.type === "reset_session" ? "New session ready" : "New exercise ready");
+        setScreenshotCount(0);
+        setActiveAnswerRequestId(null);
+        setIsRequestingAnswer(false);
+        return;
+      }
       if (command.type === "screenshot") {
         void captureScreenContext();
         return;
@@ -266,17 +278,10 @@ export default function CodingOverlayApp() {
           <strong>Live Coding</strong>
           <span>{screenStatus}</span>
         </div>
-        <div className="cp-coding__actions">
-          <button type="button" onClick={requestAnswer} disabled={isRequestingAnswer}>
-            {isRequestingAnswer ? "..." : "Answer"}
-          </button>
-          <button type="button" onClick={cancelAnswer} disabled={!activeAnswerRequestId}>Stop</button>
-          <button type="button" onClick={resetExercise}>Reset</button>
-          <button type="button" onClick={restartSession}>Restart</button>
-          <button type="button" onClick={captureScreenContext} disabled={isCapturingScreen} title="Capture screen for the next Answer">
-            <Camera size={14} />
-            {isCapturingScreen ? "..." : "Screenshot"}
-          </button>
+        <div className="cp-coding__actions cp-coding__actions--status">
+          <span className={screenshotCount > 0 ? "cp-capture-count ready" : "cp-capture-count"}>
+            {screenshotCount > 0 ? `${screenshotCount} ready` : "0 ready"}
+          </span>
           <span>{hasContent ? responseTypeLabel(payload.responseType) : "Solution workspace"}</span>
         </div>
       </div>

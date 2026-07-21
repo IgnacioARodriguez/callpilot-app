@@ -1,0 +1,18 @@
+[
+  {
+    "role": "candidate",
+    "text": "I'll call it `schedule_tasks`. I'm keeping the original index so ties stay stable."
+  },
+  {
+    "role": "interviewer",
+    "text": "Sounds good. Go ahead."
+  },
+  {
+    "role": "candidate",
+    "text": "This is O(n squared), but I don't want to optimize before we have the rest of the requirements."
+  },
+  {
+    "role": "interviewer",
+    "text": "Yep, readable first."
+  }
+]

@@ -1,0 +1,53 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "multiScreenshotContextPlan": true,
+      "contractChangePlan": true,
+      "mentionsPreservingHelpersAndLoop": true,
+      "usesSimplifiedClassificationRule": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "schedule_tasks",
+    "mustPreserve": [
+      "def normalize_tasks(tasks):",
+      "def classify_blocked_tasks(remaining, known_ids):",
+      "def schedule_tasks(tasks):",
+      "normalized",
+      "seen_ids",
+      "known_ids",
+      "remaining",
+      "scheduled",
+      "scheduled_ids",
+      "blocked"
+    ],
+    "mustContain": [
+      "missing_dependency",
+      "cycle",
+      "\"priority\"",
+      "\"reason\""
+    ],
+    "mustNotContain": [
+      "heapq",
+      "indegree",
+      "networkx",
+      "class Task"
+    ],
+    "semanticChecks": {
+      "integratesAllCurrentScreenshots": true,
+      "keepsNormalizationBehavior": true,
+      "scheduledEntriesContainIdAndPriority": true,
+      "missingDependencyUsesKnownIds": true,
+      "remainingKnownDependenciesClassifiedAsCycle": true
+    },
+    "pythonAssertions": [
+      "assert schedule_tasks([{'id': 'a', 'priority': 1}]) == {'scheduled': [{'id': 'a', 'priority': 1}], 'blocked': []}",
+      "assert schedule_tasks([{'id': 'a', 'priority': 1, 'depends_on': ['missing']}]) == {'scheduled': [], 'blocked': [{'id': 'a', 'reason': 'missing_dependency'}]}",
+      "assert schedule_tasks([{'id': 'a', 'priority': 1, 'depends_on': ['b']}, {'id': 'b', 'priority': 1, 'depends_on': ['a']}]) == {'scheduled': [], 'blocked': [{'id': 'a', 'reason': 'cycle'}, {'id': 'b', 'reason': 'cycle'}]}"
+    ]
+  }
+}

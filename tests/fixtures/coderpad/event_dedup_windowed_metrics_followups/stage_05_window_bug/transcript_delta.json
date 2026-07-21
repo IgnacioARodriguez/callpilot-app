@@ -1,0 +1,18 @@
+[
+  {
+    "role": "candidate",
+    "text": "I added recent_events and expire from the front, but I have a bad feeling the set and list can drift."
+  },
+  {
+    "role": "interviewer",
+    "text": "Good catch. I tested id a1 at t=0 and t=301, and the second one is still skipped. The old tuple left the list, but the id is still in the set."
+  },
+  {
+    "role": "candidate",
+    "text": "Right, when I pop an expired tuple I also need to remove that id from seen_ids. Otherwise the membership state is stale."
+  },
+  {
+    "role": "interviewer",
+    "text": "Fix that. Still don't change the output contract yet."
+  }
+]

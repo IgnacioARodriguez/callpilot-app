@@ -1,0 +1,31 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustNotContain": ["deque", "popleft", "sorted", "sorting", "malformed"],
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "eventDedupPlan": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": null,
+    "mustContainAny": [],
+    "mustNotContain": [
+      "deque",
+      "popleft",
+      "sorted(",
+      "window",
+      "five minutes",
+      "300",
+      "input("
+    ],
+    "semanticExpectations": [
+      "Debe tratar este stage como chat-only y no requerir screenshot.",
+      "Debe distinguir small talk del problema tecnico.",
+      "Debe explicar un plan hablado: parsear lineas, deduplicar por event_id y contar event_type.",
+      "No debe implementar todavia ventana temporal, sorting, malformed parsing ni deque."
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Let's make blocked output more useful. Tell me whether each blocked task is blocked by a missing dependency or by a cycle."
+  },
+  {
+    "role": "candidate",
+    "text": "For a task that depends on another task which is itself missing something, do you want the direct task classified as cycle or missing?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Good catch. Classify `missing_dependency` if any dependency id is absent from the normalized input. Otherwise, if it remains unscheduled, call it `cycle` for this exercise."
+  },
+  {
+    "role": "candidate",
+    "text": "Okay, that's a simplified classification. I also changed scheduled entries to include id and priority—is that intended?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes, keep that. What would you say before coding this?"
+  },
+  {
+    "role": "candidate",
+    "text": "I'd preserve normalization and scheduling, add a helper over the remaining tasks, and derive the reason from the set of known valid ids. I wouldn't rewrite the loop."
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly. The file is long now, so make sure you're looking at all of it."
+  }
+]

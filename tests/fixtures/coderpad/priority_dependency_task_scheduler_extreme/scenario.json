@@ -1,0 +1,122 @@
+{
+  "id": "priority_dependency_task_scheduler_extreme",
+  "language": "python",
+  "difficulty": "extreme",
+  "sessionMode": "single_session",
+  "transcriptMode": "incremental",
+  "visualContextRule": "Integrate every image listed in the current stage as one current CoderPad view. Do not prefer screenshots from older stages.",
+  "stages": [
+    {
+      "id": "oral_problem_intro",
+      "order": 0,
+      "purpose": "Introducción oral con small talk y definición inicial incompleta.",
+      "answerAction": "chat",
+      "image": null,
+      "code": null,
+      "transcript_delta": "stage_00_transcript_only/transcript_delta.json",
+      "expected": "stage_00_transcript_only/expected.json"
+    },
+    {
+      "id": "initial_simple_implementation",
+      "order": 1,
+      "purpose": "Implementación inicial natural y deliberadamente no óptima.",
+      "answerAction": "both",
+      "image": "stage_01_initial_simple/coderpad.png",
+      "code": "stage_01_initial_simple/code.py",
+      "transcript_delta": "stage_01_initial_simple/transcript_delta.json",
+      "expected": "stage_01_initial_simple/expected.json"
+    },
+    {
+      "id": "duplicate_id_clarification",
+      "order": 2,
+      "purpose": "Aclaración conversacional que no debe modificar código.",
+      "answerAction": "chat",
+      "image": "stage_02_duplicate_clarification/coderpad.png",
+      "code": "stage_02_duplicate_clarification/code.py",
+      "transcript_delta": "stage_02_duplicate_clarification/transcript_delta.json",
+      "expected": "stage_02_duplicate_clarification/expected.json"
+    },
+    {
+      "id": "visible_duplicate_order_bug",
+      "order": 3,
+      "purpose": "Bug visible causado por actualizar estado antes de comprobarlo.",
+      "answerAction": "coding",
+      "image": "stage_03_visible_order_bug/coderpad.png",
+      "code": "stage_03_visible_order_bug/code.py",
+      "transcript_delta": "stage_03_visible_order_bug/transcript_delta.json",
+      "expected": "stage_03_visible_order_bug/expected.json"
+    },
+    {
+      "id": "dependency_requirement_discussion",
+      "order": 4,
+      "purpose": "Nuevo requisito explicado en chat sin implementar todavía.",
+      "answerAction": "chat",
+      "image": "stage_04_dependencies_chat/coderpad.png",
+      "code": "stage_04_dependencies_chat/code.py",
+      "transcript_delta": "stage_04_dependencies_chat/transcript_delta.json",
+      "expected": "stage_04_dependencies_chat/expected.json"
+    },
+    {
+      "id": "dependency_contract_change",
+      "order": 5,
+      "purpose": "Implementar dependencias y cambiar el contrato de retorno.",
+      "answerAction": "both",
+      "image": "stage_05_contract_change/coderpad.png",
+      "code": "stage_05_contract_change/code.py",
+      "transcript_delta": "stage_05_contract_change/transcript_delta.json",
+      "expected": "stage_05_contract_change/expected.json"
+    },
+    {
+      "id": "dirty_input_handling",
+      "order": 6,
+      "purpose": "Introducir validación tolerante sin destruir la lógica del scheduler.",
+      "answerAction": "coding",
+      "image": "stage_06_dirty_input/coderpad.png",
+      "code": "stage_06_dirty_input/code.py",
+      "transcript_delta": "stage_06_dirty_input/transcript_delta.json",
+      "expected": "stage_06_dirty_input/expected.json"
+    },
+    {
+      "id": "long_blocked_classification",
+      "order": 7,
+      "purpose": "Código largo, clasificación de bloqueados y cambio de output enriquecido.",
+      "answerAction": "both",
+      "images": [
+        "stage_07_long_blocked_classification/coderpad_top.png",
+        "stage_07_long_blocked_classification/coderpad_middle.png",
+        "stage_07_long_blocked_classification/coderpad_bottom.png"
+      ],
+      "code": "stage_07_long_blocked_classification/code.py",
+      "transcript_delta": "stage_07_long_blocked_classification/transcript_delta.json",
+      "expected": "stage_07_long_blocked_classification/expected.json"
+    },
+    {
+      "id": "heap_graph_optimization",
+      "order": 8,
+      "purpose": "Optimización final con heap, indegree y adjacency list.",
+      "answerAction": "both",
+      "images": [
+        "stage_08_heap_optimization/coderpad_top.png",
+        "stage_08_heap_optimization/coderpad_middle.png",
+        "stage_08_heap_optimization/coderpad_bottom.png"
+      ],
+      "code": "stage_08_heap_optimization/code.py",
+      "transcript_delta": "stage_08_heap_optimization/transcript_delta.json",
+      "expected": "stage_08_heap_optimization/expected.json"
+    },
+    {
+      "id": "final_assertions_and_complexity",
+      "order": 9,
+      "purpose": "Tests finales ejecutables y explicación de complejidad.",
+      "answerAction": "both",
+      "images": [
+        "stage_09_final_tests/coderpad_top.png",
+        "stage_09_final_tests/coderpad_middle.png",
+        "stage_09_final_tests/coderpad_bottom.png"
+      ],
+      "code": "stage_09_final_tests/code.py",
+      "transcript_delta": "stage_09_final_tests/transcript_delta.json",
+      "expected": "stage_09_final_tests/expected.json"
+    }
+  ]
+}

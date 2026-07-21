@@ -1,0 +1,61 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "optimizationPlan": true,
+      "multiScreenshotContextPlan": true,
+      "mentionsHeapAndDependencyGraphConceptually": true,
+      "mentionsPreservingExistingContracts": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "schedule_tasks",
+    "mustPreserve": [
+      "def normalize_tasks(tasks):",
+      "def schedule_tasks(tasks):",
+      "normalized",
+      "seen_ids",
+      "tasks_by_id",
+      "known_ids",
+      "indegree",
+      "dependents",
+      "ready",
+      "scheduled",
+      "scheduled_ids",
+      "blocked"
+    ],
+    "mustContain": [
+      "import heapq",
+      "heapq.heappush",
+      "heapq.heappop",
+      "indegree",
+      "dependents"
+    ],
+    "mustNotContain": [
+      "while remaining",
+      "max(ready",
+      "networkx",
+      "queue.PriorityQueue",
+      "class Task"
+    ],
+    "semanticChecks": {
+      "integratesAllCurrentScreenshots": true,
+      "usesReverseAdjacency": true,
+      "usesIndegree": true,
+      "usesHeapForReadyTasks": true,
+      "stableTieByOriginalPosition": true,
+      "preservesDirtyInputHandling": true,
+      "preservesReturnContract": true,
+      "preservesBlockedReasonContract": true
+    },
+    "pythonAssertions": [
+      "assert schedule_tasks([]) == {'scheduled': [], 'blocked': []}",
+      "assert schedule_tasks([{'id': 'a', 'priority': 1}, {'id': 'b', 'priority': 4}, {'id': 'c', 'priority': 4}]) == {'scheduled': [{'id': 'b', 'priority': 4}, {'id': 'c', 'priority': 4}, {'id': 'a', 'priority': 1}], 'blocked': []}",
+      "assert schedule_tasks([{'id': 'db', 'priority': 9, 'depends_on': ['network']}, {'id': 'network', 'priority': 1}]) == {'scheduled': [{'id': 'network', 'priority': 1}, {'id': 'db', 'priority': 9}], 'blocked': []}",
+      "assert schedule_tasks([{'id': 'a', 'priority': 1, 'depends_on': ['missing']}]) == {'scheduled': [], 'blocked': [{'id': 'a', 'reason': 'missing_dependency'}]}"
+    ]
+  }
+}

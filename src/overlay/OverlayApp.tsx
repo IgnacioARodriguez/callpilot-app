@@ -439,6 +439,17 @@ export default function OverlayApp() {
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onRemoteControlCommand?.((command) => {
+      if (command.type === "reset_session" || command.type === "reset_exercise") {
+        setMessages([]);
+        setActiveAnswerRequestId(null);
+        setIsRequestingAnswer(false);
+        setActivity({ state: "idle", label: "Reset", updatedAt: Date.now() });
+        activeAssistantId.current = null;
+        assistantIdByRequest.current = {};
+        lastSequenceByRequest.current = {};
+        liveTranscriptByRole.current = {};
+        return;
+      }
       if (command.type !== "scroll" || command.target !== "chat") return;
       messagesRef.current?.scrollBy({ top: command.delta ?? 0, behavior: "smooth" });
     });
@@ -453,7 +464,7 @@ export default function OverlayApp() {
         setActivity({ state: "idle", label: "Restart app", updatedAt: Date.now() });
         return;
       }
-      const result = await window.callpilotDesktop.requestAnswer();
+      const result = await window.callpilotDesktop.requestAnswer({ audience: "chat" });
       if (!result.ok) {
         setActivity({ state: "idle", label: "Request failed", updatedAt: Date.now() });
       }
@@ -497,18 +508,6 @@ export default function OverlayApp() {
               <i />
             </span>
           )}
-        </div>
-        <div className="cp-overlay__actions">
-          {activeAnswerRequestId && (
-            <button className="cp-stop-button" type="button" onClick={cancelAnswer}>
-              Stop
-            </button>
-          )}
-          <button className="cp-answer-button" type="button" onClick={requestAnswer} disabled={isRequestingAnswer}>
-            {isRequestingAnswer ? "..." : "Answer"}
-          </button>
-          <button type="button" onClick={resetSession}>Reset</button>
-          <button type="button" onClick={() => window.callpilotDesktop?.endSession?.()}>End</button>
         </div>
       </div>
       <div className="cp-overlay__messages" ref={messagesRef}>

@@ -14,12 +14,20 @@ import {
 const root = process.cwd();
 const readProjectFile = (file: string) => readFileSync(join(root, file), "utf8");
 
-test("privacy mode is off by default and blocks protected states", () => {
-  assert.equal(defaultStealthState.callPrivacyAllowed, false);
+test("private sharing mode is visible locally and on by default", () => {
+  assert.equal(defaultStealthState.callPrivacyAllowed, true);
+  assert.equal(defaultStealthState.overlayVisible, true);
+  assert.equal(defaultStealthState.contentProtectionEnabled, true);
+  assert.equal(defaultStealthState.mousePassthroughEnabled, true);
+  assert.equal(defaultStealthState.focusMode, "passthrough");
+  assert.equal(assessPrivacyState(defaultStealthState, "2026-07-03T00:00:00.000Z").status, "safe");
+});
 
-  const requestedHidden = reduceStealthState(defaultStealthState, { type: "set_overlay_visible", visible: false });
-  const requestedCaptureBlock = reduceStealthState(defaultStealthState, { type: "set_content_protection", enabled: true });
-  const requestedPassthrough = reduceStealthState(defaultStealthState, { type: "set_mouse_passthrough", enabled: true });
+test("revoked privacy mode blocks protected states", () => {
+  const notApproved = reduceStealthState(defaultStealthState, { type: "set_call_privacy_allowed", allowed: false });
+  const requestedHidden = reduceStealthState(notApproved, { type: "set_overlay_visible", visible: false });
+  const requestedCaptureBlock = reduceStealthState(notApproved, { type: "set_content_protection", enabled: true });
+  const requestedPassthrough = reduceStealthState(notApproved, { type: "set_mouse_passthrough", enabled: true });
 
   assert.equal(requestedHidden.overlayVisible, true);
   assert.equal(requestedCaptureBlock.contentProtectionEnabled, false);
@@ -40,24 +48,24 @@ test("approved privacy mode permits local privacy controls", () => {
   assert.equal(passthrough.focusMode, "passthrough");
 });
 
-test("share safe applies visible protected interview posture", () => {
+test("share safe applies visible private sharing posture", () => {
   const shareSafe = applyShareSafeState(defaultStealthState);
 
   assert.equal(shareSafe.callPrivacyAllowed, true);
   assert.equal(shareSafe.overlayVisible, true);
   assert.equal(shareSafe.contentProtectionEnabled, true);
-  assert.equal(shareSafe.mousePassthroughEnabled, false);
-  assert.equal(shareSafe.focusMode, "interactive");
+  assert.equal(shareSafe.mousePassthroughEnabled, true);
+  assert.equal(shareSafe.focusMode, "passthrough");
   assert.equal(assessPrivacyState(shareSafe, "2026-07-03T00:00:00.000Z").status, "safe");
 });
 
-test("privacy reset restores explicit not-approved defaults", () => {
-  const shareSafe = reduceStealthState(defaultStealthState, { type: "apply_share_safe" });
-  const reset = reduceStealthState(shareSafe, { type: "reset_privacy" });
+test("privacy reset restores visible private sharing defaults", () => {
+  const hidden = reduceStealthState(defaultStealthState, { type: "set_overlay_visible", visible: false });
+  const reset = reduceStealthState(hidden, { type: "reset_privacy" });
 
   assert.deepEqual(reset, defaultStealthState);
   assert.deepEqual(resetPrivacyState(), defaultStealthState);
-  assert.equal(assessPrivacyState(reset, "2026-07-03T00:00:00.000Z").status, "unknown");
+  assert.equal(assessPrivacyState(reset, "2026-07-03T00:00:00.000Z").status, "safe");
 });
 
 test("revoking approval immediately restores visible interactive state", () => {
@@ -98,14 +106,15 @@ test("desktop bridge exposes explicit call approval IPC", () => {
 test("Electron privacy controls are gated by callPrivacyAllowed", () => {
   const main = readProjectFile("electron/main.cjs");
 
-  assert.match(main, /callPrivacyAllowed:\s*false/);
+  assert.match(main, /callPrivacyAllowed:\s*true/);
   assert.match(main, /stealth:set-call-privacy-allowed/);
   assert.match(main, /stealth:apply-share-safe/);
   assert.match(main, /stealth:reset-privacy/);
   assert.match(main, /privacy:check/);
   assert.match(main, /CommandOrControl\+Alt\+R/);
   assert.match(main, /setContentProtection\(Boolean\(stealthState\.contentProtectionEnabled\)\)/);
-  assert.match(main, /setIgnoreMouseEvents\(Boolean\(stealthState\.mousePassthroughEnabled\)/);
+  assert.match(main, /const sessionPassthroughEnabled = Boolean\(stealthState\.mousePassthroughEnabled && activeSessionTrace\)/);
+  assert.match(main, /setIgnoreMouseEvents\(windowRef !== mainWindow && sessionPassthroughEnabled/);
   assert.match(main, /stealthState\.overlayVisible\s*=\s*stealthState\.callPrivacyAllowed\s*\?\s*Boolean\(visible\)\s*:\s*true/);
   assert.match(main, /stealthState\.contentProtectionEnabled\s*=\s*stealthState\.callPrivacyAllowed\s*\?\s*Boolean\(enabled\)\s*:\s*false/);
   assert.match(main, /stealthState\.mousePassthroughEnabled\s*=\s*stealthState\.callPrivacyAllowed\s*\?\s*Boolean\(enabled\)\s*:\s*false/);

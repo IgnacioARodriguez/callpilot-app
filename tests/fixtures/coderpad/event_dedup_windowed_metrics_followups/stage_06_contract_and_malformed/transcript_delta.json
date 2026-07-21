@@ -1,0 +1,22 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Now let's make the return value easier for dashboards. Return a list of tuples `(event_type, count)` sorted by descending count, then event_type alphabetically for ties."
+  },
+  {
+    "role": "candidate",
+    "text": "So similar to sorted counts items with key count descending and type ascending?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Yes. Also, malformed lines should be ignored. Missing fields, non-integer timestamp, empty event id. Don't raise."
+  },
+  {
+    "role": "candidate",
+    "text": "Okay. I will keep the window/set logic, add a small parser guard, and only change the return shape at the end."
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly. No testing framework yet; just update the function."
+  }
+]

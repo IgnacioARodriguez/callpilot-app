@@ -1,0 +1,18 @@
+[
+  {
+    "role": "interviewer",
+    "text": "I added duplicate handling, but now it returns an empty list. Can you fix the order of the logic without rewriting the function?"
+  },
+  {
+    "role": "candidate",
+    "text": "Right, I add the id before checking membership, so the check is always true."
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly. Keep the current names and shape."
+  },
+  {
+    "role": "candidate",
+    "text": "I'll only move the membership check before `seen_ids.add(...)`, then append and remove as before."
+  }
+]

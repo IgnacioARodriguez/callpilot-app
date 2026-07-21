@@ -1,0 +1,22 @@
+[
+  {
+    "role": "interviewer",
+    "text": "One detail before we continue: ids are supposed to be unique."
+  },
+  {
+    "role": "candidate",
+    "text": "Should I validate that now?"
+  },
+  {
+    "role": "interviewer",
+    "text": "Not yet. Assume valid input for the current version."
+  },
+  {
+    "role": "candidate",
+    "text": "Okay, so what we just did stays unchanged."
+  },
+  {
+    "role": "interviewer",
+    "text": "Exactly. I just wanted to clarify the domain."
+  }
+]
