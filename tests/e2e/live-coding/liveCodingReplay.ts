@@ -151,11 +151,13 @@ const requestedProvider = (argValue("--provider") || process.env.CALLPILOT_E2E_P
 const provider: ModelProvider = requestedProvider === "mock" ? "openai" : requestedProvider;
 const modelName = argValue("--model")
   || process.env.CALLPILOT_E2E_MODEL
-  || (provider === "nvidia"
+  || (requestedProvider === "mock"
+    ? "mock-live-coding-replay"
+    : provider === "nvidia"
     ? process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct"
     : provider === "groq"
       ? process.env.CALLPILOT_GROQ_MODEL || "llama-3.3-70b-versatile"
-      : "mock-live-coding-replay");
+      : "gpt-5-mini");
 const useVision = hasArg("--vision") || process.env.CALLPILOT_E2E_USE_VISION === "1";
 
 const nowMs = () => Date.now();

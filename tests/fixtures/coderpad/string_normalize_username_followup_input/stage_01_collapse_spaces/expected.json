@@ -10,7 +10,9 @@
     "def solution",
     "def get_user_name",
     "unidecode",
-    "replace(\" \", \"_\")"
+    "replace(\" \", \"_\")",
+    "import re",
+    "re.sub"
   ],
   "semanticExpectations": [
     "Debe reconocer que replace produce varios underscores.",

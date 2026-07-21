@@ -11,7 +11,9 @@
     "def get_user_name",
     "replace(\" \", \"_\")",
     "unidecode",
-    "input("
+    "input(",
+    "None",
+    "str("
   ],
   "semanticExpectations": [
     "Debe detectar o corregir el parentesis faltante en lower().",

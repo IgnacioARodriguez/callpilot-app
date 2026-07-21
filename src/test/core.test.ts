@@ -323,6 +323,8 @@ test("live coding prompt treats visible code without a full statement as bounded
   assert.match(prompt.system, /operate on that visible code with bounded assumptions/i);
   assert.match(prompt.system, /never invent a new unrelated practice problem/i);
   assert.match(prompt.system, /visible Python starter code/i);
+  assert.match(prompt.system, /prefer simple built-in string operations over new imports/i);
+  assert.match(prompt.system, /Do not add defensive type conversion, None handling/i);
   assert.match(prompt.user, /Preserve visible def\/class names, function signatures, parameters, and variables/i);
   assert.match(prompt.user, /<visible_python_continuity_contract>/);
   assert.match(prompt.user, /Visible Python signatures that must be preserved:/);
