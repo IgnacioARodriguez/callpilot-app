@@ -11,7 +11,7 @@ const requiredSourceChecks = [
   ["src/core/stealth.ts", "apply_share_safe"],
   ["src/core/stealth.ts", "reset_privacy"],
   ["src/core/stealth.ts", "assessPrivacyState"],
-  ["src/core/stealth.ts", "overlayVisible: false"],
+  ["src/core/stealth.ts", "overlayVisible: true"],
   ["src/core/stealth.ts", "contentProtectionEnabled: true"],
   ["src/core/stealth.ts", "mousePassthroughEnabled: true"],
   ["electron/main.cjs", "stealth:set-call-privacy-allowed"],

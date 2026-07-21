@@ -2884,9 +2884,9 @@ test("OCR helpers normalize language and clean extracted text", () => {
   assert.equal(ocrConfidenceLabel(20), "low");
 });
 
-test("default stealth state is serializable and fully private", () => {
+test("default stealth state is serializable and visible private", () => {
   assert.equal(defaultStealthState.callPrivacyAllowed, true);
-  assert.equal(defaultStealthState.overlayVisible, false);
+  assert.equal(defaultStealthState.overlayVisible, true);
   assert.equal(defaultStealthState.contentProtectionEnabled, true);
   assert.equal(defaultStealthState.mousePassthroughEnabled, true);
   assert.equal(defaultStealthState.focusMode, "passthrough");

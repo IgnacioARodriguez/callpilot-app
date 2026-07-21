@@ -14,9 +14,9 @@ import {
 const root = process.cwd();
 const readProjectFile = (file: string) => readFileSync(join(root, file), "utf8");
 
-test("full private sharing mode is on by default", () => {
+test("private sharing mode is visible locally and on by default", () => {
   assert.equal(defaultStealthState.callPrivacyAllowed, true);
-  assert.equal(defaultStealthState.overlayVisible, false);
+  assert.equal(defaultStealthState.overlayVisible, true);
   assert.equal(defaultStealthState.contentProtectionEnabled, true);
   assert.equal(defaultStealthState.mousePassthroughEnabled, true);
   assert.equal(defaultStealthState.focusMode, "passthrough");
@@ -48,20 +48,20 @@ test("approved privacy mode permits local privacy controls", () => {
   assert.equal(passthrough.focusMode, "passthrough");
 });
 
-test("share safe applies full private sharing posture", () => {
+test("share safe applies visible private sharing posture", () => {
   const shareSafe = applyShareSafeState(defaultStealthState);
 
   assert.equal(shareSafe.callPrivacyAllowed, true);
-  assert.equal(shareSafe.overlayVisible, false);
+  assert.equal(shareSafe.overlayVisible, true);
   assert.equal(shareSafe.contentProtectionEnabled, true);
   assert.equal(shareSafe.mousePassthroughEnabled, true);
   assert.equal(shareSafe.focusMode, "passthrough");
   assert.equal(assessPrivacyState(shareSafe, "2026-07-03T00:00:00.000Z").status, "safe");
 });
 
-test("privacy reset restores full private sharing defaults", () => {
-  const visible = reduceStealthState(defaultStealthState, { type: "set_overlay_visible", visible: true });
-  const reset = reduceStealthState(visible, { type: "reset_privacy" });
+test("privacy reset restores visible private sharing defaults", () => {
+  const hidden = reduceStealthState(defaultStealthState, { type: "set_overlay_visible", visible: false });
+  const reset = reduceStealthState(hidden, { type: "reset_privacy" });
 
   assert.deepEqual(reset, defaultStealthState);
   assert.deepEqual(resetPrivacyState(), defaultStealthState);

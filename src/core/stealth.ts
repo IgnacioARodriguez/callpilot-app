@@ -30,7 +30,7 @@ export type StealthAction =
 
 export const defaultStealthState: StealthState = {
   callPrivacyAllowed: true,
-  overlayVisible: false,
+  overlayVisible: true,
   contentProtectionEnabled: true,
   mousePassthroughEnabled: true,
   focusMode: "passthrough",
@@ -62,7 +62,7 @@ export const applyShareSafeState = (state: StealthState = defaultStealthState): 
   normalizeStealthState({
     ...state,
     callPrivacyAllowed: true,
-    overlayVisible: false,
+    overlayVisible: true,
     contentProtectionEnabled: true,
     mousePassthroughEnabled: true,
     focusMode: "passthrough",
@@ -108,8 +108,8 @@ export const assessPrivacyState = (
     return {
       status: "safe",
       summary: normalized.overlayVisible
-        ? "Protected sharing mode is active. CallPilot stays visible to you while using best-effort capture protection."
-        : "Full private sharing mode is active. CallPilot is hidden locally with best-effort capture protection and passthrough enabled.",
+        ? "Private sharing mode is active. CallPilot stays visible to you with best-effort capture protection and passthrough enabled."
+        : "Hidden private sharing mode is active. CallPilot is hidden locally with best-effort capture protection and passthrough enabled.",
       findings,
       checkedAt,
     };
