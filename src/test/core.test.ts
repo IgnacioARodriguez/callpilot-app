@@ -39,6 +39,7 @@ import {
   extractLatestQuestionFocus,
   formatAnswerForDisplay,
   formatFactualTranscriptText,
+  flushTurnDrafts,
   formatStructuredAnswerPayload,
   formatConversationWindow,
   assessPartialTurnStability,
@@ -2061,6 +2062,69 @@ test("turn assembler applies overlapping final fragments that complete partial w
   assert.equal(folded.action === "fold_final" ? folded.draftText : "", "And I think what could make sense here is having the ID correspond to the book object.");
   assert.equal(next.action, "publish_live");
   assert.equal(next.action === "publish_live" ? next.text : "", "And I think what could make sense here is having the ID correspond to the book object. Yep.");
+});
+
+test("turn assembler merges overlapping Deepgram partials for coding follow-ups", () => {
+  const state = createTurnAssemblerState();
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "Ahora necesito que el usuario sea capaz de teclear",
+    isFinal: false,
+    timestamp: 1_000,
+  });
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "que el usuario sea capaz",
+    isFinal: true,
+    timestamp: 1_100,
+  });
+  const continued = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "de teclear en un input el nombre",
+    isFinal: false,
+    timestamp: 1_200,
+  });
+  const tail = assembleTurn(state, {
+    speaker: "interviewer",
+    text: "y que la funcion devuelva ese nombre.",
+    isFinal: true,
+    timestamp: 1_500,
+  });
+
+  assert.equal(continued.action, "publish_live");
+  assert.equal(
+    continued.action === "publish_live" ? continued.text : "",
+    "Ahora necesito que el usuario sea capaz de teclear en un input el nombre",
+  );
+  assert.equal(tail.action, "commit");
+  assert.equal(
+    tail.action === "commit" ? tail.text : "",
+    "Ahora necesito que el usuario sea capaz de teclear en un input el nombre y que la funcion devuelva ese nombre.",
+  );
+});
+
+test("turn assembler flushes pending live drafts before manual answers", () => {
+  const state = createTurnAssemblerState();
+  assembleTurn(state, {
+    speaker: "interviewer",
+    text: "Ahora necesito que el usuario sea capaz de teclear en un input el nombre",
+    isFinal: false,
+    timestamp: 1_000,
+  });
+  assembleTurn(state, {
+    speaker: "candidate",
+    text: "lo estoy implementando",
+    isFinal: false,
+    timestamp: 1_100,
+  });
+
+  const flushed = flushTurnDrafts(state);
+  const secondFlush = flushTurnDrafts(state);
+
+  assert.deepEqual(flushed, [
+    { speaker: "interviewer", text: "Ahora necesito que el usuario sea capaz de teclear en un input el nombre" },
+  ]);
+  assert.deepEqual(secondFlush, []);
 });
 
 test("overlay transcript helpers suppress duplicate live bubbles and expose only new deltas", () => {

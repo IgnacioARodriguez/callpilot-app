@@ -25,6 +25,7 @@ import {
   createTurnAssemblerState,
   defaultStealthState,
   formatConversationWindow,
+  flushTurnDrafts,
   assessPrivacyState,
   assessPartialTurnStability,
   detectQuestionIntent,
@@ -693,6 +694,31 @@ function App() {
       });
       return;
     }
+    const pendingTranscriptDrafts = flushTurnDrafts(turnAssemblerRef.current);
+    const flushedTranscript = pendingTranscriptDrafts.length > 0
+      ? (() => {
+        const next = new TranscriptBuffer(context.transcript);
+        const now = Date.now();
+        for (const draft of pendingTranscriptDrafts) {
+          const message = next.append(draft.text, "stt", now, draft.speaker);
+          if (message) void window.callpilotDesktop?.publishTranscriptMessage?.(message);
+        }
+        return next.snapshot();
+      })()
+      : context.transcript;
+    if (pendingTranscriptDrafts.length > 0) {
+      setTranscript(flushedTranscript);
+      void window.callpilotDesktop?.recordSessionEvent?.("stt_pending_drafts_flushed_for_answer", {
+        count: pendingTranscriptDrafts.length,
+        drafts: pendingTranscriptDrafts.map((draft) => ({
+          speaker: draft.speaker,
+          text: draft.text,
+        })),
+      });
+    }
+    const contextForAnswer = pendingTranscriptDrafts.length > 0
+      ? { ...context, transcript: flushedTranscript, updatedAt: new Date().toISOString() }
+      : context;
     const effectiveQuestion = questionOverride ?? question;
     const requestId = `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const requestStartedAt = Date.now();
@@ -716,8 +742,9 @@ function App() {
     emitAnswerTiming("request_received", {
       provider: modelProvider,
       modelName,
-      activeMode: context.activeMode,
+      activeMode: contextForAnswer.activeMode,
       questionChars: effectiveQuestion.length,
+      flushedTranscriptDrafts: pendingTranscriptDrafts.length,
     });
     void window.callpilotDesktop?.publishAnswerStatus?.({
       requestId,
@@ -726,7 +753,7 @@ function App() {
       timestamp: Date.now(),
     });
     emitAnswerTiming("context_snapshot_started");
-    let builtPrompt = buildPrompt(context, effectiveQuestion);
+    let builtPrompt = buildPrompt(contextForAnswer, effectiveQuestion);
     emitAnswerTiming("context_snapshot_completed", {
       promptChars: builtPrompt.debug.approximateChars,
       includedSections: builtPrompt.debug.includedSections.length,
@@ -740,8 +767,8 @@ function App() {
       });
       emitAnswerTiming("evidence_lookup_started");
       const embedder = await getEvidenceEmbedder();
-      const evidence = await pickEvidenceWithEmbeddings(context, effectiveQuestion, embedder, 4);
-      builtPrompt = buildPromptWithEvidence(context, effectiveQuestion, evidence);
+      const evidence = await pickEvidenceWithEmbeddings(contextForAnswer, effectiveQuestion, embedder, 4);
+      builtPrompt = buildPromptWithEvidence(contextForAnswer, effectiveQuestion, evidence);
       emitAnswerTiming("evidence_lookup_completed", {
         selectedEvidenceCount: evidence.items.length,
         evidenceStrategy: evidence.debug.strategy,
@@ -749,13 +776,13 @@ function App() {
       });
     } catch {
       emitAnswerTiming("evidence_lookup_failed");
-      builtPrompt = buildPrompt(context, effectiveQuestion);
+      builtPrompt = buildPrompt(contextForAnswer, effectiveQuestion);
     }
     setLastPrompt(builtPrompt);
     if (builtPrompt.debug.answerContextTrace) {
       void window.callpilotDesktop?.recordSessionEvent?.("answer_context_built", { ...builtPrompt.debug.answerContextTrace });
     }
-    const liveSpokenOutput = context.activeMode !== "live_coding" && (modelProvider === "openai" || modelProvider === "nvidia");
+    const liveSpokenOutput = contextForAnswer.activeMode !== "live_coding" && (modelProvider === "openai" || modelProvider === "nvidia");
     emitAnswerTiming("prompt_ready", {
       promptChars: builtPrompt.debug.approximateChars,
       liveSpokenOutput,
@@ -772,7 +799,7 @@ function App() {
       });
       if (modelProvider === "mock") {
         emitAnswerTiming("mock_answer_started");
-        const text = formatMockAnswer(context, effectiveQuestion);
+        const text = formatMockAnswer(contextForAnswer, effectiveQuestion);
         setAnswer(text);
         void window.callpilotDesktop?.publishAnswerStatus?.({
           requestId,
@@ -800,15 +827,15 @@ function App() {
         return;
       }
 
-      const liveMaxTokens = context.activeMode === "live_coding" ? 450 : 320;
-      const liveTimeoutMs = context.activeMode === "live_coding" ? 45000 : 35000;
+      const liveMaxTokens = contextForAnswer.activeMode === "live_coding" ? 450 : 320;
+      const liveTimeoutMs = contextForAnswer.activeMode === "live_coding" ? 45000 : 35000;
       if (liveSpokenOutput) setAnswer("");
       setLatencyRuns((current) => current.map((run) =>
         run.id === latencyRun.id ? markLatencyStage(run, "model_call_start") : run,
       ));
       emitAnswerTiming("model_call_started", {
-        maxTokens: liveSpokenOutput ? liveMaxTokens : context.activeMode === "live_coding" ? 1200 : 700,
-        timeoutMs: liveSpokenOutput ? liveTimeoutMs : context.activeMode === "live_coding" ? 120000 : 90000,
+        maxTokens: liveSpokenOutput ? liveMaxTokens : contextForAnswer.activeMode === "live_coding" ? 1200 : 700,
+        timeoutMs: liveSpokenOutput ? liveTimeoutMs : contextForAnswer.activeMode === "live_coding" ? 120000 : 90000,
       });
       let result = await window.callpilotDesktop.generateAnswer({
         provider: modelProvider,
@@ -821,8 +848,8 @@ function App() {
         nativelyApiKey,
         nvidiaApiKey,
         ollamaBaseUrl,
-        maxTokens: liveSpokenOutput ? liveMaxTokens : context.activeMode === "live_coding" ? 1200 : 700,
-        timeoutMs: liveSpokenOutput ? liveTimeoutMs : context.activeMode === "live_coding" ? 120000 : 90000,
+        maxTokens: liveSpokenOutput ? liveMaxTokens : contextForAnswer.activeMode === "live_coding" ? 1200 : 700,
+        timeoutMs: liveSpokenOutput ? liveTimeoutMs : contextForAnswer.activeMode === "live_coding" ? 120000 : 90000,
       });
       emitAnswerTiming("model_call_completed", {
         ok: result.ok,
@@ -838,7 +865,7 @@ function App() {
       });
       emitAnswerTiming("format_started");
       let parsedStructured = result.ok ? parseStructuredAnswerPayload(result.text) : null;
-      if (result.ok && context.activeMode === "live_coding" && liveSpokenOutput) {
+      if (result.ok && contextForAnswer.activeMode === "live_coding" && liveSpokenOutput) {
         emitAnswerTiming("live_coding_structured_code_started");
         const structuredResult = await window.callpilotDesktop.generateAnswer({
           provider: modelProvider,
@@ -874,7 +901,7 @@ function App() {
       }
       if (
         result.ok
-        && context.activeMode === "live_coding"
+        && contextForAnswer.activeMode === "live_coding"
         && shouldRetryLiveCodingCompleteness(parsedStructured, builtPrompt.user, result.text)
       ) {
         emitAnswerTiming("live_coding_completeness_retry_started");
@@ -908,7 +935,7 @@ function App() {
         parsedStructured: Boolean(parsedStructured),
         structuredKind: parsedStructured?.kind,
       });
-      const grounding = parsedStructured ? assessAnswerGrounding(context, effectiveQuestion, parsedStructured) : null;
+      const grounding = parsedStructured ? assessAnswerGrounding(contextForAnswer, effectiveQuestion, parsedStructured) : null;
       if (grounding) {
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
           requestId,
@@ -923,12 +950,12 @@ function App() {
         : parsedStructured;
       let text = result.ok
         ? formatAnswerForDisplay(result.text, structured, {
-          mode: context.activeMode === "live_coding" ? "coding" : "interview",
+          mode: contextForAnswer.activeMode === "live_coding" ? "coding" : "interview",
         })
         : `Generation failed: ${result.error ?? "unknown error"}`;
       if (result.ok && liveSpokenOutput) {
         const compacted = compactLiveSpokenAnswer(text, {
-          mode: context.activeMode,
+          mode: contextForAnswer.activeMode,
           userInput: effectiveQuestion,
         });
         if (compacted.compacted) {
@@ -940,14 +967,14 @@ function App() {
         }
       }
       if (result.ok) {
-        const repaired = repairLiveCodingAnswerCoverage(text, effectiveQuestion, context.activeMode);
+        const repaired = repairLiveCodingAnswerCoverage(text, effectiveQuestion, contextForAnswer.activeMode);
         if (repaired !== text) {
           text = repaired;
           emitAnswerTiming("live_coding_repaired", { textChars: text.length });
         }
       }
-      if (result.ok && !parsedStructured && context.activeMode !== "live_coding") {
-        const plainGrounding = assessPlainInterviewAnswerGrounding(context, effectiveQuestion, text);
+      if (result.ok && !parsedStructured && contextForAnswer.activeMode !== "live_coding") {
+        const plainGrounding = assessPlainInterviewAnswerGrounding(contextForAnswer, effectiveQuestion, text);
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
           requestId,
           ok: plainGrounding.ok,
@@ -962,7 +989,7 @@ function App() {
             payload: {
               version: "1",
               answerNeeded: true,
-              intent: context.activeMode === "behavioral" ? "behavioral" : "technical_qa",
+              intent: contextForAnswer.activeMode === "behavioral" ? "behavioral" : "technical_qa",
               spokenAnswer: text,
               keyPoints: [],
               correction: { needed: false, transition: null, correctedClaim: null },
@@ -975,7 +1002,7 @@ function App() {
         }
       }
       emitAnswerTiming("grounding_completed", {
-        checked: Boolean(grounding) || (result.ok && !parsedStructured && context.activeMode !== "live_coding"),
+        checked: Boolean(grounding) || (result.ok && !parsedStructured && contextForAnswer.activeMode !== "live_coding"),
         structured: Boolean(structured),
       });
       emitAnswerTiming("format_completed", {

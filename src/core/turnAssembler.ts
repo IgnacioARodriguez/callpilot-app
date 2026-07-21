@@ -18,6 +18,11 @@ export type TurnAssemblyDecision =
   | { action: "fold_final"; reason: "final_fragment"; text: string; draftText: string }
   | { action: "commit"; reason: "final" | "final_replaces_draft"; text: string };
 
+export interface FlushedTurnDraft {
+  speaker: TranscriptSpeaker;
+  text: string;
+}
+
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
 const normalizeRepeatedPrefix = (text: string): string =>
@@ -54,6 +59,12 @@ export const mergeTurnDraft = (
   const cleanLower = clean.toLowerCase();
   if (cleanLower.startsWith(prevLower)) return clean;
   if (prevLower.includes(cleanLower)) return prev;
+  const minOverlap = 8;
+  for (let length = Math.min(prev.length, clean.length); length >= minOverlap; length -= 1) {
+    if (prevLower.slice(-length) === cleanLower.slice(0, length)) {
+      return `${prev}${clean.slice(length)}`.trim();
+    }
+  }
   if (clean.length > prev.length && speechSimilarity(prev, clean) >= 0.55) return clean;
   if (clean.length < prev.length * 0.55 && !/[?¿.!]$/.test(prev)) return `${prev} ${clean}`;
   return clean;
@@ -189,4 +200,16 @@ export const assembleTurn = (
     reason: previous?.text && finalText !== incrementalClean ? "final_replaces_draft" : "final",
     text: finalText,
   };
+};
+
+export const flushTurnDrafts = (state: TurnAssemblerState): FlushedTurnDraft[] => {
+  const flushed: FlushedTurnDraft[] = [];
+  for (const [speaker, draft] of Object.entries(state.draftsBySpeaker) as Array<[TranscriptSpeaker, TurnDraft | undefined]>) {
+    const text = normalize(draft?.text ?? "");
+    if (!text || isShortNonQuestionFinal(text)) continue;
+    state.committedBySpeaker[speaker] = appendCommitted(state.committedBySpeaker[speaker], text);
+    flushed.push({ speaker, text });
+  }
+  state.draftsBySpeaker = {};
+  return flushed;
 };
