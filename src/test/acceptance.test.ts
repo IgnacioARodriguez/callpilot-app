@@ -66,7 +66,7 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   const overlay = read("src/overlay/OverlayApp.tsx");
   const codingOverlay = read("src/overlay/CodingOverlayApp.tsx");
 
-  for (const needle of ["session:start", "session:end", "session:trace-status", "answer:request", "answer:manual-request", "answer:headline", "answer:detail-chunk", "answer:structured", "answer:status", "transcript:message", "deepgram:start", "deepgram:audio", "deepgram:stop", "deepgram:transcript", "deepgram:status"]) {
+  for (const needle of ["session:start", "session:end", "session:trace-status", "answer:request", "answer:manual-request", "answer:headline", "answer:detail-chunk", "answer:structured", "answer:raw-model-output", "answer:status", "transcript:message", "deepgram:start", "deepgram:audio", "deepgram:stop", "deepgram:transcript", "deepgram:status"]) {
     assert.match(`${main}\n${preload}`, new RegExp(needle.replace(":", ":")));
   }
   assert.match(overlay, /cp-overlay/);
@@ -84,13 +84,39 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   assert.doesNotMatch(main, /pendingDetailChunks/);
   assert.match(main, /sendDetailChunk\(extractProviderStreamDelta\(streamEvent\)\)/);
   assert.match(main, /sendToSessionWindows\("answer:structured"/);
+  assert.match(main, /appendTraceEvent\("answer_raw_model_output"/);
+  assert.doesNotMatch(main, /sendToSessionWindows\("answer:raw-model-output"/);
   assert.match(main, /sendToSessionWindows\("answer:status"/);
   assert.match(app, /publishStructuredAnswer/);
+  assert.match(app, /publishRawModelOutput/);
   assert.match(codingOverlay, /cp-code-panel/);
   assert.match(codingOverlay, /cp-reasoning-panel/);
   assert.match(codingOverlay, /onStructuredAnswer/);
   assert.match(codingOverlay, /displayCode/);
   assert.doesNotMatch(codingOverlay, /starterCode/);
+});
+
+test("acceptance: session windows open side-by-side from a top-left margin", () => {
+  const main = read("electron/main.cjs");
+
+  assert.match(main, /const sessionWindowBounds = \(\) =>/);
+  assert.match(main, /const margin = 24/);
+  assert.match(main, /const gap = 12/);
+  assert.match(main, /coding: \{ x, y, width: codingWidth, height \}/);
+  assert.match(main, /overlay: \{ x: x \+ codingWidth \+ gap, y, width: overlayWidth, height \}/);
+  assert.match(main, /overlayWindow\.setBounds\(overlay\)/);
+  assert.match(main, /codingWindow\.setBounds\(coding\)/);
+});
+
+test("acceptance: live coding code panel uses One Dark Pro contrast", () => {
+  const css = read("src/styles.css");
+
+  assert.match(css, /\.cp-code-panel\s*\{[\s\S]*background:\s*#282c34/);
+  assert.match(css, /\.cp-code-panel \.cp-panel-title\s*\{[\s\S]*background:\s*#21252b/);
+  assert.match(css, /\.cp-code-panel \.cp-panel-title strong\s*\{[\s\S]*color:\s*#e5c07b/);
+  assert.match(css, /\.cp-code-panel \.cp-panel-title span\s*\{[\s\S]*color:\s*#61afef/);
+  assert.match(css, /\.cp-code-panel pre\s*\{[\s\S]*color:\s*#abb2bf/);
+  assert.match(css, /"Cascadia Code", "Fira Code"/);
 });
 
 test("acceptance: normal sessions persist metrics traces", () => {
@@ -147,6 +173,16 @@ test("acceptance: answer providers are routed through a registry", () => {
   assert.match(`${main}\n${preload}\n${app}`, /saveNvidiaKey/);
   assert.match(`${main}\n${preload}\n${app}`, /clearNvidiaKey/);
   assert.match(app, /NVIDIA_MODEL_PRESETS/);
+  assert.match(main, /groq/);
+  assert.match(main, /api\.groq\.com\/openai\/v1\/chat\/completions/);
+  assert.match(`${main}\n${preload}`, /groq:list-models/);
+  assert.match(app, /listGroqModels/);
+  assert.match(app, /groqStatus/);
+  assert.match(`${main}\n${preload}\n${app}`, /saveGroqKey/);
+  assert.match(`${main}\n${preload}\n${app}`, /clearGroqKey/);
+  assert.match(app, /GROQ_MODEL_PRESETS/);
+  assert.match(read("package.json"), /test:e2e:live-coding-replay:groq/);
+  assert.match(read("package.json"), /check:groq/);
 });
 
 test("acceptance: live STT chunks are queued instead of dropped while busy", () => {
@@ -286,6 +322,27 @@ test("acceptance: starting an overlay session resets stale runtime context", () 
   assert.doesNotMatch(app.slice(startIndex, app.indexOf("const stopMicRecording", startIndex)), /warmAnswerModel\(\)/);
 });
 
+test("acceptance: live coding setup defaults to OpenAI gpt-5-mini without changing touched providers", () => {
+  const app = read("src/main.tsx");
+  const settings = read("src/core/settings.ts");
+  const main = read("electron/main.cjs");
+  const setupStart = app.indexOf("const applyInterviewSetup");
+  const setupBody = app.slice(setupStart, app.indexOf("React.useEffect", setupStart));
+
+  assert.match(app, /const LIVE_CODING_DEFAULT_PROVIDER: ModelProvider = "openai"/);
+  assert.match(app, /const LIVE_CODING_DEFAULT_MODEL = "gpt-5-mini"/);
+  assert.match(app, /const TECHNICAL_INTERVIEW_DEFAULT_PROVIDER: ModelProvider = "nvidia"/);
+  assert.match(setupBody, /setup\.mode === "live_coding"[\s\S]*LIVE_CODING_DEFAULT_PROVIDER/);
+  assert.match(setupBody, /answerProviderTouchedRef\.current/);
+  assert.match(setupBody, /modelProvider: nextProvider/);
+  assert.match(setupBody, /modelName: nextModelName/);
+  assert.match(settings, /modelProvider:\s*"openai"/);
+  assert.match(settings, /modelName:\s*"gpt-5-mini"/);
+  assert.match(main, /modelProvider:\s*"openai"/);
+  assert.match(main, /modelName:\s*"gpt-5-mini"/);
+  assert.match(main, /settings\.activeMode === "live_coding"[\s\S]*settings\.modelProvider === "nvidia"[\s\S]*settings\.modelName === defaultNvidiaAnswerModel\(\)[\s\S]*settings\.modelProvider = "openai"[\s\S]*settings\.modelName = "gpt-5-mini"/);
+});
+
 test("acceptance: app startup warms the selected remote answer model", () => {
   const app = read("src/main.tsx");
   const warmIndex = app.indexOf("warmAnswerModel({ silent: true, reason: \"startup\" })");
@@ -298,6 +355,9 @@ test("acceptance: app startup warms the selected remote answer model", () => {
   assert.match(app, /answerWarmupChipClass/);
   assert.match(app, /timeoutMs: 90000/);
   assert.match(app, /nvidiaApiKey/);
+  assert.match(app, /groqApiKey/);
+  assert.match(app, /modelProvider === "groq" \|\| modelProvider === "openai"/);
+  assert.match(app, /OpenAI warmup skipped to avoid extra token spend/);
 });
 
 test("acceptance: app startup warms local evidence embeddings before session start", () => {
@@ -536,7 +596,8 @@ test("acceptance: live coding replay E2E drives screenshot answer and follow-up 
   assert.match(runner, /traceSummary/);
   assert.match(runner, /codingPayload/);
   assert.match(runner, /PreservedVisibleFunction/);
-  assert.match(runner, /raw_model_output_available:\s*false/);
+  assert.match(runner, /raw_model_output_available:\s*"after_session_trace"/);
+  assert.match(runner, /rawModelOutputs/);
   assert.match(runner, /parsed_output/);
   assert.match(runner, /final_rendered_output/);
 });

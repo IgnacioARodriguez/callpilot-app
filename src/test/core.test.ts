@@ -2906,6 +2906,14 @@ test("settings merge keeps defaults and normalizes blanks", () => {
   assert.equal(settings.liveAudioSource, "both");
 });
 
+test("settings default live coding answers use OpenAI gpt-5-mini", () => {
+  const settings = mergeAppSettings();
+
+  assert.equal(settings.activeMode, "live_coding");
+  assert.equal(settings.modelProvider, "openai");
+  assert.equal(settings.modelName, "gpt-5-mini");
+});
+
 test("live transcription settings accept Deepgram realtime provider", () => {
   const settings = normalizeLiveTranscriptionSettings({
     provider: "deepgram",
@@ -2980,6 +2988,30 @@ test("settings and sessions accept NVIDIA as an OpenAI-compatible answer provide
   assert.equal(settings.modelProvider, "nvidia");
   assert.equal(settings.modelName, "meta/llama-3.1-8b-instruct");
   assert.equal(parsed?.modelProvider, "nvidia");
+});
+
+test("settings and sessions accept Groq as an OpenAI-compatible answer provider", () => {
+  const settings = mergeAppSettings({ modelProvider: "groq", modelName: "llama-3.3-70b-versatile" });
+  const session = createSessionSnapshot({
+    activeMode: "live_coding",
+    transcript: new TranscriptBuffer().snapshot(),
+    screenText: "",
+    notes: "",
+    profile: "",
+    targetUseCase: "technical interview preparation",
+    preferredLanguage: "auto",
+    codingLanguage: "Python",
+    answerVerbosity: "medium",
+    modelProvider: "groq",
+    modelName: "llama-3.3-70b-versatile",
+    question: "",
+    answer: "",
+  });
+  const parsed = parseSessionJson(serializeSession(session));
+
+  assert.equal(settings.modelProvider, "groq");
+  assert.equal(settings.modelName, "llama-3.3-70b-versatile");
+  assert.equal(parsed?.modelProvider, "groq");
 });
 
 test("Ollama request helpers build local chat payloads", () => {

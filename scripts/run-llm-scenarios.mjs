@@ -1154,11 +1154,15 @@ const chooseProvider = (settings, credentialStatus) => {
 const defaultModelName = (provider, savedModel) => {
   if (cliModel) return cliModel;
   if (provider === "nvidia" && process.env.CALLPILOT_NVIDIA_MODEL) return process.env.CALLPILOT_NVIDIA_MODEL;
+  if (provider === "groq" && process.env.CALLPILOT_GROQ_MODEL) return process.env.CALLPILOT_GROQ_MODEL;
   if (provider === "natively" && (!savedModel || savedModel === "mock-local" || savedModel === "llama3.1" || savedModel.startsWith("llama3.1:"))) {
     return "default";
   }
   if (provider === "nvidia" && (!savedModel || savedModel === "mock-local" || savedModel === "llama3.1" || savedModel.startsWith("llama3.1:"))) {
     return "nvidia/llama-3.3-nemotron-super-49b-v1";
+  }
+  if (provider === "groq" && (!savedModel || savedModel === "mock-local" || savedModel === "default" || savedModel === "llama3.1" || savedModel.startsWith("llama3.1:") || savedModel.startsWith("nvidia/") || savedModel.startsWith("meta/"))) {
+    return "llama-3.3-70b-versatile";
   }
   return savedModel || "";
 };
@@ -1484,7 +1488,7 @@ const runScenario = async ({ client, settings, provider, modelName, scenario }) 
       response: { ok, text: "", provider, modelName, requestId: `${scenario.id}-preflight`, error: ok ? undefined : "unexpected_dispatch" },
     };
   }
-  const liveSpokenOutput = (provider === "openai" || provider === "nvidia") && scenario.mode !== "live_coding";
+  const liveSpokenOutput = (provider === "openai" || provider === "nvidia" || provider === "groq") && scenario.mode !== "live_coding";
   const input = {
     provider,
     modelName,

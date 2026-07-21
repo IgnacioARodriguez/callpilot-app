@@ -26,6 +26,8 @@ type AnswerRun = {
   structured: StructuredAnswerPayload | null;
   latencyMs: number;
   requestId?: string;
+  rawModelOutput?: string | null;
+  rawModelOutputStage?: string;
   actionTimings: Record<string, number>;
 };
 
@@ -48,6 +50,7 @@ type ReplayCase = {
 type TraceSummary = {
   path: string;
   answerTimings: Array<{ requestId?: string; stage?: string; elapsedMs?: number; ok?: boolean; error?: string; textChars?: number }>;
+  rawModelOutputs: Array<{ requestId?: string; stage?: string; provider?: string; modelName?: string; ok?: boolean; error?: string; text?: string; textChars?: number }>;
   providerEvents: Array<{ requestId?: string; type: string; provider?: string; modelName?: string; durationMs?: number; status?: number; ok?: boolean; stream?: boolean }>;
   screenEvents: Array<{ type: string; elapsedMs?: number; ok?: boolean; durationMs?: number; confidence?: number; hasScreenshot?: boolean; fileName?: string }>;
 };
@@ -101,11 +104,15 @@ const loops = Math.max(1, intArg("--loops", "CALLPILOT_E2E_LOOPS", "1"));
 const timeoutMs = Math.max(5000, intArg("--timeout-ms", "CALLPILOT_E2E_ANSWER_TIMEOUT_MS", "180000"));
 const debugPort = intArg("--debug-port", "CALLPILOT_E2E_DEBUG_PORT", "9369");
 const mockPort = intArg("--mock-port", "CALLPILOT_E2E_MOCK_PORT", "9370");
-const requestedProvider = (argValue("--provider") || process.env.CALLPILOT_E2E_PROVIDER || "mock") as "mock" | "openai" | "nvidia";
+const requestedProvider = (argValue("--provider") || process.env.CALLPILOT_E2E_PROVIDER || "mock") as "mock" | "openai" | "nvidia" | "groq";
 const provider: ModelProvider = requestedProvider === "mock" ? "openai" : requestedProvider;
 const modelName = argValue("--model")
   || process.env.CALLPILOT_E2E_MODEL
-  || (provider === "nvidia" ? process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct" : "mock-live-coding-replay");
+  || (provider === "nvidia"
+    ? process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct"
+    : provider === "groq"
+      ? process.env.CALLPILOT_GROQ_MODEL || "llama-3.3-70b-versatile"
+      : "mock-live-coding-replay");
 const useVision = hasArg("--vision") || process.env.CALLPILOT_E2E_USE_VISION === "1";
 
 const nowMs = () => Date.now();
@@ -417,6 +424,7 @@ const installEventCapture = async (client: CdpClient) => {
     window.__callpilotReplayDisposers?.forEach?.((dispose) => { try { dispose?.(); } catch {} });
     window.__callpilotReplayDisposers = [
       window.callpilotDesktop.onAnswerStatus((payload) => window.__callpilotReplayEvents.push({ type: "status", at: Date.now(), payload })),
+      window.callpilotDesktop.onRawModelOutput((payload) => window.__callpilotReplayEvents.push({ type: "raw", at: Date.now(), payload })),
       window.callpilotDesktop.onStructuredAnswer((payload) => window.__callpilotReplayEvents.push({ type: "structured", at: Date.now(), payload })),
       window.callpilotDesktop.onScreenContextPublished((payload) => window.__callpilotReplayEvents.push({ type: "screen", at: Date.now(), payload }))
     ];
@@ -473,6 +481,18 @@ const summarizeTrace = (tracePath: string): TraceSummary | null => {
         error: event.error,
         textChars: event.textChars,
       })),
+    rawModelOutputs: events
+      .filter((event: any) => event.type === "answer_raw_model_output")
+      .map((event: any) => ({
+        requestId: event.requestId,
+        stage: event.stage,
+        provider: event.provider,
+        modelName: event.modelName,
+        ok: event.ok,
+        error: event.error,
+        text: event.text,
+        textChars: event.textChars,
+      })),
     providerEvents: events
       .filter((event: any) => /^provider_|^model_generate/.test(String(event.type)))
       .map((event: any) => ({
@@ -515,13 +535,19 @@ const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, labe
   await sleep(150);
   const started = Date.now();
   const requestResult = await timed(actionTimings, "request_answer_ipc_ms", () =>
-    evaluate<{ ok: boolean; error?: string }>(mainClient, "window.callpilotDesktop.requestAnswer()"));
+    evaluate<{ ok: boolean; requestId?: string; error?: string }>(mainClient, "window.callpilotDesktop.requestAnswer()"));
+  const expectedRequestId = requestResult.requestId;
   const events = await timed(actionTimings, "wait_for_terminal_answer_event_ms", () =>
     evaluate<Array<{ type: string; at: number; payload: any }>>(eventClient, `new Promise((resolve) => {
     const started = Date.now();
+    const expectedRequestId = ${JSON.stringify(expectedRequestId)};
     const tick = () => {
       const events = window.__callpilotReplayEvents || [];
-      const terminal = events.find((event) => event.type === "status" && ["completed", "failed", "cancelled"].includes(event.payload?.status));
+      const terminal = events.find((event) =>
+        event.type === "status"
+        && (!expectedRequestId || event.payload?.requestId === expectedRequestId)
+        && ["completed", "failed", "cancelled"].includes(event.payload?.status)
+      );
       if (terminal || Date.now() - started > ${JSON.stringify(timeoutMs)}) {
         resolve(events);
         return;
@@ -530,8 +556,12 @@ const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, labe
     };
     tick();
   })`));
-  const status = events.find((event) => event.type === "status" && ["completed", "failed", "cancelled"].includes(event.payload?.status));
-  const structuredEvent = events.find((event) => event.type === "structured");
+  const requestEvents = expectedRequestId
+    ? events.filter((event) => !event.payload?.requestId || event.payload.requestId === expectedRequestId)
+    : events;
+  const status = requestEvents.find((event) => event.type === "status" && ["completed", "failed", "cancelled"].includes(event.payload?.status));
+  const rawEvent = [...requestEvents].reverse().find((event) => event.type === "raw");
+  const structuredEvent = requestEvents.find((event) => event.type === "structured");
   const structured = structuredEvent?.payload?.answer
     ? parseStructuredAnswerPayload(JSON.stringify(structuredEvent.payload.answer))
     : null;
@@ -544,6 +574,8 @@ const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, labe
     renderedText: String(status?.payload?.text || structuredEvent?.payload?.renderedText || ""),
     structured,
     requestId: status?.payload?.requestId || structuredEvent?.payload?.requestId,
+    rawModelOutput: typeof rawEvent?.payload?.text === "string" ? rawEvent.payload.text : null,
+    rawModelOutputStage: rawEvent?.payload?.stage,
     latencyMs: Date.now() - started,
     actionTimings,
   };
@@ -643,6 +675,9 @@ const runLoop = async (client: CdpClient, replayCase: ReplayCase, loop: number, 
 
 const run = async () => {
   if (!fs.existsSync(electronBin)) throw new Error(`Electron binary not found: ${electronBin}`);
+  if (useVision && requestedProvider === "groq") {
+    throw new Error("Groq replay currently supports answer generation only. Run without --vision, or use NVIDIA/OpenAI for screenshot vision.");
+  }
   const cases = readCases();
   for (const replayCase of cases) {
     const { imagePath, fallbackText } = resolveCasePaths(replayCase);
@@ -684,7 +719,7 @@ const run = async () => {
     modelName,
     corpus: corpusPath || null,
     caseCount: cases.length,
-    raw_model_output_available: false,
+    raw_model_output_available: "after_session_trace",
     cases: [],
     actionTimings: {},
   };
@@ -733,7 +768,9 @@ const run = async () => {
             renderedText: turn.renderedText,
             parsed_output: turn.structured,
             final_rendered_output: turn.renderedText,
-            raw_model_output: null,
+            raw_model_output: turn.rawModelOutput ?? null,
+            raw_model_output_stage: turn.rawModelOutputStage ?? null,
+            raw_model_output_available: Boolean(turn.rawModelOutput),
           })),
         });
         if (!result.ok) break;
@@ -747,6 +784,22 @@ const run = async () => {
     const endSession = await evaluate<any>(client, "window.callpilotDesktop.endSession()");
     report.trace = { status: traceStatus, endSession };
     report.traceSummary = summarizeTrace(endSession?.tracePath || traceStatus?.path || "");
+    const rawByRequestId = new Map<string, any>();
+    for (const item of report.traceSummary?.rawModelOutputs ?? []) {
+      if (item.requestId) rawByRequestId.set(item.requestId, item);
+    }
+    for (const caseReport of report.cases) {
+      for (const loop of caseReport.loops ?? []) {
+        for (const turn of loop.turns ?? []) {
+          const raw = turn.requestId ? rawByRequestId.get(turn.requestId) : null;
+          if (!turn.raw_model_output && raw?.text) {
+            turn.raw_model_output = raw.text;
+            turn.raw_model_output_stage = raw.stage ?? null;
+            turn.raw_model_output_available = true;
+          }
+        }
+      }
+    }
     if (!report.ok) process.exitCode = 1;
   } catch (error) {
     report.ok = false;

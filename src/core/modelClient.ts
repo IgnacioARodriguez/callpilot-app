@@ -1,7 +1,7 @@
 import type { BuiltPrompt } from "./promptBuilder.ts";
 import { STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA } from "./answerPayload.ts";
 
-export type ModelProvider = "mock" | "openai" | "ollama" | "natively" | "nvidia";
+export type ModelProvider = "mock" | "openai" | "ollama" | "natively" | "nvidia" | "groq";
 export type AudioTranscriptionModel = "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | "gpt-4o-transcribe-diarize" | "whisper-1";
 
 export const DEFAULT_TRANSCRIPTION_MODEL: AudioTranscriptionModel = "gpt-4o-transcribe";
@@ -30,6 +30,7 @@ export interface GenerateAnswerInput {
   apiKey?: string;
   nativelyApiKey?: string;
   nvidiaApiKey?: string;
+  groqApiKey?: string;
   ollamaBaseUrl?: string;
   maxTokens?: number;
   timeoutMs?: number;

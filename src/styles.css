@@ -420,6 +420,24 @@ button:disabled {
   overflow: hidden;
 }
 
+.cp-code-panel {
+  border-color: #3e4451;
+  background: #282c34;
+}
+
+.cp-code-panel .cp-panel-title {
+  border-bottom-color: #3e4451;
+  background: #21252b;
+}
+
+.cp-code-panel .cp-panel-title strong {
+  color: #e5c07b;
+}
+
+.cp-code-panel .cp-panel-title span {
+  color: #61afef;
+}
+
 .cp-panel-title {
   border-bottom: 1px solid rgba(203, 213, 225, 0.75);
   display: flex;
@@ -444,11 +462,16 @@ button:disabled {
   margin: 0;
   overflow: auto;
   padding: 14px;
-  background: #101820;
-  color: #d8f3dc;
-  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  background: #282c34;
+  color: #abb2bf;
+  font-family: "Cascadia Code", "Fira Code", "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
+  tab-size: 4;
+}
+
+.cp-code-panel code {
+  color: #abb2bf;
 }
 
 .cp-code-placeholder {
@@ -459,16 +482,17 @@ button:disabled {
   gap: 7px;
   padding: 18px;
   text-align: center;
-  background: #101820;
-  color: #d8f3dc;
+  background: #282c34;
+  color: #abb2bf;
 }
 
 .cp-code-placeholder strong {
   font-size: 13px;
+  color: #e5c07b;
 }
 
 .cp-code-placeholder span {
-  color: #9fb6c4;
+  color: #7f848e;
   font-size: 12px;
   line-height: 1.4;
   max-width: 280px;

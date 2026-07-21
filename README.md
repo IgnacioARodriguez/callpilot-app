@@ -35,6 +35,10 @@ Desktop OpenAI features currently include:
 
 The default transcription model is `gpt-4o-transcribe`. Mic recordings are sent from Electron main as `multipart/form-data`; API keys are not stored in browser localStorage.
 
+## Model Routing
+
+The current LLM/STT/vision provider matrix, operational findings, and recommended next model tests live in [`docs/llm-provider-matrix.md`](docs/llm-provider-matrix.md).
+
 ## Ollama Setup
 
 CallPilot can generate answers locally through Ollama.

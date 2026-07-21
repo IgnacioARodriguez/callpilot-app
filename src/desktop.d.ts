@@ -58,14 +58,17 @@ export interface CredentialStatus {
   hasNativelyKey: boolean;
   hasDeepgramKey: boolean;
   hasNvidiaKey: boolean;
+  hasGroqKey: boolean;
   hasOpenAIStoredKey?: boolean;
   hasNativelyStoredKey?: boolean;
   hasDeepgramStoredKey?: boolean;
   hasNvidiaStoredKey?: boolean;
+  hasGroqStoredKey?: boolean;
   hasOpenAIEnvKey?: boolean;
   hasNativelyEnvKey?: boolean;
   hasDeepgramEnvKey?: boolean;
   hasNvidiaEnvKey?: boolean;
+  hasGroqEnvKey?: boolean;
   encryptionAvailable: boolean;
   error?: string;
 }
@@ -171,9 +174,11 @@ declare global {
       publishTranscriptMessage: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishLiveTranscript: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishStructuredAnswer: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => Promise<{ ok: boolean }>;
+      publishRawModelOutput: (payload: { requestId?: string; stage: string; provider?: string; modelName?: string; ok: boolean; error?: string; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishAnswerStatus: (payload: { requestId?: string; status: "busy" | "completed" | "failed" | "cancelled"; text?: string; error?: string; timestamp: number }) => Promise<{ ok: boolean }>;
       listOllamaModels: (input?: { ollamaBaseUrl?: string }) => Promise<OllamaModelListResult>;
       listNvidiaModels: () => Promise<ProviderModelListResult>;
+      listGroqModels: () => Promise<ProviderModelListResult>;
       generateAnswer: (input: GenerateAnswerInput) => Promise<GenerateAnswerResult>;
       transcribeAudio: (input: {
         arrayBuffer: ArrayBuffer;
@@ -211,10 +216,12 @@ declare global {
       saveNativelyKey: (apiKey: string) => Promise<CredentialStatus>;
       saveDeepgramKey: (apiKey: string) => Promise<CredentialStatus>;
       saveNvidiaKey: (apiKey: string) => Promise<CredentialStatus>;
+      saveGroqKey: (apiKey: string) => Promise<CredentialStatus>;
       clearOpenAIKey: () => Promise<CredentialStatus>;
       clearNativelyKey: () => Promise<CredentialStatus>;
       clearDeepgramKey: () => Promise<CredentialStatus>;
       clearNvidiaKey: () => Promise<CredentialStatus>;
+      clearGroqKey: () => Promise<CredentialStatus>;
       exportSessionFile: (session: SavedSession) => Promise<SessionFileResult>;
       importSessionFile: () => Promise<SessionFileResult>;
       getSettings: () => Promise<DesktopSettings>;
@@ -231,6 +238,7 @@ declare global {
       onAnswerHeadline: (callback: (payload: { requestId?: string; headline: string; keywords: string[] }) => void) => () => void;
       onAnswerDetailChunk: (callback: (payload: { requestId?: string; sequence?: number; text?: string; done?: boolean; error?: string } | string) => void) => () => void;
       onStructuredAnswer: (callback: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => void) => () => void;
+      onRawModelOutput: (callback: (payload: { requestId?: string; stage: string; provider?: string; modelName?: string; ok: boolean; error?: string; text: string; timestamp: number }) => void) => () => void;
       onAnswerStatus: (callback: (payload: { requestId?: string; status: "busy" | "completed" | "failed" | "cancelled"; text?: string; error?: string; timestamp: number }) => void) => () => void;
       onTranscriptMessage: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onLiveTranscript: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;

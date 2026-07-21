@@ -22,9 +22,11 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   publishTranscriptMessage: (message) => ipcRenderer.invoke("transcript:publish", message),
   publishLiveTranscript: (message) => ipcRenderer.invoke("transcript:publish-live", message),
   publishStructuredAnswer: (payload) => ipcRenderer.invoke("answer:publish-structured", payload),
+  publishRawModelOutput: (payload) => ipcRenderer.invoke("answer:publish-raw-model-output", payload),
   publishAnswerStatus: (payload) => ipcRenderer.invoke("answer:publish-status", payload),
   listOllamaModels: (input) => ipcRenderer.invoke("ollama:list-models", input),
   listNvidiaModels: () => ipcRenderer.invoke("nvidia:list-models"),
+  listGroqModels: () => ipcRenderer.invoke("groq:list-models"),
   generateAnswer: (input) => ipcRenderer.invoke("model:generate", input),
   transcribeAudio: (input) => ipcRenderer.invoke("audio:transcribe", input),
   startNativelyTranscription: (input) => ipcRenderer.invoke("natively:start", input),
@@ -38,10 +40,12 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   saveNativelyKey: (apiKey) => ipcRenderer.invoke("credentials:save-natively-key", apiKey),
   saveDeepgramKey: (apiKey) => ipcRenderer.invoke("credentials:save-deepgram-key", apiKey),
   saveNvidiaKey: (apiKey) => ipcRenderer.invoke("credentials:save-nvidia-key", apiKey),
+  saveGroqKey: (apiKey) => ipcRenderer.invoke("credentials:save-groq-key", apiKey),
   clearOpenAIKey: () => ipcRenderer.invoke("credentials:clear-openai-key"),
   clearNativelyKey: () => ipcRenderer.invoke("credentials:clear-natively-key"),
   clearDeepgramKey: () => ipcRenderer.invoke("credentials:clear-deepgram-key"),
   clearNvidiaKey: () => ipcRenderer.invoke("credentials:clear-nvidia-key"),
+  clearGroqKey: () => ipcRenderer.invoke("credentials:clear-groq-key"),
   exportSessionFile: (session) => ipcRenderer.invoke("session:export-file", session),
   importSessionFile: () => ipcRenderer.invoke("session:import-file"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
@@ -93,6 +97,11 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on("answer:structured", handler);
     return () => ipcRenderer.removeListener("answer:structured", handler);
+  },
+  onRawModelOutput: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("answer:raw-model-output", handler);
+    return () => ipcRenderer.removeListener("answer:raw-model-output", handler);
   },
   onAnswerStatus: (callback) => {
     const handler = (_event, payload) => callback(payload);

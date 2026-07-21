@@ -27,8 +27,8 @@ export interface AppSettings {
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  modelProvider: "nvidia",
-  modelName: "meta/llama-3.1-8b-instruct",
+  modelProvider: "openai",
+  modelName: "gpt-5-mini",
   ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
   transcriptionModelName: "gpt-4o-transcribe",
   preferredLanguage: "auto",
@@ -44,7 +44,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 };
 
 const modeIds = new Set<AssistantModeId>(["live_coding", "system_design", "behavioral", "technical_qa", "meeting_notes"]);
-const providers = new Set<ModelProvider>(["mock", "openai", "ollama", "natively", "nvidia"]);
+const providers = new Set<ModelProvider>(["mock", "openai", "ollama", "natively", "nvidia", "groq"]);
 const languages = new Set<PreferredLanguage>(["english", "spanish", "auto"]);
 const verbosity = new Set<AppSettings["answerVerbosity"]>(["short", "medium", "detailed"]);
 

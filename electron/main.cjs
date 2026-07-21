@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, nativeImage, safeStorage, session } = require("electron");
+const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, nativeImage, safeStorage, screen, session } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -88,10 +88,11 @@ const stealthState = {
 };
 
 const defaultNvidiaAnswerModel = () => (process.env.CALLPILOT_NVIDIA_MODEL || "meta/llama-3.1-8b-instruct").trim();
+const defaultGroqAnswerModel = () => (process.env.CALLPILOT_GROQ_MODEL || "llama-3.3-70b-versatile").trim();
 
 const settingsDefaults = {
-  modelProvider: "nvidia",
-  modelName: defaultNvidiaAnswerModel(),
+  modelProvider: "openai",
+  modelName: "gpt-5-mini",
   visionModelName: "meta/llama-3.2-11b-vision-instruct",
   ollamaBaseUrl: "http://localhost:11434",
   transcriptionModelName: "gpt-4o-transcribe",
@@ -340,6 +341,10 @@ const readSettings = () => {
     if (settings.modelProvider === "nvidia" && settings.modelName === "meta/llama-3.2-1b-instruct") {
       settings.modelName = defaultNvidiaAnswerModel();
     }
+    if (settings.activeMode === "live_coding" && settings.modelProvider === "nvidia" && settings.modelName === defaultNvidiaAnswerModel()) {
+      settings.modelProvider = "openai";
+      settings.modelName = "gpt-5-mini";
+    }
     return settings;
   } catch {
     return { ...settingsDefaults };
@@ -350,6 +355,10 @@ const writeSettings = (settings) => {
   const next = { ...settingsDefaults, ...(settings && typeof settings === "object" ? settings : {}) };
   if (next.modelProvider === "nvidia" && next.modelName === "meta/llama-3.2-1b-instruct") {
     next.modelName = defaultNvidiaAnswerModel();
+  }
+  if (next.activeMode === "live_coding" && next.modelProvider === "nvidia" && next.modelName === defaultNvidiaAnswerModel()) {
+    next.modelProvider = "openai";
+    next.modelName = "gpt-5-mini";
   }
   fs.mkdirSync(userDataPath(), { recursive: true });
   fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2));
@@ -409,29 +418,44 @@ const getStoredNvidiaKey = () => {
   }
 };
 
+const getStoredGroqKey = () => {
+  const encrypted = readCredentials().groqApiKey;
+  if (!encrypted || typeof encrypted !== "string" || !safeStorage.isEncryptionAvailable()) return "";
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+  } catch {
+    return "";
+  }
+};
+
 const credentialStatus = () => {
   const hasOpenAIStoredKey = Boolean(getStoredOpenAIKey());
   const hasNativelyStoredKey = Boolean(getStoredNativelyKey());
   const hasDeepgramStoredKey = Boolean(getStoredDeepgramKey());
   const hasNvidiaStoredKey = Boolean(getStoredNvidiaKey());
+  const hasGroqStoredKey = Boolean(getStoredGroqKey());
   const hasOpenAIEnvKey = Boolean(process.env.OPENAI_API_KEY);
   const hasNativelyEnvKey = Boolean(process.env.NATIVELY_API_KEY);
   const hasDeepgramEnvKey = Boolean(process.env.DEEPGRAM_API_KEY || process.env.CALLPILOT_DEEPGRAM_API_KEY);
   const hasNvidiaEnvKey = Boolean(process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY);
+  const hasGroqEnvKey = Boolean(process.env.GROQ_API_KEY || process.env.CALLPILOT_GROQ_API_KEY);
   return {
     ok: true,
     hasOpenAIKey: hasOpenAIStoredKey || hasOpenAIEnvKey,
     hasNativelyKey: hasNativelyStoredKey || hasNativelyEnvKey,
     hasDeepgramKey: hasDeepgramStoredKey || hasDeepgramEnvKey,
     hasNvidiaKey: hasNvidiaStoredKey || hasNvidiaEnvKey,
+    hasGroqKey: hasGroqStoredKey || hasGroqEnvKey,
     hasOpenAIStoredKey,
     hasNativelyStoredKey,
     hasDeepgramStoredKey,
     hasNvidiaStoredKey,
+    hasGroqStoredKey,
     hasOpenAIEnvKey,
     hasNativelyEnvKey,
     hasDeepgramEnvKey,
     hasNvidiaEnvKey,
+    hasGroqEnvKey,
     encryptionAvailable: safeStorage.isEncryptionAvailable(),
   };
 };
@@ -477,13 +501,26 @@ const saveStoredDeepgramKey = (apiKey) => {
 
 const saveStoredNvidiaKey = (apiKey) => {
   if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: Boolean(getStoredNativelyKey()), hasDeepgramKey: Boolean(getStoredDeepgramKey()), hasNvidiaKey: false, encryptionAvailable: false, error: "safe_storage_unavailable" };
+    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: Boolean(getStoredNativelyKey()), hasDeepgramKey: Boolean(getStoredDeepgramKey()), hasNvidiaKey: false, hasGroqKey: Boolean(getStoredGroqKey()), encryptionAvailable: false, error: "safe_storage_unavailable" };
   }
   const key = typeof apiKey === "string" ? apiKey.trim() : "";
   if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
   saveCredentials({
     ...readCredentials(),
     nvidiaApiKey: safeStorage.encryptString(key).toString("base64"),
+  });
+  return { ...credentialStatus(), ok: true };
+};
+
+const saveStoredGroqKey = (apiKey) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: false, hasOpenAIKey: Boolean(getStoredOpenAIKey()), hasNativelyKey: Boolean(getStoredNativelyKey()), hasDeepgramKey: Boolean(getStoredDeepgramKey()), hasNvidiaKey: Boolean(getStoredNvidiaKey()), hasGroqKey: false, encryptionAvailable: false, error: "safe_storage_unavailable" };
+  }
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (!key) return { ...credentialStatus(), ok: false, error: "empty_api_key" };
+  saveCredentials({
+    ...readCredentials(),
+    groqApiKey: safeStorage.encryptString(key).toString("base64"),
   });
   return { ...credentialStatus(), ok: true };
 };
@@ -512,6 +549,13 @@ const clearStoredDeepgramKey = () => {
 const clearStoredNvidiaKey = () => {
   const credentials = readCredentials();
   delete credentials.nvidiaApiKey;
+  saveCredentials(credentials);
+  return { ...credentialStatus(), ok: true };
+};
+
+const clearStoredGroqKey = () => {
+  const credentials = readCredentials();
+  delete credentials.groqApiKey;
   saveCredentials(credentials);
   return { ...credentialStatus(), ok: true };
 };
@@ -1052,6 +1096,14 @@ const providerPresets = {
     auth: "bearer",
     chatUrl: () => normalizeOpenAICompatibleChatUrl(process.env.CALLPILOT_NVIDIA_LLM_URL || "https://integrate.api.nvidia.com/v1/chat/completions"),
     apiKey: (input) => (typeof input?.nvidiaApiKey === "string" && input.nvidiaApiKey.trim() ? input.nvidiaApiKey.trim() : process.env.NVIDIA_API_KEY || process.env.CALLPILOT_NVIDIA_API_KEY || getStoredNvidiaKey()),
+  },
+  groq: {
+    id: "groq",
+    protocol: "openai_chat",
+    defaultModel: defaultGroqAnswerModel(),
+    auth: "bearer",
+    chatUrl: () => normalizeOpenAICompatibleChatUrl(process.env.CALLPILOT_GROQ_LLM_URL || "https://api.groq.com/openai/v1/chat/completions"),
+    apiKey: (input) => (typeof input?.groqApiKey === "string" && input.groqApiKey.trim() ? input.groqApiKey.trim() : process.env.GROQ_API_KEY || process.env.CALLPILOT_GROQ_API_KEY || getStoredGroqKey()),
   },
 };
 
@@ -2150,13 +2202,14 @@ const syncWindowState = () => {
 };
 
 const createOverlayWindow = async () => {
+  const { overlay } = sessionWindowBounds();
   if (overlayWindow) {
+    overlayWindow.setBounds(overlay);
     overlayWindow.showInactive();
     return;
   }
   overlayWindow = new BrowserWindow({
-    width: 420,
-    height: 640,
+    ...overlay,
     minWidth: 320,
     minHeight: 260,
     frame: false,
@@ -2194,13 +2247,14 @@ const closeOverlayWindow = () => {
 };
 
 const createCodingWindow = async () => {
+  const { coding } = sessionWindowBounds();
   if (codingWindow) {
+    codingWindow.setBounds(coding);
     codingWindow.showInactive();
     return;
   }
   codingWindow = new BrowserWindow({
-    width: 780,
-    height: 520,
+    ...coding,
     minWidth: 560,
     minHeight: 360,
     frame: false,
@@ -2244,6 +2298,25 @@ const sendToOverlay = (channel, payload) => {
 const sendToSessionWindows = (channel, payload) => {
   overlayWindow?.webContents.send(channel, payload);
   codingWindow?.webContents.send(channel, payload);
+};
+
+const sessionWindowBounds = () => {
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const margin = 24;
+  const gap = 12;
+  const preferredCodingWidth = 780;
+  const preferredOverlayWidth = 420;
+  const preferredHeight = 640;
+  const availableWidth = Math.max(680, workArea.width - margin * 2);
+  const overlayWidth = Math.max(320, Math.min(preferredOverlayWidth, Math.floor(availableWidth * 0.34)));
+  const codingWidth = Math.max(360, Math.min(preferredCodingWidth, availableWidth - overlayWidth - gap));
+  const height = Math.max(360, Math.min(preferredHeight, workArea.height - margin * 2));
+  const x = workArea.x + margin;
+  const y = workArea.y + margin;
+  return {
+    coding: { x, y, width: codingWidth, height },
+    overlay: { x: x + codingWidth + gap, y, width: overlayWidth, height },
+  };
 };
 
 const temporarilyHideSessionWindows = async (callback) => {
@@ -2490,6 +2563,20 @@ ipcMain.handle("answer:publish-structured", (_event, payload) => {
   sendToSessionWindows("answer:structured", payload);
   return { ok: true };
 });
+ipcMain.handle("answer:publish-raw-model-output", (_event, payload) => {
+  appendTraceEvent("answer_raw_model_output", {
+    requestId: payload?.requestId,
+    stage: payload?.stage,
+    provider: payload?.provider,
+    modelName: payload?.modelName,
+    ok: payload?.ok,
+    error: payload?.error,
+    text: payload?.text,
+    textChars: typeof payload?.text === "string" ? payload.text.length : 0,
+  });
+  writeActiveSessionTrace("active");
+  return { ok: true };
+});
 ipcMain.handle("answer:publish-status", (_event, payload) => {
   appendTraceEvent("answer_status_published", {
     requestId: payload?.requestId,
@@ -2515,10 +2602,12 @@ ipcMain.handle("credentials:save-openai-key", (_event, apiKey) => saveStoredOpen
 ipcMain.handle("credentials:save-natively-key", (_event, apiKey) => saveStoredNativelyKey(apiKey));
 ipcMain.handle("credentials:save-deepgram-key", (_event, apiKey) => saveStoredDeepgramKey(apiKey));
 ipcMain.handle("credentials:save-nvidia-key", (_event, apiKey) => saveStoredNvidiaKey(apiKey));
+ipcMain.handle("credentials:save-groq-key", (_event, apiKey) => saveStoredGroqKey(apiKey));
 ipcMain.handle("credentials:clear-openai-key", () => clearStoredOpenAIKey());
 ipcMain.handle("credentials:clear-natively-key", () => clearStoredNativelyKey());
 ipcMain.handle("credentials:clear-deepgram-key", () => clearStoredDeepgramKey());
 ipcMain.handle("credentials:clear-nvidia-key", () => clearStoredNvidiaKey());
+ipcMain.handle("credentials:clear-groq-key", () => clearStoredGroqKey());
 ipcMain.handle("deepgram:start", async (_event, input) => {
   const startedAt = Date.now();
   const WebSocketCtor = globalThis.WebSocket;
@@ -2747,8 +2836,7 @@ ipcMain.handle("ollama:list-models", async (_event, input) => {
     };
   }
 });
-ipcMain.handle("nvidia:list-models", async () => {
-  const provider = providerPresets.nvidia;
+const listOpenAICompatibleProviderModels = async (provider, missingKeyError, unavailablePrefix) => {
   const modelsUrl = openAICompatibleModelsUrl(provider.chatUrl());
   const apiKey = provider.apiKey?.({}) ?? "";
   if (!apiKey) {
@@ -2756,7 +2844,7 @@ ipcMain.handle("nvidia:list-models", async () => {
       ok: false,
       models: [],
       baseUrl: modelsUrl,
-      error: "missing_nvidia_api_key",
+      error: missingKeyError,
     };
   }
   try {
@@ -2773,7 +2861,7 @@ ipcMain.handle("nvidia:list-models", async () => {
         ok: false,
         models: [],
         baseUrl: modelsUrl,
-        error: payload?.error?.message ?? payload?.error ?? `nvidia_models_http_${response.status}`,
+        error: payload?.error?.message ?? payload?.error ?? `${provider.id}_models_http_${response.status}`,
       };
     }
     return {
@@ -2786,10 +2874,12 @@ ipcMain.handle("nvidia:list-models", async () => {
       ok: false,
       models: [],
       baseUrl: modelsUrl,
-      error: error instanceof Error ? `nvidia_models_unavailable: ${error.message}` : "nvidia_models_unavailable",
+      error: error instanceof Error ? `${unavailablePrefix}: ${error.message}` : unavailablePrefix,
     };
   }
-});
+};
+ipcMain.handle("nvidia:list-models", async () => listOpenAICompatibleProviderModels(providerPresets.nvidia, "missing_nvidia_api_key", "nvidia_models_unavailable"));
+ipcMain.handle("groq:list-models", async () => listOpenAICompatibleProviderModels(providerPresets.groq, "missing_groq_api_key", "groq_models_unavailable"));
 ipcMain.handle("model:generate", async (_event, input) => {
   const startedAt = Date.now();
   const provider = resolveAnswerProvider(input);

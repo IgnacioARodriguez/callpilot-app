@@ -30,6 +30,7 @@ import {
   assessPartialTurnStability,
   detectQuestionIntent,
   extractLatestQuestionFocus,
+  extractVisibleCodeSymbols,
   formatAnswerForDisplay,
   compactLiveSpokenAnswer,
   liveTranscriptionPlan,
@@ -60,6 +61,7 @@ import {
   type CodingAnswerPayload,
   type EvidenceEmbedder,
   type EvidenceEmbedding,
+  type GenerateAnswerResult,
   type GlobalContext,
   type LatencyMetricRun,
   type LiveAudioSource,
@@ -116,6 +118,18 @@ const NVIDIA_MODEL_PRESETS = [
   "meta/llama-3.3-70b-instruct",
   "meta/llama-3.1-70b-instruct",
 ];
+
+const GROQ_MODEL_PRESETS = [
+  "llama-3.3-70b-versatile",
+  "qwen/qwen3.6-27b",
+  "openai/gpt-oss-120b",
+  "moonshotai/kimi-k2-instruct",
+];
+
+const LIVE_CODING_DEFAULT_PROVIDER: ModelProvider = "openai";
+const LIVE_CODING_DEFAULT_MODEL = "gpt-5-mini";
+const TECHNICAL_INTERVIEW_DEFAULT_PROVIDER: ModelProvider = "nvidia";
+const TECHNICAL_INTERVIEW_DEFAULT_MODEL = NVIDIA_MODEL_PRESETS[0];
 
 const createEmptyCodingPayload = (): CodingAnswerPayload => ({
   version: "1",
@@ -204,7 +218,9 @@ function App() {
     createdAt: savedSession.createdAt,
   }));
   const [activeTab, setActiveTab] = React.useState<"meeting" | "context" | "config">("meeting");
-  const [selectedSetup, setSelectedSetup] = React.useState<InterviewSetupId>("interview");
+  const [selectedSetup, setSelectedSetup] = React.useState<InterviewSetupId>(
+    savedSession.activeMode === "live_coding" || !savedSession.activeMode ? "live_coding" : "interview",
+  );
   const [activeMode, setActiveMode] = React.useState<AssistantModeId>(savedSession.activeMode ?? "live_coding");
   const answerProviderTouchedRef = React.useRef(false);
   const [transcript, setTranscript] = React.useState<TranscriptSnapshot>(() => savedSession.transcript ?? new TranscriptBuffer().snapshot());
@@ -228,13 +244,19 @@ function App() {
   const [preferredLanguage, setPreferredLanguage] = React.useState<"english" | "spanish" | "auto">(savedSession.preferredLanguage ?? "auto");
   const [codingLanguage, setCodingLanguage] = React.useState(savedSession.codingLanguage ?? "Python");
   const [answerVerbosity, setAnswerVerbosity] = React.useState<"short" | "medium" | "detailed">(savedSession.answerVerbosity ?? "medium");
-  const [modelProvider, setModelProvider] = React.useState<ModelProvider>(savedSession.modelProvider ?? "mock");
-  const [modelName, setModelName] = React.useState(savedSession.modelName ?? "");
+  const [modelProvider, setModelProvider] = React.useState<ModelProvider>(
+    savedSession.modelProvider ?? LIVE_CODING_DEFAULT_PROVIDER,
+  );
+  const [modelName, setModelName] = React.useState(
+    savedSession.modelName ?? LIVE_CODING_DEFAULT_MODEL,
+  );
   const [ollamaBaseUrl, setOllamaBaseUrl] = React.useState(DEFAULT_OLLAMA_BASE_URL);
   const [ollamaModels, setOllamaModels] = React.useState<string[]>([]);
   const [ollamaStatus, setOllamaStatus] = React.useState("Ollama models not checked yet");
   const [nvidiaModels, setNvidiaModels] = React.useState<string[]>([]);
   const [nvidiaStatus, setNvidiaStatus] = React.useState("NVIDIA models not checked yet");
+  const [groqModels, setGroqModels] = React.useState<string[]>([]);
+  const [groqStatus, setGroqStatus] = React.useState("Groq models not checked yet");
   const [transcriptionModelName, setTranscriptionModelName] = React.useState<string>(DEFAULT_TRANSCRIPTION_MODEL);
   const [liveTranscriptionProvider, setLiveTranscriptionProvider] = React.useState<LiveTranscriptionProvider>("deepgram");
   const [liveLatencyPreset, setLiveLatencyPreset] = React.useState<LiveLatencyPreset>("balanced");
@@ -245,14 +267,17 @@ function App() {
   const [nativelyApiKey, setNativelyApiKey] = React.useState("");
   const [deepgramApiKey, setDeepgramApiKey] = React.useState("");
   const [nvidiaApiKey, setNvidiaApiKey] = React.useState("");
+  const [groqApiKey, setGroqApiKey] = React.useState("");
   const [hasStoredOpenAIKey, setHasStoredOpenAIKey] = React.useState(false);
   const [hasStoredNativelyKey, setHasStoredNativelyKey] = React.useState(false);
   const [hasStoredDeepgramKey, setHasStoredDeepgramKey] = React.useState(false);
   const [hasStoredNvidiaKey, setHasStoredNvidiaKey] = React.useState(false);
+  const [hasStoredGroqKey, setHasStoredGroqKey] = React.useState(false);
   const [hasEnvOpenAIKey, setHasEnvOpenAIKey] = React.useState(false);
   const [hasEnvNativelyKey, setHasEnvNativelyKey] = React.useState(false);
   const [hasEnvDeepgramKey, setHasEnvDeepgramKey] = React.useState(false);
   const [hasEnvNvidiaKey, setHasEnvNvidiaKey] = React.useState(false);
+  const [hasEnvGroqKey, setHasEnvGroqKey] = React.useState(false);
   const [settingsLoaded, setSettingsLoaded] = React.useState(false);
   const [credentialStatusLoaded, setCredentialStatusLoaded] = React.useState(false);
   const [credentialMessage, setCredentialMessage] = React.useState("");
@@ -380,7 +405,7 @@ function App() {
 
   const livePlan = React.useMemo(() => liveTranscriptionPlan(liveSettings), [liveSettings]);
 
-  const providerLabel = modelProvider === "ollama" ? "Local" : modelProvider === "openai" ? "OpenAI" : modelProvider === "natively" ? "Natively" : modelProvider === "nvidia" ? "NVIDIA" : "Demo";
+  const providerLabel = modelProvider === "ollama" ? "Local" : modelProvider === "openai" ? "OpenAI" : modelProvider === "natively" ? "Natively" : modelProvider === "nvidia" ? "NVIDIA" : modelProvider === "groq" ? "Groq" : "Demo";
   const languageLabel = preferredLanguage === "spanish" ? "Spanish" : preferredLanguage === "english" ? "English" : "Auto";
   const listeningLabel = isDictating ? "Listening" : "Stopped";
   const privacyLabel = stealth.callPrivacyAllowed ? "Approved" : "Not approved";
@@ -388,6 +413,7 @@ function App() {
   const hasNativelyTranscriptionKey = hasStoredNativelyKey || hasEnvNativelyKey || Boolean(nativelyApiKey.trim());
   const hasDeepgramTranscriptionKey = hasStoredDeepgramKey || hasEnvDeepgramKey || Boolean(deepgramApiKey.trim());
   const hasNvidiaAnswerKey = hasStoredNvidiaKey || hasEnvNvidiaKey || Boolean(nvidiaApiKey.trim());
+  const hasGroqAnswerKey = hasStoredGroqKey || hasEnvGroqKey || Boolean(groqApiKey.trim());
   const selectedAnswerModelKey = `${modelProvider}:${modelName || "default"}`;
   const answerWarmupChipClass = answerWarmupHealth.status === "ready"
     ? "health-chip good"
@@ -407,24 +433,29 @@ function App() {
     hasNativelyKey?: boolean;
     hasDeepgramKey?: boolean;
     hasNvidiaKey?: boolean;
+    hasGroqKey?: boolean;
     hasOpenAIStoredKey?: boolean;
     hasNativelyStoredKey?: boolean;
     hasDeepgramStoredKey?: boolean;
     hasNvidiaStoredKey?: boolean;
+    hasGroqStoredKey?: boolean;
     hasOpenAIEnvKey?: boolean;
     hasNativelyEnvKey?: boolean;
     hasDeepgramEnvKey?: boolean;
     hasNvidiaEnvKey?: boolean;
+    hasGroqEnvKey?: boolean;
     encryptionAvailable?: boolean;
   }) => {
     setHasStoredOpenAIKey(Boolean(status.hasOpenAIStoredKey ?? status.hasOpenAIKey));
     setHasStoredNativelyKey(Boolean(status.hasNativelyStoredKey ?? status.hasNativelyKey));
     setHasStoredDeepgramKey(Boolean(status.hasDeepgramStoredKey ?? status.hasDeepgramKey));
     setHasStoredNvidiaKey(Boolean(status.hasNvidiaStoredKey ?? status.hasNvidiaKey));
+    setHasStoredGroqKey(Boolean(status.hasGroqStoredKey ?? status.hasGroqKey));
     setHasEnvOpenAIKey(Boolean(status.hasOpenAIEnvKey));
     setHasEnvNativelyKey(Boolean(status.hasNativelyEnvKey));
     setHasEnvDeepgramKey(Boolean(status.hasDeepgramEnvKey));
     setHasEnvNvidiaKey(Boolean(status.hasNvidiaEnvKey));
+    setHasEnvGroqKey(Boolean(status.hasGroqEnvKey));
   }, []);
 
   const stripKnownTranscriptHistory = (text: string, speaker: TranscriptSpeaker): string => {
@@ -501,10 +532,22 @@ function App() {
 
   const applyInterviewSetup = React.useCallback((setupId: InterviewSetupId) => {
     const setup = INTERVIEW_SETUPS.find((item) => item.id === setupId) ?? INTERVIEW_SETUPS[0];
+    const nextProvider = !answerProviderTouchedRef.current
+      ? setup.mode === "live_coding"
+        ? LIVE_CODING_DEFAULT_PROVIDER
+        : TECHNICAL_INTERVIEW_DEFAULT_PROVIDER
+      : modelProvider;
+    const nextModelName = !answerProviderTouchedRef.current
+      ? setup.mode === "live_coding"
+        ? LIVE_CODING_DEFAULT_MODEL
+        : TECHNICAL_INTERVIEW_DEFAULT_MODEL
+      : modelName;
     setSelectedSetup(setup.id);
     setActiveMode(setup.mode);
     setAnswerVerbosity(setup.answerVerbosity);
     setLiveLatencyPreset(setup.latencyPreset);
+    setModelProvider(nextProvider);
+    setModelName(nextModelName);
     setAutoAnswerEnabled(false);
     autoAnswerEnabledRef.current = false;
     setDesktopStatus(`${setup.title} setup ready`);
@@ -513,8 +556,10 @@ function App() {
       answerVerbosity: setup.answerVerbosity,
       liveLatencyPreset: setup.latencyPreset,
       liveAudioSource,
+      modelProvider: nextProvider,
+      modelName: nextModelName,
     });
-  }, [liveAudioSource]);
+  }, [liveAudioSource, modelName, modelProvider]);
 
   React.useEffect(() => {
     window.callpilotDesktop?.getStealthState()
@@ -785,7 +830,19 @@ function App() {
     if (builtPrompt.debug.answerContextTrace) {
       void window.callpilotDesktop?.recordSessionEvent?.("answer_context_built", { ...builtPrompt.debug.answerContextTrace });
     }
-    const liveSpokenOutput = contextForAnswer.activeMode !== "live_coding" && (modelProvider === "openai" || modelProvider === "nvidia");
+    const liveSpokenOutput = contextForAnswer.activeMode !== "live_coding" && (modelProvider === "openai" || modelProvider === "nvidia" || modelProvider === "groq");
+    const recordRawModelOutput = (stage: string, output: GenerateAnswerResult) => {
+      void window.callpilotDesktop?.publishRawModelOutput?.({
+        requestId,
+        stage,
+        provider: output.provider,
+        modelName: output.modelName,
+        ok: output.ok,
+        error: output.error,
+        text: output.text,
+        timestamp: Date.now(),
+      });
+    };
     emitAnswerTiming("prompt_ready", {
       promptChars: builtPrompt.debug.approximateChars,
       liveSpokenOutput,
@@ -831,13 +888,16 @@ function App() {
       }
 
       const liveMaxTokens = contextForAnswer.activeMode === "live_coding" ? 450 : 320;
+      const structuredMaxTokens = contextForAnswer.activeMode === "live_coding"
+        ? modelProvider === "groq" ? 550 : 1200
+        : 700;
       const liveTimeoutMs = contextForAnswer.activeMode === "live_coding" ? 45000 : 35000;
       if (liveSpokenOutput) setAnswer("");
       setLatencyRuns((current) => current.map((run) =>
         run.id === latencyRun.id ? markLatencyStage(run, "model_call_start") : run,
       ));
       emitAnswerTiming("model_call_started", {
-        maxTokens: liveSpokenOutput ? liveMaxTokens : contextForAnswer.activeMode === "live_coding" ? 1200 : 700,
+        maxTokens: liveSpokenOutput ? liveMaxTokens : structuredMaxTokens,
         timeoutMs: liveSpokenOutput ? liveTimeoutMs : contextForAnswer.activeMode === "live_coding" ? 120000 : 90000,
       });
       let result = await window.callpilotDesktop.generateAnswer({
@@ -850,8 +910,9 @@ function App() {
         apiKey: sessionApiKey,
         nativelyApiKey,
         nvidiaApiKey,
+        groqApiKey,
         ollamaBaseUrl,
-        maxTokens: liveSpokenOutput ? liveMaxTokens : contextForAnswer.activeMode === "live_coding" ? 1200 : 700,
+        maxTokens: liveSpokenOutput ? liveMaxTokens : structuredMaxTokens,
         timeoutMs: liveSpokenOutput ? liveTimeoutMs : contextForAnswer.activeMode === "live_coding" ? 120000 : 90000,
       });
       emitAnswerTiming("model_call_completed", {
@@ -860,6 +921,7 @@ function App() {
         error: result.error,
         textChars: result.text.length,
       });
+      recordRawModelOutput("initial_model_call", result);
       void window.callpilotDesktop?.publishAnswerStatus?.({
         requestId,
         status: "busy",
@@ -880,8 +942,9 @@ function App() {
           apiKey: sessionApiKey,
           nativelyApiKey,
           nvidiaApiKey,
+          groqApiKey,
           ollamaBaseUrl,
-          maxTokens: 1200,
+          maxTokens: structuredMaxTokens,
           timeoutMs: 120000,
         });
         emitAnswerTiming("live_coding_structured_code_completed", {
@@ -890,6 +953,7 @@ function App() {
           error: structuredResult.error,
           textChars: structuredResult.text.length,
         });
+        recordRawModelOutput("live_coding_structured_code", structuredResult);
         const structuredPayload = structuredResult.ok ? parseStructuredAnswerPayload(structuredResult.text) : null;
         if (structuredPayload?.kind === "coding") {
           result = structuredResult;
@@ -919,8 +983,9 @@ function App() {
           apiKey: sessionApiKey,
           nativelyApiKey,
           nvidiaApiKey,
+          groqApiKey,
           ollamaBaseUrl,
-          maxTokens: 1200,
+          maxTokens: structuredMaxTokens,
           timeoutMs: 120000,
         });
         emitAnswerTiming("live_coding_completeness_retry_completed", {
@@ -929,19 +994,25 @@ function App() {
           error: retryResult.error,
           textChars: retryResult.text.length,
         });
+        recordRawModelOutput("live_coding_completeness_retry", retryResult);
         if (retryResult.ok) {
           result = retryResult;
           parsedStructured = parseStructuredAnswerPayload(result.text);
         }
       }
-      if (
-        result.ok
-        && contextForAnswer.activeMode === "live_coding"
-        && violatesVisibleCodeContinuity(parsedStructured, builtPrompt.user)
-      ) {
+      if (result.ok && contextForAnswer.activeMode === "live_coding") {
+        const visibleCodeSymbols = extractVisibleCodeSymbols(builtPrompt.user);
+        const visibleCodeContinuityViolated = violatesVisibleCodeContinuity(parsedStructured, builtPrompt.user);
+        emitAnswerTiming("live_coding_visible_code_continuity_checked", {
+          parsedStructured: Boolean(parsedStructured),
+          visibleCodeSymbols,
+          violated: visibleCodeContinuityViolated,
+        });
+        if (visibleCodeContinuityViolated) {
         const error = "El modelo cambió la firma Python visible después del reintento.";
         emitAnswerTiming("live_coding_visible_code_continuity_failed", {
           parsedStructured: Boolean(parsedStructured),
+          visibleCodeSymbols,
         });
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
           requestId,
@@ -957,6 +1028,7 @@ function App() {
           error,
         };
         parsedStructured = null;
+        }
       }
       emitAnswerTiming("parse_completed", {
         parsedStructured: Boolean(parsedStructured),
@@ -1103,7 +1175,7 @@ function App() {
         isGeneratingRef.current = false;
       }
     }
-  }, [appendAssistantTranscriptLine, context, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, providerLabel, question, sessionApiKey]);
+  }, [appendAssistantTranscriptLine, context, groqApiKey, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, providerLabel, question, sessionApiKey]);
 
   const cancelAnswer = React.useCallback(async () => {
     const requestId = activeAnswerRequestIdRef.current;
@@ -1138,6 +1210,7 @@ function App() {
         apiKey: sessionApiKey,
         nativelyApiKey,
         nvidiaApiKey,
+        groqApiKey,
         ollamaBaseUrl,
         maxTokens: 24,
         timeoutMs: 90000,
@@ -1161,7 +1234,7 @@ function App() {
       if (!options.silent) setLiveAssistStatus("Listening");
       return false;
     }
-  }, [context, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, providerLabel, sessionApiKey]);
+  }, [context, groqApiKey, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, providerLabel, sessionApiKey]);
 
   React.useEffect(() => {
     if (!settingsLoaded || !credentialStatusLoaded) {
@@ -1173,12 +1246,18 @@ function App() {
       });
       return;
     }
-    if (modelProvider === "mock" || modelProvider === "ollama") {
+    if (modelProvider === "mock" || modelProvider === "ollama" || modelProvider === "groq" || modelProvider === "openai") {
       warmedAnswerModelKeyRef.current = selectedAnswerModelKey;
       setAnswerWarmupHealth({
         status: "ready",
         label: `${providerLabel} ready`,
-        detail: modelProvider === "mock" ? "Demo provider does not need warmup" : "Local provider does not need remote warmup",
+        detail: modelProvider === "mock"
+          ? "Demo provider does not need warmup"
+          : modelProvider === "groq"
+            ? "Groq warmup skipped to preserve free-tier TPM"
+            : modelProvider === "openai"
+              ? "OpenAI warmup skipped to avoid extra token spend"
+            : "Local provider does not need remote warmup",
         updatedAt: Date.now(),
       });
       return;
@@ -1224,10 +1303,13 @@ function App() {
     credentialStatusLoaded,
     hasEnvNativelyKey,
     hasEnvNvidiaKey,
+    hasEnvGroqKey,
     hasOpenAITranscriptionKey,
     hasNvidiaAnswerKey,
+    hasGroqAnswerKey,
     hasStoredNativelyKey,
     hasStoredNvidiaKey,
+    hasStoredGroqKey,
     modelName,
     modelProvider,
     nativelyApiKey,
@@ -2715,6 +2797,33 @@ function App() {
     }
   }, [modelName]);
 
+  const refreshGroqModels = React.useCallback(async (options: { selectFirst?: boolean } = {}) => {
+    if (!window.callpilotDesktop?.listGroqModels) {
+      setGroqStatus("Groq model detection requires the desktop app");
+      return;
+    }
+    setGroqStatus("Checking Groq models...");
+    const result = await window.callpilotDesktop.listGroqModels();
+    if (!result.ok) {
+      setGroqModels([]);
+      setGroqStatus(`Could not list Groq models: ${result.error ?? "unknown error"}`);
+      return;
+    }
+
+    const names = Array.from(new Set(result.models.map((model) => model.name).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    setGroqModels(names);
+    if (names.length === 0) {
+      setGroqStatus("Groq responded, but no models were returned");
+      return;
+    }
+
+    setGroqStatus(`${names.length} Groq model${names.length === 1 ? "" : "s"} available`);
+    if (options.selectFirst && !names.includes(modelName)) {
+      const preferred = GROQ_MODEL_PRESETS.find((preset) => names.includes(preset)) ?? names[0];
+      setModelName(preferred ?? modelName);
+    }
+  }, [modelName]);
+
   const runAutoChecks = React.useCallback(async () => {
     setAutoCheckStatus("Running checks...");
     const checks: AutoCheck[] = [];
@@ -2756,6 +2865,7 @@ function App() {
     const hasNativelyKey = Boolean(credential?.hasNativelyKey || nativelyApiKey.trim());
     const hasDeepgramKey = Boolean(credential?.hasDeepgramKey || deepgramApiKey.trim());
     const hasNvidiaKey = Boolean(credential?.hasNvidiaKey || nvidiaApiKey.trim());
+    const hasGroqKey = Boolean(credential?.hasGroqKey || groqApiKey.trim());
     if (credential) {
       applyCredentialStatus(credential);
       setCredentialMessage(credential.encryptionAvailable ? "Encrypted key storage ready" : "Encrypted key storage unavailable");
@@ -2785,6 +2895,13 @@ function App() {
       detail: hasNvidiaKey
         ? "NVIDIA key is available for answer generation."
         : "No NVIDIA key found. Save one or set NVIDIA_API_KEY/CALLPILOT_NVIDIA_API_KEY before launch.",
+    });
+    checks.push({
+      label: "Groq answers",
+      status: hasGroqKey ? "ok" : "warn",
+      detail: hasGroqKey
+        ? "Groq key is available for low-latency answer generation."
+        : "No Groq key found. Save one or set GROQ_API_KEY/CALLPILOT_GROQ_API_KEY before launch.",
     });
 
     if (window.callpilotDesktop?.listOllamaModels) {
@@ -2822,8 +2939,12 @@ function App() {
       setLiveTranscriptionProvider("browser");
     }
 
-    const recommendation = hasDeepgramKey
+    const recommendation = hasDeepgramKey && hasGroqKey
+      ? "Recommended: Deepgram realtime for transcription and Groq for low-latency live coding answers."
+      : hasDeepgramKey
       ? "Recommended: Deepgram realtime for transcription, with your selected answer provider for responses."
+      : hasGroqKey
+      ? "Recommended: Groq for low-latency answers, with Deepgram or Local Whisper for transcription."
       : hasNvidiaKey
       ? "Recommended: NVIDIA for answer tests, Deepgram or Local Whisper for transcription."
       : hasNativelyKey
@@ -2839,7 +2960,7 @@ function App() {
 
     setAutoChecks(checks);
     setAutoCheckStatus("Checks complete");
-  }, [applyCredentialStatus, browserSpeechRuntimeError, deepgramApiKey, liveAudioSource, liveTranscriptionProvider, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, sessionApiKey]);
+  }, [applyCredentialStatus, browserSpeechRuntimeError, deepgramApiKey, groqApiKey, liveAudioSource, liveTranscriptionProvider, modelName, modelProvider, nativelyApiKey, nvidiaApiKey, ollamaBaseUrl, sessionApiKey]);
 
   React.useEffect(() => {
     if (modelProvider === "ollama") {
@@ -2852,6 +2973,12 @@ function App() {
       void refreshNvidiaModels({ selectFirst: !modelName || modelName === "nvidia-default" });
     }
   }, [modelName, modelProvider, nvidiaModels.length, refreshNvidiaModels]);
+
+  React.useEffect(() => {
+    if (modelProvider === "groq" && groqModels.length === 0) {
+      void refreshGroqModels({ selectFirst: !modelName || modelName === "groq-default" });
+    }
+  }, [groqModels.length, modelName, modelProvider, refreshGroqModels]);
 
   React.useEffect(() => {
     if (autoCheckRanRef.current) return;
@@ -2876,6 +3003,12 @@ function App() {
     }
     if (provider === "nvidia" && (modelName === "llama3.1" || modelName.startsWith("llama3.1:") || modelName === "default" || modelName === "nvidia-default" || modelName === "mock-local" || !modelName.trim())) {
       setModelName(NVIDIA_MODEL_PRESETS[0]);
+    }
+    if (provider === "groq") {
+      if (modelName === "llama3.1" || modelName.startsWith("llama3.1:") || modelName === "default" || modelName === "nvidia-default" || modelName === "groq-default" || modelName === "mock-local" || !modelName.trim() || NVIDIA_MODEL_PRESETS.includes(modelName)) {
+        setModelName(GROQ_MODEL_PRESETS[0]);
+      }
+      void refreshGroqModels({ selectFirst: false });
     }
   };
 
@@ -2960,26 +3093,10 @@ function App() {
     updateScreenContext(nextText);
     setDesktopStatus("Screenshot captured");
 
-    if ((modelProvider === "openai" || modelProvider === "nvidia") && window.callpilotDesktop?.analyzeScreenshot) {
-      setDesktopStatus("Analyzing screenshot...");
-      const analysis = await window.callpilotDesktop.analyzeScreenshot({
-        path: result.path,
-        provider: modelProvider,
-        modelName,
-        apiKey: sessionApiKey,
-        nvidiaApiKey,
-      });
-      if (analysis.ok && analysis.text) {
-        setLatencyRuns((current) => current.map((run) =>
-          run.id === latencyRun.id ? markLatencyStage(run, "transcription_or_vision_done") : run,
-        ));
-        updateScreenContext(`${analysis.text}\n\nScreenshot: ${result.path}`);
-        setDesktopStatus("Screenshot analyzed");
-      } else {
-        setDesktopStatus(`Screenshot captured, analysis failed: ${analysis.error ?? "unknown"}`);
-      }
-    }
-  }, [modelName, modelProvider, nvidiaApiKey, sessionApiKey]);
+    setLatencyRuns((current) => current.map((run) =>
+      run.id === latencyRun.id ? markLatencyStage(run, "transcription_or_vision_done") : run,
+    ));
+  }, []);
 
   const captureLocalOcr = React.useCallback(async () => {
     if (!window.callpilotDesktop?.captureScreenshot || !window.callpilotDesktop?.recognizeScreenText) {
@@ -3010,7 +3127,6 @@ function App() {
       run.id === latencyRun.id ? markLatencyStage(run, "transcription_or_vision_done") : run,
     ));
 
-    const localScreenContext = classifyScreenText(ocr.text);
     updateScreenContext([
       ocr.text,
       "",
@@ -3019,28 +3135,7 @@ function App() {
       result.displayName ? `Display: ${result.displayName}` : "",
     ].filter(Boolean).join("\n"));
     setDesktopStatus("Local OCR complete");
-
-    if (
-      (modelProvider === "openai" || modelProvider === "nvidia")
-      && window.callpilotDesktop?.analyzeScreenshot
-      && (localScreenContext.kind === "coding_problem" || localScreenContext.kind === "code_editor")
-    ) {
-      setDesktopStatus("Coding screen detected; analyzing screenshot with vision...");
-      const analysis = await window.callpilotDesktop.analyzeScreenshot({
-        path: result.path,
-        provider: modelProvider,
-        modelName,
-        apiKey: sessionApiKey,
-        nvidiaApiKey,
-      });
-      if (analysis.ok && analysis.text) {
-        updateScreenContext(`${analysis.text}\n\nScreenshot: ${result.path}`);
-        setDesktopStatus("Coding screenshot analyzed with vision");
-      } else {
-        setDesktopStatus(`Coding screen detected, vision analysis failed: ${analysis.error ?? "unknown"}`);
-      }
-    }
-  }, [modelName, modelProvider, nvidiaApiKey, preferredLanguage, sessionApiKey]);
+  }, [preferredLanguage]);
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onShortcut((action) => {
@@ -3337,6 +3432,31 @@ function App() {
     setCredentialMessage(status.ok ? "Stored NVIDIA key cleared" : `Could not clear NVIDIA key: ${status.error ?? "unknown"}`);
   };
 
+  const saveGroqSessionKey = async () => {
+    if (!window.callpilotDesktop?.saveGroqKey) {
+      setCredentialMessage("Groq key storage requires desktop mode");
+      return;
+    }
+    const status = await window.callpilotDesktop.saveGroqKey(groqApiKey);
+    applyCredentialStatus(status);
+    setCredentialMessage(status.ok ? "Groq key saved encrypted on this device" : `Could not save Groq key: ${status.error ?? "unknown"}`);
+    if (status.ok) {
+      setGroqApiKey("");
+      setModelProvider("groq");
+      if (!modelName || modelName === "mock-local" || modelName === "default" || modelName === "groq-default" || modelName === "llama3.1" || modelName.startsWith("llama3.1:") || NVIDIA_MODEL_PRESETS.includes(modelName)) {
+        setModelName(GROQ_MODEL_PRESETS[0]);
+      }
+      setLiveAssistStatus("Answer engine switched to Groq");
+    }
+  };
+
+  const clearStoredGroqKey = async () => {
+    if (!window.callpilotDesktop?.clearGroqKey) return;
+    const status = await window.callpilotDesktop.clearGroqKey();
+    applyCredentialStatus(status);
+    setCredentialMessage(status.ok ? "Stored Groq key cleared" : `Could not clear Groq key: ${status.error ?? "unknown"}`);
+  };
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -3606,6 +3726,7 @@ function App() {
                 <select value={modelProvider} onChange={(event) => updateModelProvider(event.target.value as ModelProvider)}>
                   <option value="mock">Demo</option>
                   <option value="natively">Natively</option>
+                  <option value="groq">Groq</option>
                   <option value="nvidia">NVIDIA</option>
                   <option value="openai">OpenAI</option>
                   <option value="ollama">Ollama local</option>
@@ -3613,7 +3734,7 @@ function App() {
               </label>
               <label>
                 Model
-                <small>{modelProvider === "ollama" ? "Choose one of your installed local Ollama models." : modelProvider === "natively" ? "Natively answer model or default if your account chooses it." : modelProvider === "nvidia" ? "NVIDIA NIM model name. Pick a preset or paste a model id from build.nvidia.com." : "The model that writes the answer."}</small>
+                <small>{modelProvider === "ollama" ? "Choose one of your installed local Ollama models." : modelProvider === "natively" ? "Natively answer model or default if your account chooses it." : modelProvider === "nvidia" ? "NVIDIA NIM model name. Pick a preset or paste a model id from build.nvidia.com." : modelProvider === "groq" ? "Groq model name. Start with llama-3.3-70b-versatile for low-latency live coding." : "The model that writes the answer."}</small>
                 {modelProvider === "ollama" && ollamaModels.length > 0 ? (
                   <select value={modelName} onChange={(event) => setModelName(event.target.value)}>
                     {ollamaModels.map((name) => <option key={name} value={name}>{name}</option>)}
@@ -3630,6 +3751,19 @@ function App() {
                       <option value="custom">Custom model id</option>
                     </select>
                     <input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={NVIDIA_MODEL_PRESETS[0]} />
+                  </>
+                ) : modelProvider === "groq" ? (
+                  <>
+                    <select
+                      value={(groqModels.length > 0 ? groqModels : GROQ_MODEL_PRESETS).includes(modelName) ? modelName : "custom"}
+                      onChange={(event) => {
+                        if (event.target.value !== "custom") setModelName(event.target.value);
+                      }}
+                    >
+                      {(groqModels.length > 0 ? groqModels : GROQ_MODEL_PRESETS).map((name) => <option key={name} value={name}>{name}</option>)}
+                      <option value="custom">Custom model id</option>
+                    </select>
+                    <input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={GROQ_MODEL_PRESETS[0]} />
                   </>
                 ) : (
                   <input value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={modelProvider === "ollama" ? "Example: llama3.1:8b" : modelProvider === "natively" ? "default" : undefined} />
@@ -3655,6 +3789,15 @@ function App() {
                 <div className="setting-note">
                   <span>{nvidiaStatus}</span>
                   <button type="button" onClick={() => refreshNvidiaModels({ selectFirst: true })}>
+                    <RefreshCw size={16} />
+                    Detect models
+                  </button>
+                </div>
+              )}
+              {modelProvider === "groq" && (
+                <div className="setting-note">
+                  <span>{groqStatus}</span>
+                  <button type="button" onClick={() => refreshGroqModels({ selectFirst: true })}>
                     <RefreshCw size={16} />
                     Detect models
                   </button>
@@ -3892,6 +4035,29 @@ function App() {
               </div>
               <span className={hasNvidiaAnswerKey ? "helper good" : "helper"}>
                 {hasStoredNvidiaKey ? "Stored NVIDIA key available" : hasEnvNvidiaKey ? "NVIDIA key loaded from .env" : hasNvidiaAnswerKey ? "NVIDIA key available for answers" : credentialMessage || "No NVIDIA key found"}
+              </span>
+            </section>
+          )}
+
+          {modelProvider === "groq" && (
+            <section className="panel">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">Groq key</span>
+                  <h2>Low-latency answer engine</h2>
+                </div>
+              </div>
+              <label>
+                Groq API key
+                <small>Used only for Groq answer generation. You can also launch with GROQ_API_KEY or CALLPILOT_GROQ_API_KEY.</small>
+                <input type="password" value={groqApiKey} onChange={(event) => setGroqApiKey(event.target.value)} placeholder="gsk_..." />
+              </label>
+              <div className="button-row">
+                <button onClick={saveGroqSessionKey} disabled={!groqApiKey.trim()}>Save Groq key</button>
+                <button onClick={clearStoredGroqKey} disabled={!hasStoredGroqKey}>Clear Groq key</button>
+              </div>
+              <span className={hasGroqAnswerKey ? "helper good" : "helper"}>
+                {hasStoredGroqKey ? "Stored Groq key available" : hasEnvGroqKey ? "Groq key loaded from .env" : hasGroqAnswerKey ? "Groq key available for answers" : credentialMessage || "No Groq key found"}
               </span>
             </section>
           )}
