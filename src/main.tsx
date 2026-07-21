@@ -233,7 +233,7 @@ function App() {
   const [nvidiaModels, setNvidiaModels] = React.useState<string[]>([]);
   const [nvidiaStatus, setNvidiaStatus] = React.useState("NVIDIA models not checked yet");
   const [transcriptionModelName, setTranscriptionModelName] = React.useState<string>(DEFAULT_TRANSCRIPTION_MODEL);
-  const [liveTranscriptionProvider, setLiveTranscriptionProvider] = React.useState<LiveTranscriptionProvider>("local");
+  const [liveTranscriptionProvider, setLiveTranscriptionProvider] = React.useState<LiveTranscriptionProvider>("deepgram");
   const [liveLatencyPreset, setLiveLatencyPreset] = React.useState<LiveLatencyPreset>("balanced");
   const [liveAudioSource, setLiveAudioSource] = React.useState<LiveAudioSource>("both");
   const [autoAnswerCooldownMs, setAutoAnswerCooldownMs] = React.useState(12000);
@@ -530,10 +530,12 @@ function App() {
         setModelName(settings.modelName);
         setOllamaBaseUrl(settings.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL);
         setTranscriptionModelName(settings.transcriptionModelName ?? DEFAULT_TRANSCRIPTION_MODEL);
-        const savedProvider = settings.liveTranscriptionProvider ?? "local";
+        const savedProvider = settings.liveTranscriptionProvider === "natively"
+          ? "deepgram"
+          : settings.liveTranscriptionProvider ?? "deepgram";
         const savedAudioSource = settings.liveAudioSource ?? "both";
         const shouldUpgradeOldLiveDefaults = savedProvider === "browser" && savedAudioSource === "microphone";
-        setLiveTranscriptionProvider(shouldUpgradeOldLiveDefaults ? "local" : savedProvider);
+        setLiveTranscriptionProvider(shouldUpgradeOldLiveDefaults ? "deepgram" : savedProvider);
         setLiveLatencyPreset(settings.liveLatencyPreset ?? "balanced");
         setLiveAudioSource(shouldUpgradeOldLiveDefaults ? "both" : savedAudioSource);
         setAutoAnswerCooldownMs(settings.autoAnswerCooldownMs ?? 12000);
@@ -578,37 +580,23 @@ function App() {
 
   React.useEffect(() => {
     if (!hasOpenAITranscriptionKey && liveTranscriptionProvider === "openai_realtime") {
-      setLiveTranscriptionProvider("browser");
+      setLiveTranscriptionProvider("deepgram");
       setLiveAssistStatus("OpenAI live chunks disabled because no OpenAI key is saved");
     }
   }, [hasOpenAITranscriptionKey, liveTranscriptionProvider]);
 
   React.useEffect(() => {
-    if (!hasNativelyTranscriptionKey && liveTranscriptionProvider === "natively") {
-      setLiveAssistStatus("Natively STT selected, but no Natively key is saved yet");
+    if (liveTranscriptionProvider === "natively") {
+      setLiveTranscriptionProvider("deepgram");
+      setLiveAssistStatus("Natively STT is disabled; switched to Deepgram");
     }
-  }, [hasNativelyTranscriptionKey, liveTranscriptionProvider]);
+  }, [liveTranscriptionProvider]);
 
   React.useEffect(() => {
     if (!hasDeepgramTranscriptionKey && liveTranscriptionProvider === "deepgram") {
       setLiveAssistStatus("Deepgram selected, but no Deepgram key is saved yet");
     }
   }, [hasDeepgramTranscriptionKey, liveTranscriptionProvider]);
-
-  React.useEffect(() => {
-    if (
-      liveTranscriptionProvider === "natively"
-      && hasNativelyTranscriptionKey
-      && !answerProviderTouchedRef.current
-      && (modelProvider === "ollama" || modelProvider === "mock")
-    ) {
-      setModelProvider("natively");
-      if (!modelName || modelName === "llama3.1" || modelName.startsWith("llama3.1:") || modelName === "mock-local") {
-        setModelName("default");
-      }
-      setLiveAssistStatus("Answer engine switched to Natively for this STT test");
-    }
-  }, [hasNativelyTranscriptionKey, liveTranscriptionProvider, modelName, modelProvider]);
 
   React.useEffect(() => () => {
     liveContinueRef.current = false;
@@ -767,7 +755,7 @@ function App() {
     if (builtPrompt.debug.answerContextTrace) {
       void window.callpilotDesktop?.recordSessionEvent?.("answer_context_built", { ...builtPrompt.debug.answerContextTrace });
     }
-    const liveSpokenOutput = modelProvider === "openai" || modelProvider === "nvidia";
+    const liveSpokenOutput = context.activeMode !== "live_coding" && (modelProvider === "openai" || modelProvider === "nvidia");
     emitAnswerTiming("prompt_ready", {
       promptChars: builtPrompt.debug.approximateChars,
       liveSpokenOutput,
@@ -887,7 +875,6 @@ function App() {
       if (
         result.ok
         && context.activeMode === "live_coding"
-        && !liveSpokenOutput
         && shouldRetryLiveCodingCompleteness(parsedStructured, builtPrompt.user, result.text)
       ) {
         emitAnswerTiming("live_coding_completeness_retry_started");
@@ -897,7 +884,7 @@ function App() {
           modelName,
           requestId,
           structuredOutput: true,
-          liveSpokenOutput,
+          liveSpokenOutput: false,
           prompt: retryPrompt,
           apiKey: sessionApiKey,
           nativelyApiKey,
@@ -2126,9 +2113,9 @@ function App() {
       return false;
     }
     if (!hasOpenAITranscriptionKey) {
-      setDesktopStatus("OpenAI live chunks need an OpenAI API key. Switch Live transcription to Browser live for keyless mode.");
+      setDesktopStatus("OpenAI live chunks need an OpenAI API key. Switch Live transcription to Deepgram for realtime STT.");
       setLiveAssistStatus("No OpenAI key for live chunks");
-      setLiveTranscriptionProvider("browser");
+      setLiveTranscriptionProvider("deepgram");
       return false;
     }
     if (typeof MediaRecorder === "undefined") {
@@ -2333,8 +2320,8 @@ function App() {
     });
 
     if (liveTranscriptionProvider === "browser" && (liveAudioSource === "system" || liveAudioSource === "both")) {
-      setLiveTranscriptionProvider("local");
-      await startLocalWhisperListening("Browser live cannot read computer audio; using Local Whisper");
+      setLiveTranscriptionProvider("deepgram");
+      await startDeepgramListening();
       return;
     }
 
@@ -2343,7 +2330,8 @@ function App() {
       return;
     }
     if (liveTranscriptionProvider === "natively") {
-      await startNativelyListening();
+      setLiveTranscriptionProvider("deepgram");
+      await startDeepgramListening();
       return;
     }
     if (liveTranscriptionProvider === "deepgram") {
@@ -2358,9 +2346,9 @@ function App() {
 
     if (liveTranscriptionProvider === "browser" && browserSpeechRuntimeError) {
       setDesktopStatus(`Browser live STT is unavailable: ${browserSpeechRuntimeError}`);
-      setLiveAssistStatus("Trying Local Whisper instead of browser speech.");
-      setLiveTranscriptionProvider("local");
-      await startLocalWhisperListening(`Browser live unavailable (${browserSpeechRuntimeError}); using Local Whisper`);
+      setLiveAssistStatus("Trying Deepgram instead of browser speech.");
+      setLiveTranscriptionProvider("deepgram");
+      await startDeepgramListening();
       return;
     }
 
@@ -2376,9 +2364,9 @@ function App() {
       if (hasOpenAITranscriptionKey) {
         await startOpenAIChunkListening("Browser speech unavailable; using OpenAI chunks");
       } else {
-        setLiveAssistStatus("Browser live unavailable; using Local Whisper");
-        setLiveTranscriptionProvider("local");
-        await startLocalWhisperListening("Browser speech unavailable; using Local Whisper");
+        setLiveAssistStatus("Browser live unavailable; using Deepgram");
+        setLiveTranscriptionProvider("deepgram");
+        await startDeepgramListening();
       }
       return;
     }
@@ -2402,9 +2390,9 @@ function App() {
       if (hasOpenAITranscriptionKey && (reason === "network" || reason === "not-allowed" || reason === "service-not-allowed" || reason === "audio-capture")) {
         void startOpenAIChunkListening(`Browser speech failed (${reason}); using OpenAI chunks`);
       } else if (!hasOpenAITranscriptionKey) {
-        setLiveAssistStatus("Browser speech failed; using Local Whisper.");
-        setLiveTranscriptionProvider("local");
-        void startLocalWhisperListening(`Browser speech failed (${reason}); using Local Whisper`);
+        setLiveAssistStatus("Browser speech failed; using Deepgram.");
+        setLiveTranscriptionProvider("deepgram");
+        void startDeepgramListening();
       }
     };
     recognition.onend = () => {
@@ -2422,9 +2410,9 @@ function App() {
       if (hasOpenAITranscriptionKey) {
         await startOpenAIChunkListening("Browser speech failed at startup; using OpenAI chunks");
       } else {
-        setLiveAssistStatus("Browser speech failed; using Local Whisper.");
-        setLiveTranscriptionProvider("local");
-        await startLocalWhisperListening("Browser speech failed at startup; using Local Whisper");
+        setLiveAssistStatus("Browser speech failed; using Deepgram.");
+        setLiveTranscriptionProvider("deepgram");
+        await startDeepgramListening();
       }
     }
   };
@@ -3641,7 +3629,6 @@ function App() {
                   <option value="browser">Browser live</option>
                   <option value="openai_realtime" disabled={!hasOpenAITranscriptionKey}>OpenAI live chunks</option>
                   <option value="deepgram">Deepgram realtime</option>
-                  <option value="natively">Natively STT testing</option>
                   <option value="local">Local Whisper</option>
                 </select>
               </label>
@@ -3657,23 +3644,6 @@ function App() {
                   {hasStoredDeepgramKey ? "Stored Deepgram key available" : hasEnvDeepgramKey ? "Deepgram key loaded from environment" : "No Deepgram key found"}
                 </span>
               </div>
-              <label>
-                Natively API key
-                <small>Temporary testing key for improving transcription quality. Stored encrypted when desktop key storage is available.</small>
-                <input type="password" value={nativelyApiKey} onChange={(event) => setNativelyApiKey(event.target.value)} placeholder="Optional if NATIVELY_API_KEY is set before launch" />
-              </label>
-              <div className="button-row">
-                <button onClick={saveNativelySessionKey} disabled={!nativelyApiKey.trim()}>Save Natively key</button>
-                <button onClick={clearStoredNativelyKey} disabled={!hasStoredNativelyKey}>Clear Natively key</button>
-                <span className={hasNativelyTranscriptionKey ? "helper good" : "helper"}>
-                  {hasStoredNativelyKey ? "Stored Natively key available" : hasEnvNativelyKey ? "Natively key loaded from .env" : "No Natively key found"}
-                </span>
-              </div>
-              {liveTranscriptionProvider === "natively" && (
-                <div className="setting-note">
-                  <span>Natively uses PCM/WebSocket streaming for lower-latency transcription testing. Keep Local Whisper or OpenAI available as fallback while we compare quality.</span>
-                </div>
-              )}
               {liveTranscriptionProvider === "deepgram" && (
                 <div className="setting-note">
                   <span>Deepgram streams PCM over WebSocket with Nova-3, interim results, and English, Spanish, or multilingual recognition.</span>
@@ -3695,12 +3665,12 @@ function App() {
               )}
               {!hasOpenAITranscriptionKey && (
                 <div className="setting-note">
-                  <span>OpenAI live chunks is disabled because no OpenAI key is saved. Browser live can work without a key if this runtime supports speech recognition.</span>
+                  <span>OpenAI live chunks is disabled because no OpenAI key is saved. Deepgram realtime is the recommended streaming transcription provider.</span>
                 </div>
               )}
               {browserSpeechRuntimeError && (
                 <div className="setting-note">
-                  <span>Browser live failed with: {browserSpeechRuntimeError}. Use Local Whisper for keyless live transcription.</span>
+                  <span>Browser live failed with: {browserSpeechRuntimeError}. Use Deepgram realtime for streaming transcription.</span>
                   <button type="button" onClick={() => setBrowserSpeechRuntimeError("")}>
                     <RefreshCw size={16} />
                     Retry browser live

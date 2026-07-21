@@ -243,6 +243,7 @@ test("acceptance: Deepgram realtime STT uses the production live audio path", ()
   assert.match(app, /onDeepgramTranscript/);
   assert.match(app, /provider: "deepgram"/);
   assert.match(app, /<option value="deepgram">Deepgram realtime<\/option>/);
+  assert.doesNotMatch(app, /<option value="natively">Natively STT testing<\/option>/);
   assert.match(app, /saveDeepgramSessionKey/);
   assert.match(app, /hasDeepgramTranscriptionKey/);
 });

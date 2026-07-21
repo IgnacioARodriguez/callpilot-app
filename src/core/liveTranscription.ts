@@ -24,7 +24,7 @@ export interface LiveTranscriptionPlan {
 }
 
 export const DEFAULT_LIVE_TRANSCRIPTION_SETTINGS: LiveTranscriptionSettings = {
-  provider: "local",
+  provider: "deepgram",
   latencyPreset: "balanced",
   audioSource: "both",
   language: "auto",
@@ -33,6 +33,8 @@ export const DEFAULT_LIVE_TRANSCRIPTION_SETTINGS: LiveTranscriptionSettings = {
 };
 
 const providers = new Set<LiveTranscriptionProvider>(["browser", "openai_realtime", "natively", "deepgram", "local"]);
+const normalizeProvider = (provider: LiveTranscriptionProvider | undefined): LiveTranscriptionProvider =>
+  provider === "natively" ? "deepgram" : provider && providers.has(provider) ? provider : DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.provider;
 const presets = new Set<LiveLatencyPreset>(["fast", "balanced", "accurate"]);
 const audioSources = new Set<LiveAudioSource>(["microphone", "system", "both"]);
 const languages = new Set<PreferredLanguage>(["english", "spanish", "auto"]);
@@ -40,7 +42,7 @@ const languages = new Set<PreferredLanguage>(["english", "spanish", "auto"]);
 export const normalizeLiveTranscriptionSettings = (
   input: Partial<LiveTranscriptionSettings> = {},
 ): LiveTranscriptionSettings => ({
-  provider: input.provider && providers.has(input.provider) ? input.provider : DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.provider,
+  provider: normalizeProvider(input.provider),
   latencyPreset: input.latencyPreset && presets.has(input.latencyPreset) ? input.latencyPreset : DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.latencyPreset,
   audioSource: input.audioSource && audioSources.has(input.audioSource) ? input.audioSource : DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.audioSource,
   language: input.language && languages.has(input.language) ? input.language : DEFAULT_LIVE_TRANSCRIPTION_SETTINGS.language,

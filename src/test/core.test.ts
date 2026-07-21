@@ -59,6 +59,7 @@ import {
   buildLiveCodingCompletenessRetryPrompt,
   buildLiveCodingFollowUpPrompt,
   compactLiveSpokenAnswer,
+  extractVisibleCodeSymbols,
   reduceStealthState,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
@@ -66,6 +67,7 @@ import {
   resetStealthState,
   serializeSession,
   shouldRetryLiveCodingCompleteness,
+  violatesVisibleCodeContinuity,
   shouldAutoAnswer,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
@@ -318,6 +320,87 @@ test("live coding prompt treats visible code without a full statement as bounded
   assert.match(screenSection, /nombre del usuario/i);
   assert.match(prompt.system, /operate on that visible code with bounded assumptions/i);
   assert.match(prompt.system, /never invent a new unrelated practice problem/i);
+  assert.match(prompt.system, /smallest complete update to that code/i);
+  assert.match(prompt.user, /Preserve visible function, method, class, parameter, and variable names/i);
+});
+
+test("live coding retry detects solutions that rename visible starter code", () => {
+  const screenContext = classifyScreenText([
+    "def hello():",
+    "    return \"hello\"",
+    "debe retornar el nombre del usuario",
+  ].join("\n"));
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english", screenContext }),
+    "user_request: The candidate pressed Answer. task: Use visible coding context.",
+  );
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "initial_solution",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: ["The username is a predefined value."],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Return username", summary: "Return the username", language: "Python", functionSignature: "def get_username() -> str", constraints: [] },
+      solution: {
+        approachSteps: ["Return a predefined username."],
+        code: "def get_username() -> str:\n    # Return the selected username.\n    return \"example_user\"",
+        complexity: { time: "O(1)", space: "O(1)", rationale: "Single return value." },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "I would return the username directly.", currentStep: "Update return value" },
+      tests: [],
+      patch: { kind: "none", code: null },
+    },
+  }));
+
+  assert.deepEqual(extractVisibleCodeSymbols(prompt.user), ["hello"]);
+  assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), true);
+  assert.equal(shouldRetryLiveCodingCompleteness(structured, prompt.user, JSON.stringify(structured)), true);
+  assert.match(buildLiveCodingCompletenessRetryPrompt(prompt).user, /Do not create a parallel replacement function/i);
+});
+
+test("live coding continuity allows explicit rename requests", () => {
+  const screenContext = classifyScreenText("def hello():\n    return \"hello\"");
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english", screenContext }),
+    "interviewer: rename the function to get_username and return the username.",
+  );
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "follow_up_change",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Rename function", summary: "Rename function", language: "Python", functionSignature: "def get_username()", constraints: [] },
+      solution: {
+        approachSteps: ["Rename the function as requested."],
+        code: "def get_username():\n    # Return the selected username.\n    return \"example_user\"",
+        complexity: { time: "O(1)", space: "O(1)", rationale: "Single return value." },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "I renamed the function as requested.", currentStep: "Rename function" },
+      tests: [],
+      patch: { kind: "replace", code: "def get_username():\n    # Return the selected username.\n    return \"example_user\"" },
+    },
+  }));
+
+  assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), false);
 });
 
 test("prompt builder prioritizes local code issues from fresh live coding transcript", () => {
@@ -2569,7 +2652,7 @@ test("settings merge keeps defaults and normalizes blanks", () => {
   assert.equal(settings.transcriptionModelName, "gpt-4o-mini-transcribe");
   assert.equal(settings.defaultCodingLanguage, "Python");
   assert.equal(settings.activeMode, "system_design");
-  assert.equal(settings.liveTranscriptionProvider, "local");
+  assert.equal(settings.liveTranscriptionProvider, "deepgram");
   assert.equal(settings.liveLatencyPreset, "balanced");
   assert.equal(settings.liveAudioSource, "both");
 });
@@ -2588,6 +2671,19 @@ test("live transcription settings accept Deepgram realtime provider", () => {
   assert.equal(plan.engineLabel, "Deepgram realtime");
   assert.equal(plan.requiresDesktopBridge, true);
   assert.equal(plan.implemented, true);
+});
+
+test("live transcription settings migrate disabled Natively STT to Deepgram", () => {
+  const settings = normalizeLiveTranscriptionSettings({
+    provider: "natively",
+    latencyPreset: "fast",
+    audioSource: "both",
+    language: "auto",
+  });
+  const appSettings = mergeAppSettings({ liveTranscriptionProvider: "natively" });
+
+  assert.equal(settings.provider, "deepgram");
+  assert.equal(appSettings.liveTranscriptionProvider, "deepgram");
 });
 
 test("settings and sessions accept Natively as an answer provider", () => {

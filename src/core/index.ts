@@ -33,10 +33,12 @@ export {
 } from "./answerGrounding.ts";
 export {
   buildLiveCodingCompletenessRetryPrompt,
+  extractVisibleCodeSymbols,
   repairLiveCodingAnswerCoverage,
   repairSystemDesignAnswerCoverage,
   repairTechnicalDebuggingAnswerCoverage,
   shouldRetryLiveCodingCompleteness,
+  violatesVisibleCodeContinuity,
 } from "./answerRepair.ts";
 export {
   buildLiveCodingFollowUpPrompt,
