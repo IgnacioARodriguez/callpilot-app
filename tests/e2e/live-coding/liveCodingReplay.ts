@@ -59,6 +59,9 @@ type ScenarioExpected = {
   mustPreserve?: string[];
   mustNotContain: string[];
   semanticExpectations?: string[];
+  semanticChecks?: {
+    sortedWordFrequency?: boolean;
+  };
 };
 
 type LoadedScenarioExpected = {
@@ -68,6 +71,9 @@ type LoadedScenarioExpected = {
   mustPreserve: string[];
   mustNotContain: string[];
   semanticExpectations: string[];
+  semanticChecks: {
+    sortedWordFrequency: boolean;
+  };
 };
 
 type ScenarioStage = {
@@ -262,6 +268,9 @@ const readStageScenario = (): LoadedStageScenario | null => {
           mustPreserve: Array.isArray(expectedRules.mustPreserve) ? expectedRules.mustPreserve.map(String) : [],
           mustNotContain: Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [],
           semanticExpectations: Array.isArray(expectedRules.semanticExpectations) ? expectedRules.semanticExpectations.map(String) : [],
+          semanticChecks: {
+            sortedWordFrequency: Boolean(expectedRules.semanticChecks?.sortedWordFrequency),
+          },
         },
       };
     });
@@ -648,6 +657,16 @@ const transcriptPrompt = (scenarioId: string, stage: LoadedScenarioStage) => [
 
 const includesTerm = (text: string, term: string) => text.toLowerCase().includes(term.toLowerCase());
 
+const validatesSortedWordFrequency = (code: string) => {
+  const compact = code.replace(/\s+/g, " ");
+  const countDescThenWordAsc = /key\s*=\s*lambda\s+([A-Za-z_][\w]*)\s*:\s*\(\s*-\s*\1\s*\[\s*1\s*\]\s*,\s*\1\s*\[\s*0\s*\]\s*\)/.test(compact);
+  const helperTuple = /return\s+\(\s*-\s*[A-Za-z_][\w]*\s*\[\s*1\s*\]\s*,\s*[A-Za-z_][\w]*\s*\[\s*0\s*\]\s*\)/.test(compact);
+  const sortsItems = /\bsorted\s*\(/.test(code) || /\.sort\s*\(/.test(code);
+  return sortsItems
+    && /\.items\s*\(\s*\)/.test(code)
+    && (countDescThenWordAsc || helperTuple);
+};
+
 const validateScenarioStageAnswer = (
   scenarioId: string,
   stage: LoadedScenarioStage,
@@ -675,6 +694,9 @@ const validateScenarioStageAnswer = (
   }
   for (const term of stage.expectedRules.mustNotContain) {
     if (includesTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
+  }
+  if (stage.expectedRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
+    failures.push("code does not sort word frequencies by descending count and ascending word");
   }
   return {
     ok: failures.length === 0,

@@ -2,10 +2,7 @@
   "expectedFunction": "count_words",
   "mustContain": [
     "def count_words(sentence):",
-    "counts",
-    "sorted",
-    "-item[1]",
-    "item[0]"
+    "counts"
   ],
   "mustPreserve": [
     "def count_words(sentence):",
@@ -27,5 +24,8 @@
     "Debe preservar la puntuacion porque el interviewer lo aclaro.",
     "Debe usar el screenshot actual como fuente de verdad.",
     "No debe volver al contrato inicial que devolvia un diccionario."
-  ]
+  ],
+  "semanticChecks": {
+    "sortedWordFrequency": true
+  }
 }
