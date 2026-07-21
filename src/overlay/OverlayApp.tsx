@@ -464,7 +464,7 @@ export default function OverlayApp() {
         setActivity({ state: "idle", label: "Restart app", updatedAt: Date.now() });
         return;
       }
-      const result = await window.callpilotDesktop.requestAnswer();
+      const result = await window.callpilotDesktop.requestAnswer({ audience: "chat" });
       if (!result.ok) {
         setActivity({ state: "idle", label: "Request failed", updatedAt: Date.now() });
       }

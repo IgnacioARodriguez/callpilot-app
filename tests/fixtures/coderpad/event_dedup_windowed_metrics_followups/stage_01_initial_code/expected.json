@@ -2,10 +2,10 @@
   "conversationAssist": {
     "maxWords": 130,
     "mustContainGroups": [
-      ["simple", "first version", "start"],
-      ["split", "parse", "pipe"],
-      ["seen_ids", "seen", "duplicate", "dedupe"],
-      ["counts", "count", "event_type"]
+      ["simple", "basic", "basica", "básica", "first version", "start", "comenzar", "empezar", "punto de partida"],
+      ["split", "parse", "pipe", "separar", "extraer", "dividir", "dividiendola", "dividiéndola", "descompon", "proces", "lines", "lineas", "líneas"],
+      ["seen_ids", "seen", "vistos", "conjunto", "duplicate", "duplicado", "dedupe"],
+      ["counts", "count", "contar", "conteo", "event_type"]
     ]
   },
   "codingWorkspace": {

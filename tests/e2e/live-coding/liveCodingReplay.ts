@@ -1005,36 +1005,40 @@ const validateScenarioStageAnswer = (
   const rendered = answerRun.renderedText.trim();
   const conversationAssist = answerRun.conversationAssistText.trim();
   const failures: string[] = [];
+  const expectsCoding = (stage.answerAction ?? "both") !== "chat";
   if (!answerRun.requestResult.ok) failures.push(`request was rejected: ${answerRun.requestResult.error || "unknown"}`);
   if (!answerRun.completed) failures.push("answer did not complete");
-  if (!rendered) failures.push("rendered answer is empty");
-  if (answerRun.structured?.kind !== "coding") failures.push("structured answer is not coding");
-  if (!code.trim()) failures.push("extracted solution code is empty");
-  if (codingRules.expectedFunction && !new RegExp(`\\bdef\\s+${codingRules.expectedFunction}\\s*\\(`).test(code)) {
-    failures.push(`code does not preserve function ${codingRules.expectedFunction}`);
+  if (expectsCoding) {
+    if (!rendered) failures.push("rendered answer is empty");
+    if (answerRun.structured?.kind !== "coding") failures.push("structured answer is not coding");
+    if (!code.trim()) failures.push("extracted solution code is empty");
+    if (codingRules.expectedFunction && !new RegExp(`\\bdef\\s+${codingRules.expectedFunction}\\s*\\(`).test(code)) {
+      failures.push(`code does not preserve function ${codingRules.expectedFunction}`);
+    }
+    for (const term of codingRules.mustContain) {
+      if (!includesTerm(code, term)) failures.push(`code missing required term: ${term}`);
+    }
+    if (codingRules.mustContainAny.length > 0 && !codingRules.mustContainAny.some((term) => includesTerm(code, term))) {
+      failures.push(`code missing any required term: ${codingRules.mustContainAny.join(", ")}`);
+    }
+    for (const term of codingRules.mustPreserve) {
+      if (!includesTerm(code, term)) failures.push(`code does not preserve required term: ${term}`);
+    }
+    for (const term of codingRules.mustNotContain) {
+      if (includesTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
+    }
+    if (codingRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
+      failures.push("code does not sort word frequencies by descending count and ascending word");
+    }
+    if (codingRules.semanticChecks.sortedEventMetrics && !validatesSortedEventMetrics(code)) {
+      failures.push("code does not sort event metrics by descending count and ascending event type");
+    }
+    if (codingRules.semanticChecks.usesDequeWindow && !validatesDequeWindow(code)) {
+      failures.push("code does not use deque/popleft while keeping seen_ids synchronized");
+    }
   }
-  for (const term of codingRules.mustContain) {
-    if (!includesTerm(code, term)) failures.push(`code missing required term: ${term}`);
-  }
-  if (codingRules.mustContainAny.length > 0 && !codingRules.mustContainAny.some((term) => includesTerm(code, term))) {
-    failures.push(`code missing any required term: ${codingRules.mustContainAny.join(", ")}`);
-  }
-  for (const term of codingRules.mustPreserve) {
-    if (!includesTerm(code, term)) failures.push(`code does not preserve required term: ${term}`);
-  }
-  for (const term of codingRules.mustNotContain) {
-    if (includesTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
-  }
-  if (codingRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
-    failures.push("code does not sort word frequencies by descending count and ascending word");
-  }
-  if (codingRules.semanticChecks.sortedEventMetrics && !validatesSortedEventMetrics(code)) {
-    failures.push("code does not sort event metrics by descending count and ascending event type");
-  }
-  if (codingRules.semanticChecks.usesDequeWindow && !validatesDequeWindow(code)) {
-    failures.push("code does not use deque/popleft while keeping seen_ids synchronized");
-  }
-  if (conversationRules) {
+  const expectsConversation = (stage.answerAction ?? "both") !== "coding";
+  if (conversationRules && expectsConversation) {
     if (!conversationAssist) failures.push("conversation assist is empty");
     if (!answerRun.conversationAssistRequestId) failures.push("conversation assist request id was not captured");
     if (conversationAssist && wordCount(conversationAssist) > conversationRules.maxWords) {
@@ -1128,13 +1132,19 @@ const resolveCasePaths = (replayCase: ReplayCase) => {
   };
 };
 
-const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, label: string, questionOverride = ""): Promise<AnswerRun> => {
+const requestAnswer = async (
+  mainClient: CdpClient,
+  eventClient: CdpClient,
+  label: string,
+  questionOverride = "",
+  audience: "chat" | "coding" | "both" = "both",
+): Promise<AnswerRun> => {
   const actionTimings: Record<string, number> = {};
   await timed(actionTimings, "install_event_capture_ms", () => installEventCapture(eventClient));
   await sleep(150);
   const started = Date.now();
   const requestResult = await timed(actionTimings, "request_answer_ipc_ms", () =>
-    evaluate<{ ok: boolean; requestId?: string; error?: string }>(mainClient, `window.callpilotDesktop.requestAnswer(${JSON.stringify(questionOverride)})`));
+    evaluate<{ ok: boolean; requestId?: string; error?: string }>(mainClient, `window.callpilotDesktop.requestAnswer(${JSON.stringify({ questionOverride, audience })})`));
   const expectedRequestId = requestResult.requestId;
   const events = await timed(actionTimings, "wait_for_terminal_answer_event_ms", () =>
     evaluate<Array<{ type: string; at: number; payload: any }>>(eventClient, `new Promise((resolve) => {
@@ -1326,7 +1336,13 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath));
     }
     const eventClient = await timed(stageTimings, "open_session_event_client_ms", () => getSessionEventClient());
-    const answerRun = await requestAnswer(client, eventClient, stage.id, transcriptPrompt(scenario.id, stage));
+    const answerRun = await requestAnswer(
+      client,
+      eventClient,
+      stage.id,
+      transcriptPrompt(scenario.id, stage),
+      stage.answerAction ?? "both",
+    );
     eventClient.close();
     answerRun.actionTimings = { ...stageTimings, ...answerRun.actionTimings };
     const validation = validateScenarioStageAnswer(scenario.id, stage, answerRun);

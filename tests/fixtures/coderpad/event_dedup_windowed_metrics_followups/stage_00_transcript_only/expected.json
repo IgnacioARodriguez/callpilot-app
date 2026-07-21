@@ -2,11 +2,11 @@
   "conversationAssist": {
     "maxWords": 130,
     "mustContainGroups": [
-      ["parse", "split", "pipe"],
-      ["dedupe", "duplicate", "seen", "event_id", "id"],
-      ["count", "counts", "event_type", "type"],
-      ["not yet", "no window", "simple", "don't over-engineer", "later"]
-    ]
+      ["parse", "split", "pipe", "separar", "extraer"],
+      ["dedupe", "duplicate", "duplicado", "seen", "visto", "event_id", "id"],
+      ["count", "counts", "contar", "conteo", "cuenta", "event_type", "type", "tipo de evento"]
+    ],
+    "mustNotContain": ["deque", "popleft", "sorted", "sorting", "malformed"]
   },
   "codingWorkspace": {
     "expectedFunction": null,

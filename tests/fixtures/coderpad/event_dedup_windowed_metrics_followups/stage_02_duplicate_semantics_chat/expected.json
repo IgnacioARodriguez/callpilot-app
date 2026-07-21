@@ -2,10 +2,10 @@
   "conversationAssist": {
     "maxWords": 130,
     "mustContainGroups": [
-      ["first", "first event", "first occurrence"],
-      ["ignore", "skip", "duplicate"],
-      ["seen", "seen_ids", "set"],
-      ["no code", "no change", "current", "enough"]
+      ["first", "first event", "first occurrence", "primera", "primer"],
+      ["ignore", "skip", "omitir", "saltar", "ignor", "duplicate", "duplicado", "nuevo", "de nuevo"],
+      ["seen", "seen_ids", "set", "visto", "conjunto"],
+      ["no code", "no change", "current", "enough", "suficiente", "sin cambio", "sin necesidad", "actual"]
     ]
   },
   "codingWorkspace": {

@@ -2,9 +2,9 @@
   "conversationAssist": {
     "maxWords": 130,
     "mustContainGroups": [
-      ["bug", "wrong", "issue"],
-      ["before", "order", "move"],
-      ["duplicate", "seen", "skip"],
+      ["bug", "wrong", "issue", "error", "problema"],
+      ["before", "order", "move", "antes", "orden", "mover"],
+      ["duplicate", "duplicado", "seen", "visto", "skip", "omitir"],
       ["count", "counts"]
     ]
   },

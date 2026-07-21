@@ -4,8 +4,8 @@
     "mustContainGroups": [
       ["deque", "popleft"],
       ["test", "assert"],
-      ["duplicate", "expiry", "malformed", "sorting"],
-      ["O(1)", "complexity", "front removal"]
+      ["duplicate", "duplicado", "expiry", "expira", "malformed", "malformada", "sorting", "orden"],
+      ["O(1)", "complexity", "complejidad", "front removal"]
     ]
   },
   "codingWorkspace": {

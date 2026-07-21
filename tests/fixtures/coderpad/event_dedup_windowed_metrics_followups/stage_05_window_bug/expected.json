@@ -2,9 +2,9 @@
   "conversationAssist": {
     "maxWords": 130,
     "mustContainGroups": [
-      ["stale", "drift", "out of sync"],
-      ["seen_ids", "set"],
-      ["remove", "discard", "expire"],
+      ["stale", "drift", "out of sync", "coherencia", "coherente", "sincron", "consisten"],
+      ["seen_ids", "set", "conjunto", "vistos"],
+      ["remove", "discard", "expire", "elimin", "quit", "expirado", "relevante"],
       ["recent_events", "tuple", "old"]
     ]
   },

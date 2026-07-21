@@ -216,6 +216,9 @@ const liveCodingChatPromptInstructions = [
   "Use the transcript, previous assistant answers, and visible screen context to keep continuity.",
   "Write like a candidate thinking out loud: 'Voy a...', 'Empezaria por...', 'Ahora cambiaria...'.",
   "Explain the immediate plan and reasoning in simple terms, not a polished final report.",
+  "Name the central constraint or bug for the current step in the spoken preview, so the interviewer hears why the next code change is correct.",
+  "Start with the most natural simple version for the current request. Do not jump to optimal data structures, future follow-ups, sorting, parsing hardening, or windowing unless the interviewer has already asked for them.",
+  "When the transcript says a feature is for later, explicitly frame it as later and keep the current step intentionally simple.",
   "For follow-ups, explain how you would adapt the existing solution and what small issue or requirement changed.",
   "You may use compact inline flows like strip -> lower -> return, but do not include full code blocks.",
   "Do not return JSON, markdown fences, code blocks, schema fields, headings, formal sections, or complexity sections.",
@@ -2550,18 +2553,24 @@ ipcMain.handle("session:trace-event", (_event, type, payload = {}) => {
   writeActiveSessionTrace("active");
   return { ok: true };
 });
-ipcMain.handle("answer:request", (_event, questionOverride) => {
-  const override = typeof questionOverride === "string" ? questionOverride.trim() : "";
+ipcMain.handle("answer:request", (_event, input) => {
+  const override = typeof input === "string"
+    ? input.trim()
+    : typeof input?.questionOverride === "string" ? input.questionOverride.trim() : "";
+  const audience = input?.audience === "chat" || input?.audience === "coding" || input?.audience === "both"
+    ? input.audience
+    : undefined;
   appendTraceEvent("manual_answer_requested", {
     hasQuestionOverride: Boolean(override),
     questionOverride: override ? textSummary(override, 180) : undefined,
+    audience,
   });
   writeActiveSessionTrace("active");
   if (!mainWindow || mainWindow.webContents.isDestroyed()) {
     sendToOverlay("answer:manual-status", { ok: false, status: "main_window_unavailable" });
     return { ok: false, error: "main_window_unavailable" };
   }
-  mainWindow.webContents.send("answer:manual-request", override ? { questionOverride: override } : undefined);
+  mainWindow.webContents.send("answer:manual-request", override || audience ? { questionOverride: override, audience } : undefined);
   sendToOverlay("answer:manual-status", { ok: true, status: "sent_to_main" });
   return { ok: true };
 });

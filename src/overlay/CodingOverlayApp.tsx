@@ -208,7 +208,7 @@ export default function CodingOverlayApp() {
 
   const requestAnswer = async () => {
     setIsRequestingAnswer(true);
-    const result = await window.callpilotDesktop?.requestAnswer?.().catch(() => ({ ok: false }));
+    const result = await window.callpilotDesktop?.requestAnswer?.({ audience: "coding" }).catch(() => ({ ok: false }));
     if (!result?.ok) {
       setIsRequestingAnswer(false);
       setScreenStatus("Answer request failed");

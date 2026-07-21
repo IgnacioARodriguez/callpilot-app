@@ -2,10 +2,10 @@
   "conversationAssist": {
     "maxWords": 130,
     "mustContainGroups": [
-      ["malformed", "invalid", "bad line"],
-      ["ignore", "skip", "do not raise"],
-      ["sorted", "descending", "alphabet"],
-      ["keep", "preserve", "window", "existing"]
+      ["malformed", "malformada", "invalid", "invalida", "bad line"],
+      ["ignore", "skip", "omitir", "saltar", "do not raise", "no romper"],
+      ["sorted", "ordenar", "descending", "descendente", "alphabet", "alfabetico"],
+      ["keep", "preserve", "mantener", "window", "ventana", "existing", "existente"]
     ]
   },
   "codingWorkspace": {

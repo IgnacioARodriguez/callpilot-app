@@ -84,6 +84,7 @@ import CodingOverlayApp from "./overlay/CodingOverlayApp";
 import "./styles.css";
 
 type InterviewSetupId = "interview" | "live_coding";
+type AnswerAudience = "chat" | "coding" | "both";
 
 const buildLiveCodingChatPrompt = (prompt: BuiltPrompt): BuiltPrompt => ({
   ...prompt,
@@ -94,6 +95,9 @@ const buildLiveCodingChatPrompt = (prompt: BuiltPrompt): BuiltPrompt => ({
     "Use the transcript, previous assistant answers, and current screen as context, but do not repeat the full reasoning panel.",
     "Write like a candidate thinking out loud to the interviewer: 'Voy a...', 'Empezaria por...', 'Ahora cambiaria...'.",
     "Explain the immediate plan and reasoning in simple terms before the code is written.",
+    "Name the central constraint or bug for the current step in the spoken preview, so the interviewer hears why the next code change is correct.",
+    "Start with the most natural simple version for the current request. Do not jump to optimal data structures, future follow-ups, sorting, parsing hardening, or windowing unless the interviewer has already asked for them.",
+    "When the transcript says a feature is for later, explicitly frame it as later and keep the current step intentionally simple.",
     "For follow-ups, explain how you would adapt the existing solution, including the small tradeoff or bug being addressed.",
     "You may use a compact inline flow such as strip -> lower -> return, but do not include a full code block.",
     "Do not include JSON, schema fields, markdown headings, formal sections, complexity sections, or the full solution.",
@@ -795,7 +799,7 @@ function App() {
     transcript,
   ]);
 
-  const ask = React.useCallback(async (questionOverride?: string) => {
+  const ask = React.useCallback(async (questionOverride?: string, answerAudience: AnswerAudience = "both") => {
     if (isGeneratingRef.current || activeAnswerRequestIdRef.current) {
       setLiveAssistStatus("Already answering; repeated Answer press ignored");
       void window.callpilotDesktop?.recordSessionEvent?.("manual_answer_ignored", {
@@ -870,6 +874,7 @@ function App() {
     });
     emitAnswerTiming("context_snapshot_started");
     let builtPrompt = buildPrompt(contextForAnswer, effectiveQuestion);
+    const targetAudience: AnswerAudience = contextForAnswer.activeMode === "live_coding" ? answerAudience : "both";
     emitAnswerTiming("context_snapshot_completed", {
       promptChars: builtPrompt.debug.approximateChars,
       includedSections: builtPrompt.debug.includedSections.length,
@@ -913,7 +918,10 @@ function App() {
       });
     };
     const liveCodingChatRequestId = `${requestId}-chat`;
-    const liveCodingChatPromise = contextForAnswer.activeMode === "live_coding" && modelProvider !== "mock" && window.callpilotDesktop?.generateAnswer
+    const liveCodingChatPromise = contextForAnswer.activeMode === "live_coding"
+      && targetAudience !== "coding"
+      && modelProvider !== "mock"
+      && window.callpilotDesktop?.generateAnswer
       ? window.callpilotDesktop.generateAnswer({
         provider: "openai",
         modelName: "gpt-4o-mini",
@@ -945,6 +953,7 @@ function App() {
       liveSpokenOutput,
       structuredOutput: !liveSpokenOutput,
       liveCodingChat: Boolean(liveCodingChatPromise),
+      answerAudience: targetAudience,
     });
 
     try {
@@ -952,8 +961,8 @@ function App() {
       void window.callpilotDesktop?.publishAnswerStatus?.({
         requestId,
         status: "busy",
-        text: `Calling ${providerLabel}`,
-        audience: contextForAnswer.activeMode === "live_coding" ? "coding" : undefined,
+        text: targetAudience === "chat" ? "Preparing spoken preview" : `Calling ${providerLabel}`,
+        audience: contextForAnswer.activeMode === "live_coding" ? targetAudience === "chat" ? "chat" : "coding" : undefined,
         timestamp: Date.now(),
       });
       if (modelProvider === "mock") {
@@ -983,6 +992,29 @@ function App() {
           timestamp: Date.now(),
         });
         appendAssistantTranscriptLine(text, { publish: false });
+        return;
+      }
+
+      if (contextForAnswer.activeMode === "live_coding" && targetAudience === "chat") {
+        emitAnswerTiming("live_coding_chat_only_started");
+        const chatResult = await liveCodingChatPromise;
+        const text = chatResult?.ok ? chatResult.text.trim() : `Generation failed: ${chatResult?.error ?? "live_coding_chat_failed"}`;
+        if (activeAnswerRequestIdRef.current === requestId) {
+          setLiveAssistStatus(chatResult?.ok ? "Spoken preview ready" : "Spoken preview failed");
+          void window.callpilotDesktop?.publishAnswerStatus?.({
+            requestId,
+            status: chatResult?.ok ? "completed" : "failed",
+            text,
+            error: chatResult?.ok ? undefined : chatResult?.error,
+            audience: "chat",
+            timestamp: Date.now(),
+          });
+        }
+        emitAnswerTiming("live_coding_chat_only_completed", {
+          ok: Boolean(chatResult?.ok),
+          error: chatResult?.error,
+          textChars: text.length,
+        });
         return;
       }
 
@@ -1507,7 +1539,7 @@ function App() {
       problemContext: getManualAnswerPrompt(),
     });
     setFollowUpChange("");
-    void ask(prompt);
+    void ask(prompt, "coding");
   }, [activeMode, ask, currentCodingPayload, followUpChange, getManualAnswerPrompt]);
 
   const clearContext = React.useCallback(() => {
@@ -3290,7 +3322,7 @@ function App() {
           getManualAnswerPrompt(),
           "remote_action: Answer code was pressed. Prioritize the coding workspace: return or update the complete solution.code when a concrete code answer is appropriate, while keeping any chat narration short.",
         ].filter(Boolean).join("\n");
-        void ask(prompt);
+        void ask(prompt, "coding");
       }
       if (command.type === "stop_answer") void cancelAnswer();
       if (command.type === "reset_exercise") resetLiveCodingExercise();
@@ -3309,7 +3341,10 @@ function App() {
       const questionOverride = typeof payload?.questionOverride === "string" && payload.questionOverride.trim()
         ? payload.questionOverride.trim()
         : getManualAnswerPrompt();
-      void ask(questionOverride);
+      const audience = payload?.audience === "chat" || payload?.audience === "coding" || payload?.audience === "both"
+        ? payload.audience
+        : "both";
+      void ask(questionOverride, audience);
     });
     return () => dispose?.();
   }, [ask, getManualAnswerPrompt]);
