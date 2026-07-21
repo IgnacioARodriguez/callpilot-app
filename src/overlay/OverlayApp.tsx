@@ -509,18 +509,6 @@ export default function OverlayApp() {
             </span>
           )}
         </div>
-        <div className="cp-overlay__actions">
-          {activeAnswerRequestId && (
-            <button className="cp-stop-button" type="button" onClick={cancelAnswer}>
-              Stop
-            </button>
-          )}
-          <button className="cp-answer-button" type="button" onClick={requestAnswer} disabled={isRequestingAnswer}>
-            {isRequestingAnswer ? "..." : "Answer"}
-          </button>
-          <button type="button" onClick={resetSession}>Reset</button>
-          <button type="button" onClick={() => window.callpilotDesktop?.endSession?.()}>End</button>
-        </div>
       </div>
       <div className="cp-overlay__messages" ref={messagesRef}>
         {messages.length === 0 ? (

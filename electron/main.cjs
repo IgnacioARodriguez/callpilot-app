@@ -1906,7 +1906,10 @@ const remoteControlPage = () => `<!doctype html>
     body.waiting main { display: none; }
     body.waiting .no-session { display: grid; }
     .mode { color: #555555; font-size: 12px; text-align: right; }
-    .scroll-pad { border: 3px solid #111111; border-radius: 32px; background: #ffffff; color: #111111; display: grid; place-items: center; min-height: 360px; touch-action: none; user-select: none; }
+    .scroll-pads { display: grid; gap: 12px; min-height: 0; }
+    .scroll-pads--coding { grid-template-rows: repeat(2, minmax(150px, 1fr)); }
+    .scroll-pad { border: 3px solid #111111; border-radius: 32px; background: #ffffff; color: #111111; display: grid; place-items: center; min-height: 280px; touch-action: none; user-select: none; }
+    .scroll-pads--coding .scroll-pad { min-height: 150px; }
     .scroll-pad strong { font-size: 22px; }
     .buttons { display: grid; gap: 10px; }
     button { min-height: 58px; border: 3px solid #111111; border-radius: 9px; background: #ffffff; color: #111111; font: inherit; font-size: 20px; font-weight: 850; touch-action: manipulation; }
@@ -1923,29 +1926,38 @@ const remoteControlPage = () => `<!doctype html>
   <div class="no-session">No session running</div>
   <main>
     <div id="mode" class="mode"></div>
-    <section id="scrollPad" class="scroll-pad">
-      <strong>Scroll</strong>
-    </section>
+    <div id="scrollPads" class="scroll-pads">
+      <section class="scroll-pad" data-scroll-target="chat" data-technical-only>
+        <strong>Chat scroll</strong>
+      </section>
+      <section class="scroll-pad" data-scroll-target="code" data-live-only>
+        <strong>Code scroll</strong>
+      </section>
+      <section class="scroll-pad" data-scroll-target="reasoning" data-live-only>
+        <strong>Reasoning scroll</strong>
+      </section>
+    </div>
     <div class="buttons">
       <button class="button-answer" data-action="answer">Answer</button>
       <button class="button-answer-code" data-action="answer_code" data-live-only>Answer code</button>
       <button class="button-screenshot" data-action="screenshot" data-live-only>Screenshot</button>
       <button class="button-reset" data-action="reset_session">Reset</button>
       <button class="button-stop" data-action="stop_answer">Stop</button>
+      <button class="button-stop" data-action="end_session">End</button>
     </div>
   </main>
   <script>
     let currentMode = "technical_interview";
-    let pendingDelta = 0;
-    let lastTouchY = null;
+    const scrollState = new Map();
     const mode = document.getElementById("mode");
-    const scrollPad = document.getElementById("scrollPad");
+    const scrollPads = document.getElementById("scrollPads");
     const applyMode = (nextMode) => {
       const hasSession = nextMode === "live_coding" || nextMode === "technical_interview";
       document.body.classList.toggle("waiting", !hasSession);
       if (!hasSession) return;
       currentMode = nextMode === "live_coding" ? "live_coding" : "technical_interview";
       mode.textContent = currentMode === "live_coding" ? "Live Coding" : "Technical";
+      scrollPads.classList.toggle("scroll-pads--coding", currentMode === "live_coding");
       document.querySelectorAll("[data-live-only]").forEach((item) => item.classList.toggle("hidden", currentMode !== "live_coding"));
       document.querySelectorAll("[data-technical-only]").forEach((item) => item.classList.toggle("hidden", currentMode === "live_coding"));
     };
@@ -1969,32 +1981,43 @@ const remoteControlPage = () => `<!doctype html>
         });
       } catch {}
     };
-    const flushScroll = () => {
-      if (!pendingDelta) return;
-      const delta = Math.max(-1200, Math.min(1200, Math.round(pendingDelta)));
-      pendingDelta = 0;
-      void send({ type: "scroll", target: currentMode === "live_coding" ? "code" : "chat", delta });
+    const stateForPad = (pad) => {
+      if (!scrollState.has(pad)) scrollState.set(pad, { pendingDelta: 0, lastTouchY: null });
+      return scrollState.get(pad);
     };
-    window.setInterval(flushScroll, 120);
-    scrollPad.addEventListener("touchstart", (event) => {
-      lastTouchY = event.touches[0] ? event.touches[0].clientY : null;
-    }, { passive: false });
-    scrollPad.addEventListener("touchmove", (event) => {
-      event.preventDefault();
-      const y = event.touches[0] ? event.touches[0].clientY : null;
-      if (y === null || lastTouchY === null) return;
-      pendingDelta += lastTouchY - y;
-      lastTouchY = y;
-    }, { passive: false });
-    scrollPad.addEventListener("touchend", () => {
-      lastTouchY = null;
-      flushScroll();
+    const flushScroll = (pad) => {
+      const state = stateForPad(pad);
+      if (!state.pendingDelta) return;
+      const delta = Math.max(-1200, Math.min(1200, Math.round(state.pendingDelta)));
+      state.pendingDelta = 0;
+      void send({ type: "scroll", target: pad.dataset.scrollTarget, delta });
+    };
+    window.setInterval(() => {
+      document.querySelectorAll("[data-scroll-target]").forEach(flushScroll);
+    }, 120);
+    document.querySelectorAll("[data-scroll-target]").forEach((pad) => {
+      pad.addEventListener("touchstart", (event) => {
+        stateForPad(pad).lastTouchY = event.touches[0] ? event.touches[0].clientY : null;
+      }, { passive: false });
+      pad.addEventListener("touchmove", (event) => {
+        event.preventDefault();
+        const state = stateForPad(pad);
+        const y = event.touches[0] ? event.touches[0].clientY : null;
+        if (y === null || state.lastTouchY === null) return;
+        state.pendingDelta += state.lastTouchY - y;
+        state.lastTouchY = y;
+      }, { passive: false });
+      pad.addEventListener("touchend", () => {
+        const state = stateForPad(pad);
+        state.lastTouchY = null;
+        flushScroll(pad);
+      });
+      pad.addEventListener("wheel", (event) => {
+        event.preventDefault();
+        stateForPad(pad).pendingDelta += event.deltaY;
+        flushScroll(pad);
+      }, { passive: false });
     });
-    scrollPad.addEventListener("wheel", (event) => {
-      event.preventDefault();
-      pendingDelta += event.deltaY;
-      flushScroll();
-    }, { passive: false });
     document.querySelectorAll("[data-action]").forEach((button) => {
       button.addEventListener("click", () => send({ type: button.dataset.action }));
     });

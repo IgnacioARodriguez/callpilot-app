@@ -1,5 +1,4 @@
 import React from "react";
-import { Camera } from "lucide-react";
 import { classifyScreenText, normalizeOcrLanguage, ocrConfidenceLabel, type CodingAnswerPayload, type StructuredAnswerPayload } from "../core";
 
 interface StructuredAnswerEvent {
@@ -279,17 +278,7 @@ export default function CodingOverlayApp() {
           <strong>Live Coding</strong>
           <span>{screenStatus}</span>
         </div>
-        <div className="cp-coding__actions">
-          <button type="button" onClick={requestAnswer} disabled={isRequestingAnswer}>
-            {isRequestingAnswer ? "..." : "Answer"}
-          </button>
-          <button type="button" onClick={cancelAnswer} disabled={!activeAnswerRequestId}>Stop</button>
-          <button type="button" onClick={resetExercise}>Reset</button>
-          <button type="button" onClick={restartSession}>Restart</button>
-          <button type="button" onClick={captureScreenContext} disabled={isCapturingScreen} title="Capture screen for the next Answer">
-            <Camera size={14} />
-            {isCapturingScreen ? "..." : "Screenshot"}
-          </button>
+        <div className="cp-coding__actions cp-coding__actions--status">
           <span className={screenshotCount > 0 ? "cp-capture-count ready" : "cp-capture-count"}>
             {screenshotCount > 0 ? `${screenshotCount} ready` : "0 ready"}
           </span>
