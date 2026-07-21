@@ -25,11 +25,11 @@ body:has(.cp-coding),
 }
 
 :root {
-  --cp-overlay-bg: rgba(255, 255, 255, 0.46);
-  --cp-bubble-candidate: rgba(241, 239, 232, 0.68);
-  --cp-bubble-recruiter: rgba(245, 244, 239, 0.54);
-  --cp-bubble-assistant-bg: rgba(238, 237, 254, 0.58);
-  --cp-bubble-assistant-border: rgba(206, 203, 246, 0.68);
+  --cp-overlay-bg: rgba(255, 255, 255, 0.22);
+  --cp-bubble-candidate: rgba(241, 239, 232, 0.42);
+  --cp-bubble-recruiter: rgba(245, 244, 239, 0.34);
+  --cp-bubble-assistant-bg: rgba(238, 237, 254, 0.36);
+  --cp-bubble-assistant-border: rgba(206, 203, 246, 0.46);
   --cp-text: #17202a;
   --cp-text-muted: #5f5e5a;
   --cp-accent: #534ab7;
@@ -71,9 +71,9 @@ button:disabled {
 .cp-overlay {
   height: 100vh;
   background: var(--cp-overlay-bg);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: 16px;
   padding: 12px;
   overflow: hidden;
@@ -349,10 +349,10 @@ button:disabled {
 
 .cp-coding {
   height: 100vh;
-  background: rgba(248, 250, 252, 0.38);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.48);
+  background: rgba(248, 250, 252, 0.22);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.34);
   border-radius: 12px;
   color: #17202a;
   display: grid;
@@ -438,7 +438,7 @@ button:disabled {
   min-height: 0;
   border: 1px solid rgba(203, 213, 225, 0.68);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.26);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
@@ -446,12 +446,12 @@ button:disabled {
 
 .cp-code-panel {
   border-color: rgba(62, 68, 81, 0.82);
-  background: rgba(40, 44, 52, 0.68);
+  background: rgba(40, 44, 52, 0.48);
 }
 
 .cp-code-panel .cp-panel-title {
   border-bottom-color: rgba(62, 68, 81, 0.82);
-  background: rgba(33, 37, 43, 0.72);
+  background: rgba(33, 37, 43, 0.52);
 }
 
 .cp-code-panel .cp-panel-title strong {
@@ -486,7 +486,7 @@ button:disabled {
   margin: 0;
   overflow: auto;
   padding: 12px 0;
-  background: rgba(40, 44, 52, 0.68);
+  background: rgba(40, 44, 52, 0.48);
   color: #d7dae0;
   font-family: "Cascadia Code", "Fira Code", "SFMono-Regular", Consolas, monospace;
   font-size: 13px;
@@ -560,7 +560,7 @@ button:disabled {
   gap: 7px;
   padding: 18px;
   text-align: center;
-  background: rgba(40, 44, 52, 0.68);
+  background: rgba(40, 44, 52, 0.48);
   color: #abb2bf;
 }
 
@@ -588,7 +588,7 @@ button:disabled {
 .cp-mini-chat div {
   border: 1px solid rgba(217, 225, 234, 0.68);
   border-radius: 8px;
-  background: rgba(238, 237, 254, 0.44);
+  background: rgba(238, 237, 254, 0.32);
   padding: 10px;
 }
 

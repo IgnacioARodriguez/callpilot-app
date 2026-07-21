@@ -96,12 +96,15 @@ test("acceptance: overlay and streaming IPC channels are wired", () => {
   assert.doesNotMatch(codingOverlay, /starterCode/);
 });
 
-test("acceptance: session windows open side-by-side from a top-left margin", () => {
+test("acceptance: session windows open side-by-side at the bottom with compact height", () => {
   const main = read("electron/main.cjs");
 
   assert.match(main, /const sessionWindowBounds = \(\) =>/);
   assert.match(main, /const margin = 24/);
   assert.match(main, /const gap = 12/);
+  assert.match(main, /const preferredHeight = 410/);
+  assert.match(main, /Math\.floor\(\(workArea\.height - margin \* 2\) \* 0\.5\)/);
+  assert.match(main, /const y = workArea\.y \+ workArea\.height - margin - height/);
   assert.match(main, /coding: \{ x, y, width: codingWidth, height \}/);
   assert.match(main, /overlay: \{ x: x \+ codingWidth \+ gap, y, width: overlayWidth, height \}/);
   assert.match(main, /overlayWindow\.setBounds\(overlay\)/);

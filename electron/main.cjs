@@ -2282,7 +2282,7 @@ const createOverlayWindow = async () => {
   overlayWindow = new BrowserWindow({
     ...overlay,
     minWidth: 320,
-    minHeight: 260,
+    minHeight: 180,
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -2327,7 +2327,7 @@ const createCodingWindow = async () => {
   codingWindow = new BrowserWindow({
     ...coding,
     minWidth: 560,
-    minHeight: 360,
+    minHeight: 220,
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -2377,13 +2377,13 @@ const sessionWindowBounds = () => {
   const gap = 12;
   const preferredCodingWidth = 1180;
   const preferredOverlayWidth = 380;
-  const preferredHeight = 820;
+  const preferredHeight = 410;
   const availableWidth = Math.max(680, workArea.width - margin * 2);
   const overlayWidth = Math.max(300, Math.min(preferredOverlayWidth, Math.floor(availableWidth * 0.28)));
   const codingWidth = Math.max(360, Math.min(preferredCodingWidth, availableWidth - overlayWidth - gap));
-  const height = Math.max(360, Math.min(preferredHeight, workArea.height - margin * 2));
+  const height = Math.max(220, Math.min(preferredHeight, Math.floor((workArea.height - margin * 2) * 0.5)));
   const x = workArea.x + margin;
-  const y = workArea.y + margin;
+  const y = workArea.y + workArea.height - margin - height;
   return {
     coding: { x, y, width: codingWidth, height },
     overlay: { x: x + codingWidth + gap, y, width: overlayWidth, height },
