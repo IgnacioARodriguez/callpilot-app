@@ -75,6 +75,7 @@ import {
   type TranscriptSnapshot,
   type TurnAssemblerState,
 } from "./core";
+import type { RemoteControlStatus } from "./desktop";
 import OverlayApp from "./overlay/OverlayApp";
 import CodingOverlayApp from "./overlay/CodingOverlayApp";
 import "./styles.css";
@@ -274,6 +275,7 @@ function App() {
   const [sessionMessage, setSessionMessage] = React.useState("");
   const [desktopStatus, setDesktopStatus] = React.useState("Web preview");
   const [shortcutStatus, setShortcutStatus] = React.useState("Shortcuts unavailable in web preview");
+  const [remoteControlStatus, setRemoteControlStatus] = React.useState<RemoteControlStatus | null>(null);
   const [autoChecks, setAutoChecks] = React.useState<AutoCheck[]>([]);
   const [autoCheckStatus, setAutoCheckStatus] = React.useState("Checks not run yet");
   const [browserSpeechRuntimeError, setBrowserSpeechRuntimeError] = React.useState("");
@@ -3054,6 +3056,23 @@ function App() {
   }, [ask, captureScreenshot, clearContext, getManualAnswerPrompt]);
 
   React.useEffect(() => {
+    void window.callpilotDesktop?.getRemoteControlStatus?.().then(setRemoteControlStatus).catch(() => undefined);
+    const disposeStatus = window.callpilotDesktop?.onRemoteControlStatus?.((status) => {
+      setRemoteControlStatus(status);
+    });
+    const disposeCommand = window.callpilotDesktop?.onRemoteControlCommand?.((command) => {
+      if (command.type === "stop_answer") void cancelAnswer();
+      if (command.type === "reset_exercise") resetLiveCodingExercise();
+      if (command.type === "reset_session") resetFullSession();
+      if (command.type === "screenshot" && activeMode !== "live_coding") void captureScreenshot();
+    });
+    return () => {
+      disposeStatus?.();
+      disposeCommand?.();
+    };
+  }, [activeMode, cancelAnswer, captureScreenshot, resetFullSession, resetLiveCodingExercise]);
+
+  React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onManualAnswerRequest?.(() => {
       setLiveAssistStatus("Manual answer requested");
       void ask(getManualAnswerPrompt());
@@ -3391,6 +3410,13 @@ function App() {
                 <ShieldCheck size={16} />
                 {stealth.callPrivacyAllowed && stealth.contentProtectionEnabled ? "Private on" : "Enable private"}
               </button>
+            </div>
+            <div className="remote-control-card">
+              <div>
+                <strong>Phone remote</strong>
+                <span>{remoteControlStatus?.enabled ? "Open on same Wi-Fi" : remoteControlStatus?.error ? `Unavailable: ${remoteControlStatus.error}` : "Starting local remote..."}</span>
+              </div>
+              <code>{remoteControlStatus?.friendlyUrls.find((url) => /192\.168|10\.|172\.(1[6-9]|2\d|3[01])/.test(url)) ?? remoteControlStatus?.friendlyUrls[0] ?? remoteControlStatus?.urls.find((url) => !url.includes("127.0.0.1")) ?? remoteControlStatus?.urls[0] ?? "Remote URL unavailable"}</code>
             </div>
             <div className="primary-actions">
               <button className="primary" onClick={startSession}>

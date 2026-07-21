@@ -47,10 +47,22 @@ contextBridge.exposeInMainWorld("callpilotDesktop", {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   getShortcutHealth: () => ipcRenderer.invoke("shortcuts:health"),
+  getRemoteControlStatus: () => ipcRenderer.invoke("remote-control:get-status"),
+  dispatchRemoteControlCommand: (command) => ipcRenderer.invoke("remote-control:dispatch-command", command),
   onShortcut: (callback) => {
     const handler = (_event, action) => callback(action);
     ipcRenderer.on("shortcut", handler);
     return () => ipcRenderer.removeListener("shortcut", handler);
+  },
+  onRemoteControlCommand: (callback) => {
+    const handler = (_event, command) => callback(command);
+    ipcRenderer.on("remote-control:command", handler);
+    return () => ipcRenderer.removeListener("remote-control:command", handler);
+  },
+  onRemoteControlStatus: (callback) => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on("remote-control:status", handler);
+    return () => ipcRenderer.removeListener("remote-control:status", handler);
   },
   onManualAnswerRequest: (callback) => {
     const handler = () => callback();

@@ -83,6 +83,19 @@ export interface ShortcutHealth {
   registered: boolean;
 }
 
+export type RemoteControlCommand =
+  | { type: "stop_answer" | "reset_exercise" | "reset_session" | "screenshot"; timestamp?: number }
+  | { type: "scroll"; target?: "chat" | "code" | "reasoning"; delta?: number; timestamp?: number };
+
+export interface RemoteControlStatus {
+  enabled: boolean;
+  port: number;
+  mode?: "technical_interview" | "live_coding" | null;
+  urls: string[];
+  friendlyUrls: string[];
+  error?: string;
+}
+
 declare global {
   interface SpeechRecognitionAlternative {
     transcript: string;
@@ -207,7 +220,11 @@ declare global {
       getSettings: () => Promise<DesktopSettings>;
       saveSettings: (settings: Partial<DesktopSettings>) => Promise<DesktopSettings>;
       getShortcutHealth: () => Promise<ShortcutHealth[]>;
+      getRemoteControlStatus: () => Promise<RemoteControlStatus>;
+      dispatchRemoteControlCommand: (command: RemoteControlCommand) => Promise<{ ok: boolean; error?: string }>;
       onShortcut: (callback: (action: DesktopShortcutAction) => void) => () => void;
+      onRemoteControlCommand: (callback: (command: RemoteControlCommand) => void) => () => void;
+      onRemoteControlStatus: (callback: (status: RemoteControlStatus) => void) => () => void;
       onManualAnswerRequest: (callback: () => void) => () => void;
       onSessionEnded: (callback: () => void) => () => void;
       onManualAnswerStatus: (callback: (payload: { ok: boolean; status: string; error?: string }) => void) => () => void;

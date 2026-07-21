@@ -1,6 +1,8 @@
 const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, nativeImage, safeStorage, session } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 const { createWorker } = require("tesseract.js");
 const { loadDotEnv } = require("./env.cjs");
@@ -19,6 +21,15 @@ let mainWindow = null;
 let overlayWindow = null;
 let codingWindow = null;
 let shortcutHealth = [];
+let remoteControlServer = null;
+let remoteControlStatus = {
+  enabled: false,
+  port: 0,
+  mode: null,
+  urls: [],
+  friendlyUrls: [],
+  error: "",
+};
 const ocrWorkers = new Map();
 const nativelyStreams = new Map();
 const deepgramStreams = new Map();
@@ -1749,6 +1760,261 @@ const emitShortcut = (action) => {
   mainWindow?.webContents.send("shortcut", action);
 };
 
+const remoteControlLanHosts = () => {
+  const hosts = ["127.0.0.1"];
+  for (const networkInterfaces of Object.values(os.networkInterfaces())) {
+    for (const item of networkInterfaces || []) {
+      if (item.family === "IPv4" && !item.internal) hosts.push(item.address);
+    }
+  }
+  return [...new Set(hosts)];
+};
+
+const remoteControlUrls = () =>
+  remoteControlLanHosts().map((host) => `http://${host}:${remoteControlStatus.port}`);
+
+const remoteControlFriendlyUrls = () => {
+  const hostname = os.hostname().replace(/[^a-z0-9.-]/gi, "");
+  return [
+    hostname ? `http://${hostname}:${remoteControlStatus.port}` : "",
+    hostname ? `http://${hostname}.local:${remoteControlStatus.port}` : "",
+    ...remoteControlLanHosts().filter((host) => host !== "127.0.0.1").map((host) => `http://${host}:${remoteControlStatus.port}`),
+  ].filter(Boolean);
+};
+
+const sendRemoteControlStatus = () => {
+  const status = {
+    ...remoteControlStatus,
+    urls: remoteControlStatus.enabled ? remoteControlUrls() : [],
+    friendlyUrls: remoteControlStatus.enabled ? remoteControlFriendlyUrls() : [],
+  };
+  mainWindow?.webContents.send("remote-control:status", status);
+  overlayWindow?.webContents.send("remote-control:status", status);
+  codingWindow?.webContents.send("remote-control:status", status);
+};
+
+const sendRemoteControlCommand = (command) => {
+  mainWindow?.webContents.send("remote-control:command", command);
+  overlayWindow?.webContents.send("remote-control:command", command);
+  codingWindow?.webContents.send("remote-control:command", command);
+};
+
+const remoteControlPage = () => `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>CallPilot Remote</title>
+  <style>
+    :root { font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #ffffff; color: #111111; }
+    body { margin: 0; min-height: 100vh; background: #ffffff; overscroll-behavior: none; }
+    main { box-sizing: border-box; min-height: 100vh; padding: 18px; display: grid; grid-template-rows: auto minmax(220px, 1fr) auto; gap: 14px; }
+    .no-session { display: none; min-height: 100vh; place-items: center; color: #111111; font-size: 18px; }
+    body.waiting main { display: none; }
+    body.waiting .no-session { display: grid; }
+    .mode { color: #555555; font-size: 12px; text-align: right; }
+    .scroll-pad { border: 3px solid #111111; border-radius: 32px; background: #ffffff; color: #111111; display: grid; place-items: center; min-height: 360px; touch-action: none; user-select: none; }
+    .scroll-pad strong { font-size: 22px; }
+    .buttons { display: grid; gap: 10px; }
+    button { min-height: 58px; border: 3px solid #111111; border-radius: 9px; background: #ffffff; color: #ff3045; font: inherit; font-size: 20px; font-weight: 850; touch-action: manipulation; }
+    button:active { transform: translateY(1px); background: #f3f3f3; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body class="waiting">
+  <div class="no-session">No session running</div>
+  <main>
+    <div id="mode" class="mode"></div>
+    <section id="scrollPad" class="scroll-pad">
+      <strong>Scroll</strong>
+    </section>
+    <div class="buttons">
+      <button data-action="answer">Answer</button>
+      <button data-action="stop_answer">Stop</button>
+      <button data-action="reset_exercise" data-live-only>Reset</button>
+      <button data-action="reset_session" data-technical-only>Reset</button>
+      <button data-action="reset_session" data-live-only>Restart Session</button>
+      <button data-action="screenshot" data-live-only>Screenshot</button>
+    </div>
+  </main>
+  <script>
+    let currentMode = "technical_interview";
+    let pendingDelta = 0;
+    let lastTouchY = null;
+    const mode = document.getElementById("mode");
+    const scrollPad = document.getElementById("scrollPad");
+    const applyMode = (nextMode) => {
+      const hasSession = nextMode === "live_coding" || nextMode === "technical_interview";
+      document.body.classList.toggle("waiting", !hasSession);
+      if (!hasSession) return;
+      currentMode = nextMode === "live_coding" ? "live_coding" : "technical_interview";
+      mode.textContent = currentMode === "live_coding" ? "Live Coding" : "Technical";
+      document.querySelectorAll("[data-live-only]").forEach((item) => item.classList.toggle("hidden", currentMode !== "live_coding"));
+      document.querySelectorAll("[data-technical-only]").forEach((item) => item.classList.toggle("hidden", currentMode === "live_coding"));
+    };
+    const refreshStatus = async () => {
+      try {
+        const response = await fetch("/api/status");
+        if (!response.ok) return;
+        const result = await response.json().catch(() => ({}));
+        applyMode(result.status && result.status.mode);
+      } catch {}
+    };
+    void refreshStatus();
+    window.setInterval(refreshStatus, 1200);
+    const send = async (payload) => {
+      if (document.body.classList.contains("waiting")) return;
+      try {
+        await fetch("/api/command", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch {}
+    };
+    const flushScroll = () => {
+      if (!pendingDelta) return;
+      const delta = Math.max(-1200, Math.min(1200, Math.round(pendingDelta)));
+      pendingDelta = 0;
+      void send({ type: "scroll", target: currentMode === "live_coding" ? "code" : "chat", delta });
+    };
+    window.setInterval(flushScroll, 120);
+    scrollPad.addEventListener("touchstart", (event) => {
+      lastTouchY = event.touches[0] ? event.touches[0].clientY : null;
+    }, { passive: false });
+    scrollPad.addEventListener("touchmove", (event) => {
+      event.preventDefault();
+      const y = event.touches[0] ? event.touches[0].clientY : null;
+      if (y === null || lastTouchY === null) return;
+      pendingDelta += lastTouchY - y;
+      lastTouchY = y;
+    }, { passive: false });
+    scrollPad.addEventListener("touchend", () => {
+      lastTouchY = null;
+      flushScroll();
+    });
+    scrollPad.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      pendingDelta += event.deltaY;
+      flushScroll();
+    }, { passive: false });
+    document.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", () => send({ type: button.dataset.action }));
+    });
+  </script>
+</body>
+</html>`;
+
+const sendJson = (response, statusCode, payload) => {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify(payload));
+};
+
+const readRequestJson = (request) => new Promise((resolve, reject) => {
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => {
+    body += chunk;
+    if (body.length > 4096) {
+      reject(new Error("request_too_large"));
+      request.destroy();
+    }
+  });
+  request.on("end", () => {
+    try {
+      resolve(body ? JSON.parse(body) : {});
+    } catch {
+      reject(new Error("invalid_json"));
+    }
+  });
+  request.on("error", reject);
+});
+
+const handleRemoteControlCommand = (command) => {
+  if (!remoteControlStatus.mode) return { ok: false, error: "no_session_running" };
+  const type = typeof command?.type === "string" ? command.type : "";
+  const target = typeof command?.target === "string" ? command.target : "";
+  const delta = Number.isFinite(Number(command?.delta))
+    ? Math.max(-1200, Math.min(1200, Math.round(Number(command.delta))))
+    : 0;
+  const normalized = { type, target, delta, timestamp: Date.now() };
+  appendTraceEvent("remote_control_command", { type, target, delta });
+  writeActiveSessionTrace("active");
+
+  if (type === "answer") {
+    if (!mainWindow || mainWindow.webContents.isDestroyed()) return { ok: false, error: "main_window_unavailable" };
+    mainWindow.webContents.send("answer:manual-request");
+    sendToSessionWindows("answer:manual-status", { ok: true, status: "sent_to_main" });
+    return { ok: true };
+  }
+  if (type === "end_session") {
+    remoteControlStatus = { ...remoteControlStatus, mode: null };
+    sendRemoteControlStatus();
+    mainWindow?.webContents.send("session:ended");
+    const stoppedNativelyStreams = stopAllNativelyStreams();
+    const stoppedDeepgramStreams = stopAllDeepgramStreams();
+    appendTraceEvent("live_transcription_runtime_reset", {
+      reason: "remote_session_end",
+      stoppedNativelyStreams: stoppedNativelyStreams.length,
+      stoppedDeepgramStreams: stoppedDeepgramStreams.length,
+      nativelyStreamIds: stoppedNativelyStreams,
+      deepgramStreamIds: stoppedDeepgramStreams,
+    });
+    closeOverlayWindow();
+    closeCodingWindow();
+    mainWindow?.show();
+    finishSessionTrace();
+    return { ok: true };
+  }
+  if (["stop_answer", "reset_exercise", "reset_session", "screenshot", "scroll"].includes(type)) {
+    sendRemoteControlCommand(normalized);
+    return { ok: true };
+  }
+  return { ok: false, error: "unknown_command" };
+};
+
+const startRemoteControlServer = () => {
+  if (remoteControlServer) return;
+  const requestedPort = Number(process.env.CALLPILOT_REMOTE_CONTROL_PORT || 38767);
+  const port = Number.isFinite(requestedPort) && requestedPort > 0 ? Math.round(requestedPort) : 38767;
+  remoteControlServer = http.createServer(async (request, response) => {
+    const url = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`);
+    if (request.method === "GET" && url.pathname === "/") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      response.end(remoteControlPage());
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/status") {
+      return sendJson(response, 200, { ok: true, status: { ...remoteControlStatus, urls: remoteControlUrls(), friendlyUrls: remoteControlFriendlyUrls() } });
+    }
+    if (request.method === "POST" && url.pathname === "/api/command") {
+      try {
+        return sendJson(response, 200, handleRemoteControlCommand(await readRequestJson(request)));
+      } catch (error) {
+        return sendJson(response, 400, { ok: false, error: error instanceof Error ? error.message : "bad_request" });
+      }
+    }
+    sendJson(response, 404, { ok: false, error: "not_found" });
+  });
+  remoteControlServer.on("error", (error) => {
+    remoteControlStatus = { ...remoteControlStatus, enabled: false, port: 0, urls: [], error: error.message };
+    sendRemoteControlStatus();
+  });
+  remoteControlServer.listen(port, "0.0.0.0", () => {
+    const address = remoteControlServer.address();
+    remoteControlStatus = {
+      ...remoteControlStatus,
+      enabled: true,
+      port: typeof address === "object" && address ? address.port : port,
+      error: "",
+    };
+    sendRemoteControlStatus();
+  });
+};
+
 const normalizeStealthState = () => {
   if (!stealthState.callPrivacyAllowed) {
     stealthState.overlayVisible = true;
@@ -2109,6 +2375,11 @@ ipcMain.handle("stealth:reset-privacy", () => {
 });
 ipcMain.handle("privacy:check", () => assessPrivacyState());
 ipcMain.handle("session:start", async (_event, options = {}) => {
+  remoteControlStatus = {
+    ...remoteControlStatus,
+    mode: options.mode === "live_coding" ? "live_coding" : "technical_interview",
+  };
+  sendRemoteControlStatus();
   startSessionTrace(options);
   const stoppedNativelyStreams = stopAllNativelyStreams();
   const stoppedDeepgramStreams = stopAllDeepgramStreams();
@@ -2130,6 +2401,8 @@ ipcMain.handle("session:start", async (_event, options = {}) => {
   return { ok: true };
 });
 ipcMain.handle("session:end", () => {
+  remoteControlStatus = { ...remoteControlStatus, mode: null };
+  sendRemoteControlStatus();
   mainWindow?.webContents.send("session:ended");
   const stoppedNativelyStreams = stopAllNativelyStreams();
   const stoppedDeepgramStreams = stopAllDeepgramStreams();
@@ -2231,6 +2504,12 @@ ipcMain.handle("answer:publish-status", (_event, payload) => {
 ipcMain.handle("settings:get", () => readSettings());
 ipcMain.handle("settings:save", (_event, settings) => writeSettings(settings));
 ipcMain.handle("shortcuts:health", () => shortcutHealth.map((item) => ({ ...item })));
+ipcMain.handle("remote-control:get-status", () => ({
+  ...remoteControlStatus,
+  urls: remoteControlStatus.enabled ? remoteControlUrls() : [],
+  friendlyUrls: remoteControlStatus.enabled ? remoteControlFriendlyUrls() : [],
+}));
+ipcMain.handle("remote-control:dispatch-command", (_event, command) => handleRemoteControlCommand(command));
 ipcMain.handle("credentials:status", () => credentialStatus());
 ipcMain.handle("credentials:save-openai-key", (_event, apiKey) => saveStoredOpenAIKey(apiKey));
 ipcMain.handle("credentials:save-natively-key", (_event, apiKey) => saveStoredNativelyKey(apiKey));
@@ -2961,6 +3240,7 @@ app.whenReady().then(async () => {
   configureMediaCapture();
   await createWindow();
   registerShortcuts();
+  startRemoteControlServer();
 });
 
 app.on("window-all-closed", () => {
@@ -2973,6 +3253,10 @@ app.on("activate", () => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  if (remoteControlServer) {
+    remoteControlServer.close();
+    remoteControlServer = null;
+  }
   for (const workerPromise of ocrWorkers.values()) {
     workerPromise.then((worker) => worker.terminate()).catch(() => {});
   }

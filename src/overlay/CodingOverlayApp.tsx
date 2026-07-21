@@ -60,12 +60,28 @@ export default function CodingOverlayApp() {
   const [updatedAt, setUpdatedAt] = React.useState<number>(0);
   const [screenStatus, setScreenStatus] = React.useState("No screenshot selected");
   const [isCapturingScreen, setIsCapturingScreen] = React.useState(false);
+  const [isRequestingAnswer, setIsRequestingAnswer] = React.useState(false);
+  const [activeAnswerRequestId, setActiveAnswerRequestId] = React.useState<string | null>(null);
+  const codeRef = React.useRef<HTMLPreElement | null>(null);
+  const reasoningRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onStructuredAnswer?.((event: StructuredAnswerEvent) => {
       if (event.answer.kind !== "coding") return;
       setPayload(event.answer.payload);
       setUpdatedAt(event.timestamp);
+    });
+    return () => dispose?.();
+  }, []);
+
+  React.useEffect(() => {
+    const dispose = window.callpilotDesktop?.onAnswerStatus?.((event) => {
+      if (event.requestId) {
+        setActiveAnswerRequestId(event.status === "completed" || event.status === "failed" || event.status === "cancelled" ? null : event.requestId);
+      }
+      if (event.status === "completed" || event.status === "failed" || event.status === "cancelled") {
+        setIsRequestingAnswer(false);
+      }
     });
     return () => dispose?.();
   }, []);
@@ -80,7 +96,7 @@ export default function CodingOverlayApp() {
     return () => dispose?.();
   }, []);
 
-  const captureScreenContext = async () => {
+  const captureScreenContext = React.useCallback(async () => {
     if (
       !window.callpilotDesktop?.captureScreenshot
       || !window.callpilotDesktop?.recognizeScreenText
@@ -128,7 +144,55 @@ export default function CodingOverlayApp() {
     } finally {
       setIsCapturingScreen(false);
     }
+  }, []);
+
+  const requestAnswer = async () => {
+    setIsRequestingAnswer(true);
+    const result = await window.callpilotDesktop?.requestAnswer?.().catch(() => ({ ok: false }));
+    if (!result?.ok) {
+      setIsRequestingAnswer(false);
+      setScreenStatus("Answer request failed");
+    }
   };
+
+  const cancelAnswer = async () => {
+    if (!activeAnswerRequestId) return;
+    const requestId = activeAnswerRequestId;
+    setActiveAnswerRequestId(null);
+    setIsRequestingAnswer(false);
+    await window.callpilotDesktop?.cancelAnswer?.(requestId).catch(() => undefined);
+  };
+
+  const resetExercise = async () => {
+    setPayload(emptyCodingAnswer);
+    setUpdatedAt(0);
+    setScreenStatus("New exercise ready");
+    setActiveAnswerRequestId(null);
+    setIsRequestingAnswer(false);
+    await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_exercise" }).catch(() => undefined);
+  };
+
+  const restartSession = async () => {
+    setPayload(emptyCodingAnswer);
+    setUpdatedAt(0);
+    setScreenStatus("New session ready");
+    setActiveAnswerRequestId(null);
+    setIsRequestingAnswer(false);
+    await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_session" }).catch(() => undefined);
+  };
+
+  React.useEffect(() => {
+    const dispose = window.callpilotDesktop?.onRemoteControlCommand?.((command) => {
+      if (command.type === "screenshot") {
+        void captureScreenContext();
+        return;
+      }
+      if (command.type !== "scroll") return;
+      const target = command.target === "code" ? codeRef.current : command.target === "reasoning" ? reasoningRef.current : null;
+      target?.scrollBy({ top: command.delta ?? 0, behavior: "smooth" });
+    });
+    return () => dispose?.();
+  }, [captureScreenContext]);
 
   const code = displayCode(payload);
   const complexity = [
@@ -145,12 +209,17 @@ export default function CodingOverlayApp() {
           <span>{screenStatus}</span>
         </div>
         <div className="cp-coding__actions">
+          <button type="button" onClick={requestAnswer} disabled={isRequestingAnswer}>
+            {isRequestingAnswer ? "..." : "Answer"}
+          </button>
+          <button type="button" onClick={cancelAnswer} disabled={!activeAnswerRequestId}>Stop</button>
+          <button type="button" onClick={resetExercise}>Reset</button>
+          <button type="button" onClick={restartSession}>Restart</button>
           <button type="button" onClick={captureScreenContext} disabled={isCapturingScreen} title="Capture screen for the next Answer">
             <Camera size={14} />
-            {isCapturingScreen ? "..." : "Screen"}
+            {isCapturingScreen ? "..." : "Screenshot"}
           </button>
           <span>{hasContent ? responseTypeLabel(payload.responseType) : "Solution workspace"}</span>
-          <button type="button" onClick={() => window.callpilotDesktop?.endSession?.()}>End</button>
         </div>
       </div>
       <div className="cp-coding__body">
@@ -159,14 +228,14 @@ export default function CodingOverlayApp() {
             <strong>{payload.problem.title || "Solution"}</strong>
             <span>{payload.problem.language || "Code"}</span>
           </div>
-          {code ? <pre><code>{code}</code></pre> : <CodePlaceholder />}
+          {code ? <pre ref={codeRef}><code>{code}</code></pre> : <CodePlaceholder />}
         </section>
         <section className="cp-reasoning-panel">
           <div className="cp-panel-title">
             <strong>Reasoning</strong>
             <span>{updatedAt ? new Date(updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Ready"}</span>
           </div>
-          <div className="cp-mini-chat">
+          <div className="cp-mini-chat" ref={reasoningRef}>
             {payload.problem.summary && (
               <div>
                 <strong>Problem</strong>

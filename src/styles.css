@@ -508,6 +508,53 @@ button:disabled {
   margin-bottom: 0;
 }
 
+.remote-control-card {
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+}
+
+.remote-control-card div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.remote-control-card strong {
+  color: #17202a;
+  font-size: 13px;
+}
+
+.remote-control-card span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.remote-control-card code {
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #f6f8fb;
+  color: #2f5363;
+  display: block;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  padding: 8px;
+}
+
+.remote-control-card small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 textarea,
 input,
 select {

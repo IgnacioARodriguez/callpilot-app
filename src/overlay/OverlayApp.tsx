@@ -420,6 +420,14 @@ export default function OverlayApp() {
     messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  React.useEffect(() => {
+    const dispose = window.callpilotDesktop?.onRemoteControlCommand?.((command) => {
+      if (command.type !== "scroll" || command.target !== "chat") return;
+      messagesRef.current?.scrollBy({ top: command.delta ?? 0, behavior: "smooth" });
+    });
+    return () => dispose?.();
+  }, []);
+
   const requestAnswer = async () => {
     setIsRequestingAnswer(true);
     setActivity({ state: "transcribing", label: "Answering", updatedAt: Date.now() });
@@ -445,6 +453,14 @@ export default function OverlayApp() {
     setActivity({ state: "idle", label: "Stopping", updatedAt: Date.now() });
     const result = await window.callpilotDesktop?.cancelAnswer?.(requestId).catch(() => ({ ok: false }));
     setActivity({ state: "idle", label: result?.ok ? "Stopped" : "Stop failed", updatedAt: Date.now() });
+  };
+
+  const resetSession = async () => {
+    setMessages([]);
+    setActiveAnswerRequestId(null);
+    setIsRequestingAnswer(false);
+    setActivity({ state: "idle", label: "Reset", updatedAt: Date.now() });
+    await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_session" }).catch(() => undefined);
   };
 
   return (
@@ -474,6 +490,7 @@ export default function OverlayApp() {
           <button className="cp-answer-button" type="button" onClick={requestAnswer} disabled={isRequestingAnswer}>
             {isRequestingAnswer ? "..." : "Answer"}
           </button>
+          <button type="button" onClick={resetSession}>Reset</button>
           <button type="button" onClick={() => window.callpilotDesktop?.endSession?.()}>End</button>
         </div>
       </div>
