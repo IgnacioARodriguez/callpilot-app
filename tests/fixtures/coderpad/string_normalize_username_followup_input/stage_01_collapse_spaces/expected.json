@@ -1,24 +1,48 @@
 {
-  "expectedFunction": "normalize_name",
-  "mustContain": [
-    "def normalize_name(name):",
-    "limpio",
-    "split",
-    "join"
-  ],
-  "mustNotContain": [
-    "def solution",
-    "def get_user_name",
-    "unidecode",
-    "replace(\" \", \"_\")",
-    "import re",
-    "re.sub"
-  ],
-  "semanticExpectations": [
-    "Debe reconocer que replace produce varios underscores.",
-    "Debe adaptar la funcion existente para colapsar whitespace.",
-    "Debe preservar normalize_name y limpio.",
-    "Debe preservar caracteres acentuados.",
-    "No debe cambiar arbitrariamente la firma o introducir otra funcion principal."
-  ]
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      [
+        "espacios internos",
+        "internal spaces",
+        "multiple spaces",
+        "varios espacios",
+        "whitespace"
+      ],
+      [
+        "underscore",
+        "_",
+        "guion bajo"
+      ],
+      [
+        "split",
+        "join",
+        "colaps"
+      ]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": "normalize_name",
+    "mustContain": [
+      "def normalize_name(name):",
+      "limpio",
+      "split",
+      "join"
+    ],
+    "mustNotContain": [
+      "def solution",
+      "def get_user_name",
+      "unidecode",
+      "replace(\" \", \"_\")",
+      "import re",
+      "re.sub"
+    ],
+    "semanticExpectations": [
+      "Debe reconocer que replace produce varios underscores.",
+      "Debe adaptar la funcion existente para colapsar whitespace.",
+      "Debe preservar normalize_name y limpio.",
+      "Debe preservar caracteres acentuados.",
+      "No debe cambiar arbitrariamente la firma o introducir otra funcion principal."
+    ]
+  }
 }

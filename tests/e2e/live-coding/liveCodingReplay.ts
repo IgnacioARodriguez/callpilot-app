@@ -23,11 +23,15 @@ type AnswerRun = {
   completed: boolean;
   failed: boolean;
   renderedText: string;
+  conversationAssistText: string;
   structured: StructuredAnswerPayload | null;
   latencyMs: number;
   requestId?: string;
+  conversationAssistRequestId?: string;
   rawModelOutput?: string | null;
   rawModelOutputStage?: string;
+  conversationAssistRawModelOutput?: string | null;
+  conversationAssistRawModelOutputStage?: string;
   actionTimings: Record<string, number>;
 };
 
@@ -52,7 +56,7 @@ type ScenarioTranscriptTurn = {
   text: string;
 };
 
-type ScenarioExpected = {
+type CodingWorkspaceExpected = {
   expectedFunction: string | null;
   mustContain?: string[];
   mustContainAny?: string[];
@@ -64,7 +68,20 @@ type ScenarioExpected = {
   };
 };
 
-type LoadedScenarioExpected = {
+type ConversationAssistExpected = {
+  maxWords?: number;
+  mustContain?: string[];
+  mustContainAny?: string[];
+  mustContainGroups?: string[][];
+  mustNotContain?: string[];
+};
+
+type ScenarioExpected = CodingWorkspaceExpected & {
+  codingWorkspace?: CodingWorkspaceExpected;
+  conversationAssist?: ConversationAssistExpected;
+};
+
+type LoadedCodingWorkspaceExpected = {
   expectedFunction: string | null;
   mustContain: string[];
   mustContainAny: string[];
@@ -74,6 +91,19 @@ type LoadedScenarioExpected = {
   semanticChecks: {
     sortedWordFrequency: boolean;
   };
+};
+
+type LoadedConversationAssistExpected = {
+  maxWords: number;
+  mustContain: string[];
+  mustContainAny: string[];
+  mustContainGroups: string[][];
+  mustNotContain: string[];
+};
+
+type LoadedScenarioExpected = {
+  codingWorkspace: LoadedCodingWorkspaceExpected;
+  conversationAssist: LoadedConversationAssistExpected | null;
 };
 
 type ScenarioStage = {
@@ -225,6 +255,48 @@ const readCases = (): ReplayCase[] => {
 
 const readJsonFile = <T>(filePath: string): T => JSON.parse(fs.readFileSync(filePath, "utf8"));
 
+const defaultConversationAssistForbiddenTerms = [
+  "```",
+  "def ",
+  "class ",
+  "Complejidad",
+  "Complexity",
+  "\"kind\"",
+  "\"payload\"",
+  "Código:",
+  "Codigo:",
+  "Code:",
+];
+
+const loadCodingWorkspaceExpected = (expectedRules: CodingWorkspaceExpected): LoadedCodingWorkspaceExpected => ({
+  expectedFunction: expectedRules.expectedFunction,
+  mustContain: Array.isArray(expectedRules.mustContain) ? expectedRules.mustContain.map(String) : [],
+  mustContainAny: Array.isArray(expectedRules.mustContainAny) ? expectedRules.mustContainAny.map(String) : [],
+  mustPreserve: Array.isArray(expectedRules.mustPreserve) ? expectedRules.mustPreserve.map(String) : [],
+  mustNotContain: Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [],
+  semanticExpectations: Array.isArray(expectedRules.semanticExpectations) ? expectedRules.semanticExpectations.map(String) : [],
+  semanticChecks: {
+    sortedWordFrequency: Boolean(expectedRules.semanticChecks?.sortedWordFrequency),
+  },
+});
+
+const loadConversationAssistExpected = (expectedRules: ConversationAssistExpected | undefined): LoadedConversationAssistExpected | null => {
+  if (!expectedRules) return null;
+  const explicitForbidden = Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [];
+  return {
+    maxWords: Number.isFinite(expectedRules.maxWords) ? Number(expectedRules.maxWords) : 130,
+    mustContain: Array.isArray(expectedRules.mustContain) ? expectedRules.mustContain.map(String) : [],
+    mustContainAny: Array.isArray(expectedRules.mustContainAny) ? expectedRules.mustContainAny.map(String) : [],
+    mustContainGroups: Array.isArray(expectedRules.mustContainGroups)
+      ? expectedRules.mustContainGroups
+        .filter((group) => Array.isArray(group))
+        .map((group) => group.map(String).filter(Boolean))
+        .filter((group) => group.length > 0)
+      : [],
+    mustNotContain: [...defaultConversationAssistForbiddenTerms, ...explicitForbidden],
+  };
+};
+
 const requireFixtureFile = (scenarioId: string, stageId: string, label: string, filePath: string) => {
   if (!fs.existsSync(filePath)) {
     throw new Error(`Fixture file missing for ${scenarioId}/${stageId} (${label}): ${filePath}`);
@@ -253,7 +325,8 @@ const readStageScenario = (): LoadedStageScenario | null => {
       const transcript = readJsonFile<ScenarioTranscriptTurn[]>(transcriptPath);
       const expectedRules = readJsonFile<ScenarioExpected>(expectedPath);
       if (!Array.isArray(transcript)) throw new Error(`Invalid transcript_delta for ${parsed.id}/${stage.id}: ${transcriptPath}`);
-      if (!expectedRules || !("expectedFunction" in expectedRules)) throw new Error(`Invalid expected.json for ${parsed.id}/${stage.id}: ${expectedPath}`);
+      const codingWorkspace = expectedRules?.codingWorkspace ?? expectedRules;
+      if (!codingWorkspace || !("expectedFunction" in codingWorkspace)) throw new Error(`Invalid expected.json for ${parsed.id}/${stage.id}: ${expectedPath}`);
       return {
         ...stage,
         imagePath,
@@ -262,15 +335,8 @@ const readStageScenario = (): LoadedStageScenario | null => {
         expectedPath,
         transcript,
         expectedRules: {
-          expectedFunction: expectedRules.expectedFunction,
-          mustContain: Array.isArray(expectedRules.mustContain) ? expectedRules.mustContain.map(String) : [],
-          mustContainAny: Array.isArray(expectedRules.mustContainAny) ? expectedRules.mustContainAny.map(String) : [],
-          mustPreserve: Array.isArray(expectedRules.mustPreserve) ? expectedRules.mustPreserve.map(String) : [],
-          mustNotContain: Array.isArray(expectedRules.mustNotContain) ? expectedRules.mustNotContain.map(String) : [],
-          semanticExpectations: Array.isArray(expectedRules.semanticExpectations) ? expectedRules.semanticExpectations.map(String) : [],
-          semanticChecks: {
-            sortedWordFrequency: Boolean(expectedRules.semanticChecks?.sortedWordFrequency),
-          },
+          codingWorkspace: loadCodingWorkspaceExpected(codingWorkspace),
+          conversationAssist: loadConversationAssistExpected(expectedRules.conversationAssist),
         },
       };
     });
@@ -354,7 +420,13 @@ const mockOpenAI = http.createServer((request, response) => {
     await sleep(80);
     const payload = JSON.parse(body || "{}");
     const input = String(payload.input || "");
+    const instructions = String(payload.instructions || "");
+    const wantsConversationAssist = payload.stream === true
+      && !payload.text?.format
+      && /conversation side-channel|panel izquierdo|chat/i.test(`${instructions}\n${input}`);
+    const stageId = input.match(/stage_id:\s*([^\n]+)/i)?.[1]?.trim() ?? "";
     const latestActionableInput = input.match(/<latest_actionable_input>\s*([\s\S]*?)\s*<\/latest_actionable_input>/i)?.[1] ?? "";
+    const actionText = latestActionableInput || input;
     const inferredFunctionName = /sentence|word appears|count_words|count words|frequency/i.test(latestActionableInput || input)
       ? "count_words"
       : "";
@@ -363,10 +435,43 @@ const mockOpenAI = http.createServer((request, response) => {
     const params = signatureMatch?.[1] ?? (functionName === "count_words" ? "sentence" : "");
     const hasPriorLiveCodingSolution = /current_live_coding_solution|previous_solution_code|follow_up_rule/i.test(input);
     const wantsInput = hasPriorLiveCodingSolution
-      && /input|entrada|ingres|type|typed|poner su nombre/i.test(latestActionableInput || input);
-    const wantsNormalizeTests = functionName === "normalize_name" && /tests?|assert|empty|tabs?|whitespace/i.test(latestActionableInput || input);
-    const wantsNormalizeCollapsedSpaces = functionName === "normalize_name" && /internal spaces|multiple spaces|underscores|espacios internos|varios espacios/i.test(latestActionableInput || input);
-    const wantsWordSorting = functionName === "count_words" && /case-insensitive|descending count|alphabetical|sorted|ties/i.test(latestActionableInput || input);
+      && /input|entrada|ingres|type|typed|poner su nombre/i.test(actionText);
+    const wantsNormalizeInitialBaseline = functionName === "normalize_name"
+      && /nothing fancy|trim it|make it lowercase|leading and trailing whitespace|just leading and trailing/i.test(actionText)
+      && !/one small change|internal spaces should become|multiple spaces should count|quick tests|add a few quick tests/i.test(actionText);
+    const wantsNormalizeTests = functionName === "normalize_name"
+      && !wantsNormalizeInitialBaseline
+      && !/collapse_spaces/i.test(stageId)
+      && (/tests?|assert|empty|tabs?/i.test(actionText) || /tests/i.test(stageId));
+    const wantsNormalizeCollapsedSpaces = functionName === "normalize_name"
+      && !wantsNormalizeTests
+      && !wantsNormalizeInitialBaseline
+      && (/internal spaces|multiple spaces|underscores|espacios internos|varios espacios/i.test(actionText) || /collapse_spaces/i.test(stageId));
+    const wantsWordSorting = functionName === "count_words"
+      && (/case-insensitive|descending count|alphabetical|sorted|ties/i.test(actionText) || /stage_02_sorting_followup/i.test(stageId));
+    if (wantsConversationAssist) {
+      const conversationText = wantsWordSorting
+        ? "I'd say: I'll keep the existing counting logic and only change the return step: sort by frequency descending, then alphabetically for ties."
+        : wantsNormalizeTests
+          ? "I'd say: I'll keep the implementation as-is and add a few small asserts for the normal case, empty input, and mixed whitespace."
+          : wantsNormalizeCollapsedSpaces
+            ? "I'd say: I'll keep the trim -> lowercase flow, then change the internal spaces part: split the name and join it back with underscores."
+            : functionName === "count_words"
+              ? /initial_code/i.test(stageId)
+                ? "I'd say: I'll preserve the visible count_words signature and keep it simple: split the sentence, count each word in a dictionary, and return the counts."
+                : "I'd say: I'll start by splitting the sentence into words and using a dictionary to count each word, then refine if they ask for sorting or case rules."
+              : "I'd say: I'll start with the visible function and keep it direct: strip outer spaces -> lower the name -> return it, without touching internal spaces yet.";
+      if (payload.stream === true) {
+        response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+        response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: conversationText })}\n\n`);
+        response.write("data: [DONE]\n\n");
+        response.end();
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(createOutputPayload(conversationText)));
+      return;
+    }
     const code = functionName === "count_words" && wantsWordSorting
       ? [
         "def count_words(sentence):",
@@ -488,8 +593,8 @@ const getPageTarget = async (predicate: (target: any) => boolean, waitMs = 15000
 };
 
 const getSessionEventClient = async (): Promise<CdpClient> => {
-  const target = await getPageTarget((item) => String(item.url).includes("#/coding"), 10000)
-    ?? await getPageTarget((item) => String(item.url).includes("#/overlay"), 10000);
+  const target = await getPageTarget((item) => String(item.url).includes("#/overlay"), 10000)
+    ?? await getPageTarget((item) => String(item.url).includes("#/coding"), 10000);
   if (!target?.webSocketDebuggerUrl) throw new Error("Could not find live coding session event window");
   const client = await cdp(target.webSocketDebuggerUrl);
   await client.send("Runtime.enable");
@@ -587,12 +692,23 @@ const installEventCapture = async (client: CdpClient) => {
     window.__callpilotReplayDisposers?.forEach?.((dispose) => { try { dispose?.(); } catch {} });
     window.__callpilotReplayDisposers = [
       window.callpilotDesktop.onAnswerStatus((payload) => window.__callpilotReplayEvents.push({ type: "status", at: Date.now(), payload })),
+      window.callpilotDesktop.onAnswerDetailChunk((payload) => window.__callpilotReplayEvents.push({ type: "detail", at: Date.now(), payload })),
       window.callpilotDesktop.onRawModelOutput((payload) => window.__callpilotReplayEvents.push({ type: "raw", at: Date.now(), payload })),
       window.callpilotDesktop.onStructuredAnswer((payload) => window.__callpilotReplayEvents.push({ type: "structured", at: Date.now(), payload })),
       window.callpilotDesktop.onScreenContextPublished((payload) => window.__callpilotReplayEvents.push({ type: "screen", at: Date.now(), payload }))
     ];
     return true;
   })()`);
+};
+
+const isRequestEvent = (event: { payload: any }, requestId: string | undefined) =>
+  !requestId || !event.payload?.requestId || event.payload.requestId === requestId;
+
+const isConversationAssistEvent = (event: { payload: any }, codingRequestId: string | undefined, chatRequestId: string | undefined) => {
+  const requestId = String(event.payload?.requestId || "");
+  return event.payload?.audience === "chat"
+    || Boolean(chatRequestId && requestId === chatRequestId)
+    || Boolean(codingRequestId && requestId === `${codingRequestId}-chat`);
 };
 
 const resolveScreenText = async (client: CdpClient, imagePath: string, fallbackText: string, timings: Record<string, number>) => {
@@ -657,6 +773,8 @@ const transcriptPrompt = (scenarioId: string, stage: LoadedScenarioStage) => [
 
 const includesTerm = (text: string, term: string) => text.toLowerCase().includes(term.toLowerCase());
 
+const wordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
+
 const validatesSortedWordFrequency = (code: string) => {
   const compact = code.replace(/\s+/g, " ");
   const countDescThenWordAsc = /key\s*=\s*lambda\s+([A-Za-z_][\w]*)\s*:\s*\(\s*-\s*\1\s*\[\s*1\s*\]\s*,\s*\1\s*\[\s*0\s*\]\s*\)/.test(compact);
@@ -672,37 +790,62 @@ const validateScenarioStageAnswer = (
   stage: LoadedScenarioStage,
   answerRun: AnswerRun,
 ) => {
+  const codingRules = stage.expectedRules.codingWorkspace;
+  const conversationRules = stage.expectedRules.conversationAssist;
   const code = extractCode(answerRun.structured);
   const rendered = answerRun.renderedText.trim();
+  const conversationAssist = answerRun.conversationAssistText.trim();
   const failures: string[] = [];
   if (!answerRun.requestResult.ok) failures.push(`request was rejected: ${answerRun.requestResult.error || "unknown"}`);
   if (!answerRun.completed) failures.push("answer did not complete");
   if (!rendered) failures.push("rendered answer is empty");
   if (answerRun.structured?.kind !== "coding") failures.push("structured answer is not coding");
   if (!code.trim()) failures.push("extracted solution code is empty");
-  if (stage.expectedRules.expectedFunction && !new RegExp(`\\bdef\\s+${stage.expectedRules.expectedFunction}\\s*\\(`).test(code)) {
-    failures.push(`code does not preserve function ${stage.expectedRules.expectedFunction}`);
+  if (codingRules.expectedFunction && !new RegExp(`\\bdef\\s+${codingRules.expectedFunction}\\s*\\(`).test(code)) {
+    failures.push(`code does not preserve function ${codingRules.expectedFunction}`);
   }
-  for (const term of stage.expectedRules.mustContain) {
+  for (const term of codingRules.mustContain) {
     if (!includesTerm(code, term)) failures.push(`code missing required term: ${term}`);
   }
-  if (stage.expectedRules.mustContainAny.length > 0 && !stage.expectedRules.mustContainAny.some((term) => includesTerm(code, term))) {
-    failures.push(`code missing any required term: ${stage.expectedRules.mustContainAny.join(", ")}`);
+  if (codingRules.mustContainAny.length > 0 && !codingRules.mustContainAny.some((term) => includesTerm(code, term))) {
+    failures.push(`code missing any required term: ${codingRules.mustContainAny.join(", ")}`);
   }
-  for (const term of stage.expectedRules.mustPreserve) {
+  for (const term of codingRules.mustPreserve) {
     if (!includesTerm(code, term)) failures.push(`code does not preserve required term: ${term}`);
   }
-  for (const term of stage.expectedRules.mustNotContain) {
+  for (const term of codingRules.mustNotContain) {
     if (includesTerm(code, term)) failures.push(`code contains forbidden term: ${term}`);
   }
-  if (stage.expectedRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
+  if (codingRules.semanticChecks.sortedWordFrequency && !validatesSortedWordFrequency(code)) {
     failures.push("code does not sort word frequencies by descending count and ascending word");
+  }
+  if (conversationRules) {
+    if (!conversationAssist) failures.push("conversation assist is empty");
+    if (!answerRun.conversationAssistRequestId) failures.push("conversation assist request id was not captured");
+    if (conversationAssist && wordCount(conversationAssist) > conversationRules.maxWords) {
+      failures.push(`conversation assist has ${wordCount(conversationAssist)} words, above ${conversationRules.maxWords}`);
+    }
+    for (const term of conversationRules.mustContain) {
+      if (!includesTerm(conversationAssist, term)) failures.push(`conversation assist missing required term: ${term}`);
+    }
+    if (conversationRules.mustContainAny.length > 0 && !conversationRules.mustContainAny.some((term) => includesTerm(conversationAssist, term))) {
+      failures.push(`conversation assist missing any required term: ${conversationRules.mustContainAny.join(", ")}`);
+    }
+    conversationRules.mustContainGroups.forEach((group, index) => {
+      if (!group.some((term) => includesTerm(conversationAssist, term))) {
+        failures.push(`conversation assist missing concept group ${index + 1}: ${group.join(", ")}`);
+      }
+    });
+    for (const term of conversationRules.mustNotContain) {
+      if (includesTerm(conversationAssist, term)) failures.push(`conversation assist contains forbidden term: ${term}`);
+    }
   }
   return {
     ok: failures.length === 0,
     failures: failures.map((failure) => `${scenarioId}/${stage.id}: ${failure}`),
     code,
     rendered,
+    conversationAssist,
   };
 };
 
@@ -784,12 +927,19 @@ const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, labe
     const expectedRequestId = ${JSON.stringify(expectedRequestId)};
     const tick = () => {
       const events = window.__callpilotReplayEvents || [];
+      const chatRequestId = expectedRequestId ? expectedRequestId + "-chat" : "";
       const terminal = events.find((event) =>
         event.type === "status"
         && (!expectedRequestId || event.payload?.requestId === expectedRequestId)
         && ["completed", "failed", "cancelled"].includes(event.payload?.status)
       );
-      if (terminal || Date.now() - started > ${JSON.stringify(timeoutMs)}) {
+      const chatDone = events.some((event) =>
+        event.type === "detail"
+        && event.payload?.done
+        && (event.payload?.audience === "chat" || (chatRequestId && event.payload?.requestId === chatRequestId))
+      );
+      const terminalGraceElapsed = terminal && Date.now() - terminal.at > 2500;
+      if ((terminal && (chatDone || terminalGraceElapsed)) || Date.now() - started > ${JSON.stringify(timeoutMs)}) {
         resolve(events);
         return;
       }
@@ -797,12 +947,17 @@ const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, labe
     };
     tick();
   })`));
-  const requestEvents = expectedRequestId
-    ? events.filter((event) => !event.payload?.requestId || event.payload.requestId === expectedRequestId)
-    : events;
+  const chatRequestId = expectedRequestId ? `${expectedRequestId}-chat` : undefined;
+  const requestEvents = events.filter((event) => isRequestEvent(event, expectedRequestId));
+  const conversationAssistEvents = events.filter((event) => isConversationAssistEvent(event, expectedRequestId, chatRequestId));
   const status = requestEvents.find((event) => event.type === "status" && ["completed", "failed", "cancelled"].includes(event.payload?.status));
   const rawEvent = [...requestEvents].reverse().find((event) => event.type === "raw");
+  const conversationRawEvent = [...conversationAssistEvents].reverse().find((event) => event.type === "raw");
   const structuredEvent = requestEvents.find((event) => event.type === "structured");
+  const conversationAssistText = conversationAssistEvents
+    .filter((event) => event.type === "detail" && !event.payload?.done && typeof event.payload?.text === "string")
+    .map((event) => event.payload.text)
+    .join("");
   const structured = structuredEvent?.payload?.answer
     ? parseStructuredAnswerPayload(JSON.stringify(structuredEvent.payload.answer))
     : null;
@@ -813,10 +968,14 @@ const requestAnswer = async (mainClient: CdpClient, eventClient: CdpClient, labe
     completed: status?.payload?.status === "completed",
     failed: status?.payload?.status === "failed",
     renderedText: String(status?.payload?.text || structuredEvent?.payload?.renderedText || ""),
+    conversationAssistText,
     structured,
     requestId: status?.payload?.requestId || structuredEvent?.payload?.requestId,
+    conversationAssistRequestId: conversationAssistEvents.find((event) => event.payload?.requestId)?.payload?.requestId,
     rawModelOutput: typeof rawEvent?.payload?.text === "string" ? rawEvent.payload.text : null,
     rawModelOutputStage: rawEvent?.payload?.stage,
+    conversationAssistRawModelOutput: typeof conversationRawEvent?.payload?.text === "string" ? conversationRawEvent.payload.text : null,
+    conversationAssistRawModelOutputStage: conversationRawEvent?.payload?.stage,
     latencyMs: Date.now() - started,
     actionTimings,
   };
@@ -986,13 +1145,18 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
         failed: answerRun.failed,
         latencyMs: answerRun.latencyMs,
         requestId: answerRun.requestId,
+        conversationAssistRequestId: answerRun.conversationAssistRequestId,
         actionTimings: answerRun.actionTimings,
         renderedText: answerRun.renderedText,
+        conversation_assist: answerRun.conversationAssistText,
         parsed_output: answerRun.structured,
         final_rendered_output: answerRun.renderedText,
         raw_model_output: answerRun.rawModelOutput ?? null,
         raw_model_output_stage: answerRun.rawModelOutputStage ?? null,
         raw_model_output_available: Boolean(answerRun.rawModelOutput),
+        conversation_assist_raw_model_output: answerRun.conversationAssistRawModelOutput ?? null,
+        conversation_assist_raw_model_output_stage: answerRun.conversationAssistRawModelOutputStage ?? null,
+        conversation_assist_raw_model_output_available: Boolean(answerRun.conversationAssistRawModelOutput),
       },
     });
     if (!validation.ok) {
@@ -1125,13 +1289,18 @@ const run = async () => {
               failed: turn.failed,
               latencyMs: turn.latencyMs,
               requestId: turn.requestId,
+              conversationAssistRequestId: turn.conversationAssistRequestId,
               actionTimings: turn.actionTimings,
               renderedText: turn.renderedText,
+              conversation_assist: turn.conversationAssistText,
               parsed_output: turn.structured,
               final_rendered_output: turn.renderedText,
               raw_model_output: turn.rawModelOutput ?? null,
               raw_model_output_stage: turn.rawModelOutputStage ?? null,
               raw_model_output_available: Boolean(turn.rawModelOutput),
+              conversation_assist_raw_model_output: turn.conversationAssistRawModelOutput ?? null,
+              conversation_assist_raw_model_output_stage: turn.conversationAssistRawModelOutputStage ?? null,
+              conversation_assist_raw_model_output_available: Boolean(turn.conversationAssistRawModelOutput),
             })),
           });
           if (!result.ok) break;

@@ -48,6 +48,64 @@ const displayCode = (payload: CodingAnswerPayload): string =>
     ? payload.patch.code
     : payload.solution.code;
 
+const pythonKeywords = new Set([
+  "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+  "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal",
+  "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
+]);
+
+const builtinNames = new Set([
+  "bool", "dict", "enumerate", "float", "input", "int", "len", "list", "max", "min", "print", "range", "set",
+  "str", "sum", "tuple", "zip",
+]);
+
+const highlightCodeLine = (line: string, lineNumber: number): React.ReactNode[] => {
+  const nodes: React.ReactNode[] = [];
+  const pattern = /(#.*$|"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|[()[\]{}.,:+=*/%-])/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(line)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(line.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    let className = "";
+    if (token.startsWith("#")) className = "cp-token-comment";
+    else if (/^["']/.test(token)) className = "cp-token-string";
+    else if (/^\d/.test(token)) className = "cp-token-number";
+    else if (/^[A-Za-z_]/.test(token) && line.slice(pattern.lastIndex).trimStart().startsWith("(")) className = "cp-token-function";
+    else if (pythonKeywords.has(token)) className = "cp-token-keyword";
+    else if (builtinNames.has(token)) className = "cp-token-builtin";
+    else if (/^[A-Za-z_]/.test(token)) className = "cp-token-variable";
+    else if (/^[()[\]{}.,:+=*/%-]$/.test(token)) className = "cp-token-punctuation";
+
+    nodes.push(className
+      ? <span className={className} key={`${lineNumber}-${match.index}`}>{token}</span>
+      : token);
+    lastIndex = pattern.lastIndex;
+  }
+
+  if (lastIndex < line.length) nodes.push(line.slice(lastIndex));
+  return nodes;
+};
+
+const HighlightedCode = React.forwardRef<HTMLPreElement, { code: string }>(function HighlightedCode({ code }, ref) {
+  return (
+    <pre ref={ref} className="cp-code-block" aria-label="Generated code">
+      <code>
+        {code.split("\n").map((line, index) => (
+          <span className="cp-code-line" key={`${index}-${line}`}>
+            <span className="cp-code-line__number">{index + 1}</span>
+            <span className="cp-code-line__content">{highlightCodeLine(line, index)}</span>
+          </span>
+        ))}
+      </code>
+    </pre>
+  );
+});
+
 const CodePlaceholder = () => (
   <div className="cp-code-placeholder">
     <strong>No solution yet</strong>
@@ -228,7 +286,7 @@ export default function CodingOverlayApp() {
             <strong>{payload.problem.title || "Solution"}</strong>
             <span>{payload.problem.language || "Code"}</span>
           </div>
-          {code ? <pre ref={codeRef}><code>{code}</code></pre> : <CodePlaceholder />}
+          {code ? <HighlightedCode ref={codeRef} code={code} /> : <CodePlaceholder />}
         </section>
         <section className="cp-reasoning-panel">
           <div className="cp-panel-title">

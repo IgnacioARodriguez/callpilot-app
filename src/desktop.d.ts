@@ -175,7 +175,7 @@ declare global {
       publishLiveTranscript: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishStructuredAnswer: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => Promise<{ ok: boolean }>;
       publishRawModelOutput: (payload: { requestId?: string; stage: string; provider?: string; modelName?: string; ok: boolean; error?: string; text: string; timestamp: number }) => Promise<{ ok: boolean }>;
-      publishAnswerStatus: (payload: { requestId?: string; status: "busy" | "completed" | "failed" | "cancelled"; text?: string; error?: string; timestamp: number }) => Promise<{ ok: boolean }>;
+      publishAnswerStatus: (payload: { requestId?: string; status: "busy" | "completed" | "failed" | "cancelled"; text?: string; error?: string; timestamp: number; audience?: "chat" | "coding" }) => Promise<{ ok: boolean }>;
       listOllamaModels: (input?: { ollamaBaseUrl?: string }) => Promise<OllamaModelListResult>;
       listNvidiaModels: () => Promise<ProviderModelListResult>;
       listGroqModels: () => Promise<ProviderModelListResult>;
@@ -236,10 +236,10 @@ declare global {
       onSessionEnded: (callback: () => void) => () => void;
       onManualAnswerStatus: (callback: (payload: { ok: boolean; status: string; error?: string }) => void) => () => void;
       onAnswerHeadline: (callback: (payload: { requestId?: string; headline: string; keywords: string[] }) => void) => () => void;
-      onAnswerDetailChunk: (callback: (payload: { requestId?: string; sequence?: number; text?: string; done?: boolean; error?: string } | string) => void) => () => void;
+      onAnswerDetailChunk: (callback: (payload: { requestId?: string; sequence?: number; text?: string; done?: boolean; error?: string; audience?: "chat" | "coding" } | string) => void) => () => void;
       onStructuredAnswer: (callback: (payload: { requestId?: string; answer: StructuredAnswerPayload; renderedText: string; timestamp: number }) => void) => () => void;
       onRawModelOutput: (callback: (payload: { requestId?: string; stage: string; provider?: string; modelName?: string; ok: boolean; error?: string; text: string; timestamp: number }) => void) => () => void;
-      onAnswerStatus: (callback: (payload: { requestId?: string; status: "busy" | "completed" | "failed" | "cancelled"; text?: string; error?: string; timestamp: number }) => void) => () => void;
+      onAnswerStatus: (callback: (payload: { requestId?: string; status: "busy" | "completed" | "failed" | "cancelled"; text?: string; error?: string; timestamp: number; audience?: "chat" | "coding" }) => void) => () => void;
       onTranscriptMessage: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onLiveTranscript: (callback: (message: { id: string; speaker: TranscriptSpeaker; text: string; timestamp: number }) => void) => () => void;
       onNativelyTranscript: (callback: (payload: { streamId: string; text: string; isFinal: boolean; confidence: number }) => void) => () => void;

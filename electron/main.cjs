@@ -187,8 +187,8 @@ const liveSpokenPromptInstructions = [
   "Start with the answer itself.",
   "Target 60-100 words and stay under 120 words unless code is explicitly requested.",
   "For live coding, answer the coding problem or follow-up directly; do not describe screenshot UI, buttons, players, or page chrome.",
-  "For live coding, use the standard optimal approach when it is visible or strongly implied, including in-place pointer updates, bounds, invariants, or data structures as applicable.",
-  "For live coding, include the key invariant or approach and time/space complexity first.",
+  "For live coding, start with a natural baseline approach for new problems unless the interviewer asks to optimize or the visible constraints require the optimal algorithm.",
+  "For live coding, include the current approach and time/space complexity first; mention optimization as a later iteration when useful.",
   "For live coding, include code only when the latest prompt explicitly asks to write code, fix code, or add tests.",
   "A visible problem statement or function signature is not by itself a request to output code; for an intro Answer press, explain the approach without code.",
 ].join("\n");
@@ -206,6 +206,38 @@ const buildLiveSpokenPrompt = (prompt) => {
   return {
     ...prompt,
     system: `${system}\n${liveSpokenPromptInstructions}`.trim(),
+    user,
+  };
+};
+
+const liveCodingChatPromptInstructions = [
+  "Live coding conversation side-channel.",
+  "Return a natural spoken preview that the candidate can say to the interviewer before or while coding.",
+  "Use the transcript, previous assistant answers, and visible screen context to keep continuity.",
+  "Write like a candidate thinking out loud: 'Voy a...', 'Empezaria por...', 'Ahora cambiaria...'.",
+  "Explain the immediate plan and reasoning in simple terms, not a polished final report.",
+  "For follow-ups, explain how you would adapt the existing solution and what small issue or requirement changed.",
+  "You may use compact inline flows like strip -> lower -> return, but do not include full code blocks.",
+  "Do not return JSON, markdown fences, code blocks, schema fields, headings, formal sections, or complexity sections.",
+  "Do not duplicate the full reasoning or code answer; that belongs in the coding panel.",
+  "Prefer 2 to 5 collaborative spoken sentences: clarify an assumption, confirm the current baseline, ask a bounded question, or explain the next change.",
+  "If there is no new interviewer instruction, give a short continuation or confirmation instead of recalculating the solution.",
+  "Aim for 45 to 120 words.",
+].join("\n");
+
+const buildLiveCodingChatPrompt = (prompt) => {
+  const system = String(prompt?.system ?? "")
+    .split("\n")
+    .filter((line) => !/output_format|raw JSON|JSON contract|required keys|markdown fences/i.test(line))
+    .join("\n")
+    .trim();
+  const user = String(prompt?.user ?? "").replace(
+    /<output_format>[\s\S]*?<\/output_format>/,
+    `<output_format>\n${liveCodingChatPromptInstructions}\n</output_format>`,
+  );
+  return {
+    ...prompt,
+    system: `${system}\n${liveCodingChatPromptInstructions}`.trim(),
     user,
   };
 };
@@ -1200,11 +1232,14 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
   try {
     const structuredOutput = Boolean(input?.structuredOutput);
     const liveSpokenOutput = Boolean(input?.liveSpokenOutput) && !structuredOutput;
-    const requestPrompt = liveSpokenOutput ? buildLiveSpokenPrompt(prompt) : prompt;
+    const audience = input?.audience === "chat" || input?.audience === "coding" ? input.audience : undefined;
+    const requestPrompt = liveSpokenOutput
+      ? audience === "chat" ? buildLiveCodingChatPrompt(prompt) : buildLiveSpokenPrompt(prompt)
+      : prompt;
     const structuredSystemSuffix = structuredOutput
       ? "\nReturn only one valid JSON object that matches the structured answer contract in output_format. Do not wrap it in markdown, do not add prose before or after the JSON, and keep all required keys present."
       : "";
-    const liveSpokenSystemSuffix = liveSpokenOutput
+    const liveSpokenSystemSuffix = liveSpokenOutput && audience !== "chat"
       ? "\nLive interview response mode: ignore any output_format or JSON contract above. Return concise spoken text only, with no JSON and no decorative headings. For live coding, include commented code when a concrete solution or change is useful; otherwise start with the spoken answer immediately. Keep non-code narration interview-ready and under 120 words."
       : "";
     const buildBody = (includeResponseFormat, stream = false) => JSON.stringify({
@@ -1234,7 +1269,7 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
           });
           writeActiveSessionTrace("active");
         }
-        const payload = { requestId, sequence: detailSequence, text: chunk, done: false };
+        const payload = { requestId, sequence: detailSequence, text: chunk, done: false, audience };
         event?.sender?.send("answer:detail-chunk", payload);
         sendToOverlay("answer:detail-chunk", payload);
       };
@@ -1272,7 +1307,7 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
         const text = await readOpenAISseStream(streamResponse, (streamEvent) => {
           sendDetailChunk(extractProviderStreamDelta(streamEvent));
         }, signal);
-        const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
+        const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true, audience };
         event?.sender?.send("answer:detail-chunk", completedPayload);
         sendToOverlay("answer:detail-chunk", completedPayload);
         appendTraceEvent("provider_stream_completed", {
@@ -1400,14 +1435,17 @@ const generateWithOpenAICompatibleChat = async ({ provider, input, prompt, model
 const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName, event, signal }) => {
   const apiKey = provider.apiKey?.(input) ?? "";
   const requestId = input.requestId;
+  const audience = input?.audience === "chat" || input?.audience === "coding" ? input.audience : undefined;
   const providerStartedAt = Date.now();
   if (!apiKey) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_api_key` };
   if (!modelName) return { ok: false, text: "", provider: provider.id, modelName, requestId, error: `missing_${provider.id}_model` };
 
   try {
     const liveSpokenOutput = Boolean(input?.liveSpokenOutput) && !input?.structuredOutput;
-    const requestPrompt = liveSpokenOutput ? buildLiveSpokenPrompt(prompt) : prompt;
-    const liveSpokenSystemSuffix = liveSpokenOutput
+    const requestPrompt = liveSpokenOutput
+      ? audience === "chat" ? buildLiveCodingChatPrompt(prompt) : buildLiveSpokenPrompt(prompt)
+      : prompt;
+    const liveSpokenSystemSuffix = liveSpokenOutput && audience !== "chat"
       ? "\nLive interview response mode: ignore any output_format or JSON contract above. Return concise spoken text only, with no JSON and no decorative headings. For live coding, include commented code when a concrete solution or change is useful; otherwise start with the spoken answer immediately. Keep non-code narration interview-ready and under 120 words."
       : "";
     const requestBase = {
@@ -1500,7 +1538,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
         });
         writeActiveSessionTrace("active");
       }
-      const payload = { requestId, sequence: detailSequence, text: chunk, done: false };
+      const payload = { requestId, sequence: detailSequence, text: chunk, done: false, audience };
       event?.sender?.send("answer:detail-chunk", payload);
       sendToOverlay("answer:detail-chunk", payload);
     };
@@ -1555,7 +1593,7 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
       sendDetailChunk(extractProviderStreamDelta(streamEvent));
     }, signal);
     if (signal?.aborted) throw Object.assign(new Error("Request cancelled"), { name: "AbortError" });
-    const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true };
+    const completedPayload = { requestId, sequence: detailSequence + 1, text: "", done: true, audience };
     event?.sender?.send("answer:detail-chunk", completedPayload);
     sendToOverlay("answer:detail-chunk", completedPayload);
     appendTraceEvent("provider_stream_completed", {
@@ -1578,12 +1616,12 @@ const generateWithOpenAIResponses = async ({ provider, input, prompt, modelName,
     };
   } catch (error) {
     if (isAbortError(error)) {
-      const cancelledPayload = { requestId, sequence: 0, text: "", done: true, cancelled: true };
+      const cancelledPayload = { requestId, sequence: 0, text: "", done: true, cancelled: true, audience };
       event?.sender?.send("answer:detail-chunk", cancelledPayload);
       sendToOverlay("answer:detail-chunk", cancelledPayload);
       return { ok: false, text: "", provider: provider.id, modelName, requestId, error: "cancelled", cancelled: true };
     }
-    const failedPayload = { requestId, sequence: 0, text: "", done: true, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
+    const failedPayload = { requestId, sequence: 0, text: "", done: true, error: error instanceof Error ? error.message : `${provider.id}_request_failed`, audience };
     event?.sender?.send("answer:detail-chunk", failedPayload);
     sendToOverlay("answer:detail-chunk", failedPayload);
     return { ok: false, text: "", provider: provider.id, modelName, requestId, error: error instanceof Error ? error.message : `${provider.id}_request_failed` };
@@ -2304,11 +2342,11 @@ const sessionWindowBounds = () => {
   const workArea = screen.getPrimaryDisplay().workArea;
   const margin = 24;
   const gap = 12;
-  const preferredCodingWidth = 780;
-  const preferredOverlayWidth = 420;
-  const preferredHeight = 640;
+  const preferredCodingWidth = 1180;
+  const preferredOverlayWidth = 380;
+  const preferredHeight = 820;
   const availableWidth = Math.max(680, workArea.width - margin * 2);
-  const overlayWidth = Math.max(320, Math.min(preferredOverlayWidth, Math.floor(availableWidth * 0.34)));
+  const overlayWidth = Math.max(300, Math.min(preferredOverlayWidth, Math.floor(availableWidth * 0.28)));
   const codingWidth = Math.max(360, Math.min(preferredCodingWidth, availableWidth - overlayWidth - gap));
   const height = Math.max(360, Math.min(preferredHeight, workArea.height - margin * 2));
   const x = workArea.x + margin;

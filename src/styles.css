@@ -15,12 +15,21 @@ body {
   color: #17202a;
 }
 
+html:has(.cp-overlay),
+html:has(.cp-coding),
+body:has(.cp-overlay),
+body:has(.cp-coding),
+#root:has(.cp-overlay),
+#root:has(.cp-coding) {
+  background: transparent;
+}
+
 :root {
-  --cp-overlay-bg: rgba(255, 255, 255, 0.78);
-  --cp-bubble-candidate: rgba(241, 239, 232, 0.9);
-  --cp-bubble-recruiter: rgba(245, 244, 239, 0.75);
-  --cp-bubble-assistant-bg: #eeedfe;
-  --cp-bubble-assistant-border: #cecbf6;
+  --cp-overlay-bg: rgba(255, 255, 255, 0.46);
+  --cp-bubble-candidate: rgba(241, 239, 232, 0.68);
+  --cp-bubble-recruiter: rgba(245, 244, 239, 0.54);
+  --cp-bubble-assistant-bg: rgba(238, 237, 254, 0.58);
+  --cp-bubble-assistant-border: rgba(206, 203, 246, 0.68);
   --cp-text: #17202a;
   --cp-text-muted: #5f5e5a;
   --cp-accent: #534ab7;
@@ -340,16 +349,16 @@ button:disabled {
 
 .cp-coding {
   height: 100vh;
-  background: rgba(248, 250, 252, 0.84);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.38);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 12px;
   color: #17202a;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  padding: 12px;
+  padding: 10px;
   -webkit-app-region: drag;
 }
 
@@ -403,7 +412,7 @@ button:disabled {
 .cp-coding__body {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 1.15fr) minmax(240px, 0.85fr);
+  grid-template-columns: minmax(520px, 1.45fr) minmax(300px, 0.75fr);
   gap: 10px;
   -webkit-app-region: no-drag;
 }
@@ -412,22 +421,22 @@ button:disabled {
 .cp-reasoning-panel {
   min-width: 0;
   min-height: 0;
-  border: 1px solid rgba(203, 213, 225, 0.9);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(203, 213, 225, 0.68);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.42);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
 }
 
 .cp-code-panel {
-  border-color: #3e4451;
-  background: #282c34;
+  border-color: rgba(62, 68, 81, 0.82);
+  background: rgba(40, 44, 52, 0.68);
 }
 
 .cp-code-panel .cp-panel-title {
-  border-bottom-color: #3e4451;
-  background: #21252b;
+  border-bottom-color: rgba(62, 68, 81, 0.82);
+  background: rgba(33, 37, 43, 0.72);
 }
 
 .cp-code-panel .cp-panel-title strong {
@@ -461,16 +470,70 @@ button:disabled {
 .cp-code-panel pre {
   margin: 0;
   overflow: auto;
-  padding: 14px;
-  background: #282c34;
-  color: #abb2bf;
+  padding: 12px 0;
+  background: rgba(40, 44, 52, 0.68);
+  color: #d7dae0;
   font-family: "Cascadia Code", "Fira Code", "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.52;
   tab-size: 4;
+  white-space: pre;
+  word-break: normal;
 }
 
 .cp-code-panel code {
+  color: #d7dae0;
+  display: block;
+  min-width: max-content;
+}
+
+.cp-code-line {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  min-height: 20px;
+}
+
+.cp-code-line__number {
+  color: #636d83;
+  padding: 0 12px 0 8px;
+  text-align: right;
+  user-select: none;
+}
+
+.cp-code-line__content {
+  padding-right: 18px;
+}
+
+.cp-token-keyword {
+  color: #c678dd;
+}
+
+.cp-token-function {
+  color: #61afef;
+}
+
+.cp-token-builtin {
+  color: #56b6c2;
+}
+
+.cp-token-variable {
+  color: #d7dae0;
+}
+
+.cp-token-string {
+  color: #98c379;
+}
+
+.cp-token-number {
+  color: #d19a66;
+}
+
+.cp-token-comment {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.cp-token-punctuation {
   color: #abb2bf;
 }
 
@@ -482,7 +545,7 @@ button:disabled {
   gap: 7px;
   padding: 18px;
   text-align: center;
-  background: #282c34;
+  background: rgba(40, 44, 52, 0.68);
   color: #abb2bf;
 }
 
@@ -508,9 +571,9 @@ button:disabled {
 }
 
 .cp-mini-chat div {
-  border: 1px solid #d9e1ea;
-  border-radius: 10px;
-  background: rgba(238, 237, 254, 0.72);
+  border: 1px solid rgba(217, 225, 234, 0.68);
+  border-radius: 8px;
+  background: rgba(238, 237, 254, 0.44);
   padding: 10px;
 }
 

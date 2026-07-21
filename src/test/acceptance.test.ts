@@ -111,11 +111,15 @@ test("acceptance: session windows open side-by-side from a top-left margin", () 
 test("acceptance: live coding code panel uses One Dark Pro contrast", () => {
   const css = read("src/styles.css");
 
-  assert.match(css, /\.cp-code-panel\s*\{[\s\S]*background:\s*#282c34/);
-  assert.match(css, /\.cp-code-panel \.cp-panel-title\s*\{[\s\S]*background:\s*#21252b/);
+  assert.match(css, /\.cp-code-panel\s*\{[\s\S]*background:\s*rgba\(40,\s*44,\s*52/);
+  assert.match(css, /\.cp-code-panel \.cp-panel-title\s*\{[\s\S]*background:\s*rgba\(33,\s*37,\s*43/);
   assert.match(css, /\.cp-code-panel \.cp-panel-title strong\s*\{[\s\S]*color:\s*#e5c07b/);
   assert.match(css, /\.cp-code-panel \.cp-panel-title span\s*\{[\s\S]*color:\s*#61afef/);
-  assert.match(css, /\.cp-code-panel pre\s*\{[\s\S]*color:\s*#abb2bf/);
+  assert.match(css, /\.cp-code-panel pre\s*\{[\s\S]*color:\s*#d7dae0/);
+  assert.match(css, /\.cp-token-keyword\s*\{[\s\S]*color:\s*#c678dd/);
+  assert.match(css, /\.cp-token-string\s*\{[\s\S]*color:\s*#98c379/);
+  assert.match(css, /\.cp-token-comment\s*\{[\s\S]*color:\s*#8b949e/);
+  assert.match(css, /\.cp-token-variable\s*\{[\s\S]*color:\s*#d7dae0/);
   assert.match(css, /"Cascadia Code", "Fira Code"/);
 });
 
@@ -609,25 +613,55 @@ test("acceptance: CoderPad staged replay keeps one live coding session across sc
   const stage0Expected = read("tests/fixtures/coderpad/string_normalize_username_followup_input/stage_00_initial/expected.json");
   const stage1Expected = read("tests/fixtures/coderpad/string_normalize_username_followup_input/stage_01_collapse_spaces/expected.json");
   const stage2Expected = read("tests/fixtures/coderpad/string_normalize_username_followup_input/stage_02_tests/expected.json");
+  const transcriptOnlyScenario = read("tests/fixtures/coderpad/word_frequency_conversation_first/scenario.json");
+  const transcriptOnlyExpected = read("tests/fixtures/coderpad/word_frequency_conversation_first/stage_00_transcript_only/expected.json");
+  const sortingExpected = read("tests/fixtures/coderpad/word_frequency_conversation_first/stage_02_sorting_followup/expected.json");
 
   assert.match(pkg, /test:e2e:live-coding-replay:normalize-name/);
+  assert.match(pkg, /test:e2e:live-coding-replay:word-frequency/);
   assert.match(runner, /--scenario-file/);
   assert.match(runner, /readStageScenario/);
   assert.match(runner, /runStageScenarioLoop/);
   assert.match(runner, /publishTranscriptDelta/);
   assert.match(runner, /transcriptPrompt/);
   assert.match(runner, /validateScenarioStageAnswer/);
+  assert.match(runner, /mustContainAny/);
+  assert.match(runner, /mustPreserve/);
+  assert.match(runner, /conversationAssistText/);
+  assert.match(runner, /onAnswerDetailChunk/);
+  assert.match(runner, /conversation_assist/);
+  assert.match(runner, /codingWorkspace/);
+  assert.match(runner, /mustContainGroups/);
+  assert.match(runner, /There is no current screenshot for this stage/);
   assert.match(runner, /sameSessionAsPreviousStage:\s*true/);
   assert.match(runner, /Screenshot not found for \$\{stageScenario\.id\}\/\$\{stage\.id\}/);
   assert.match(scenario, /string_normalize_username_followup_input/);
   assert.match(scenario, /stage_00_initial\/coderpad\.png/);
   assert.match(scenario, /stage_01_collapse_spaces\/coderpad\.png/);
   assert.match(scenario, /stage_02_tests\/coderpad\.png/);
+  assert.match(stage0Expected, /conversationAssist/);
+  assert.match(stage0Expected, /codingWorkspace/);
+  assert.match(stage0Expected, /mustContainGroups/);
   assert.match(stage0Expected, /normalize_name/);
   assert.match(stage0Expected, /limpio/);
+  assert.match(stage1Expected, /conversationAssist/);
+  assert.match(stage1Expected, /codingWorkspace/);
   assert.match(stage1Expected, /split/);
   assert.match(stage1Expected, /join/);
+  assert.match(stage2Expected, /conversationAssist/);
+  assert.match(stage2Expected, /codingWorkspace/);
   assert.match(stage2Expected, /assert normalize_name/);
+  assert.match(transcriptOnlyScenario, /word_frequency_conversation_first/);
+  assert.match(transcriptOnlyScenario, /"image": null/);
+  assert.match(transcriptOnlyScenario, /"code": null/);
+  assert.match(transcriptOnlyExpected, /mustContainAny/);
+  assert.match(transcriptOnlyExpected, /conversationAssist/);
+  assert.match(transcriptOnlyExpected, /codingWorkspace/);
+  assert.match(transcriptOnlyExpected, /count_words/);
+  assert.match(sortingExpected, /conversationAssist/);
+  assert.match(sortingExpected, /codingWorkspace/);
+  assert.match(sortingExpected, /mustContainGroups/);
+  assert.match(sortingExpected, /sortedWordFrequency/);
 });
 
 test("acceptance: live coding controls separate exercise reset from full session reset", () => {

@@ -58,6 +58,7 @@ import {
   upsertSession,
   withNoAnswerForUngroundedDrift,
   type AssistantModeId,
+  type BuiltPrompt,
   type CodingAnswerPayload,
   type EvidenceEmbedder,
   type EvidenceEmbedding,
@@ -83,6 +84,23 @@ import CodingOverlayApp from "./overlay/CodingOverlayApp";
 import "./styles.css";
 
 type InterviewSetupId = "interview" | "live_coding";
+
+const buildLiveCodingChatPrompt = (prompt: BuiltPrompt): BuiltPrompt => ({
+  ...prompt,
+  system: [
+    prompt.system,
+    "Live coding conversation side-channel.",
+    "Your job is to give the candidate a natural spoken preview of how to approach the current coding step.",
+    "Use the transcript, previous assistant answers, and current screen as context, but do not repeat the full reasoning panel.",
+    "Write like a candidate thinking out loud to the interviewer: 'Voy a...', 'Empezaria por...', 'Ahora cambiaria...'.",
+    "Explain the immediate plan and reasoning in simple terms before the code is written.",
+    "For follow-ups, explain how you would adapt the existing solution, including the small tradeoff or bug being addressed.",
+    "You may use a compact inline flow such as strip -> lower -> return, but do not include a full code block.",
+    "Do not include JSON, schema fields, markdown headings, formal sections, complexity sections, or the full solution.",
+    "If there is no new interviewer instruction, give a natural continuation or confirmation grounded in the current context.",
+    "Aim for 2 to 5 spoken sentences, roughly 45 to 120 words.",
+  ].join("\n"),
+});
 
 const INTERVIEW_SETUPS: Array<{
   id: InterviewSetupId;
@@ -798,6 +816,7 @@ function App() {
       requestId,
       status: "busy",
       text: "Preparing interview context",
+      audience: contextForAnswer.activeMode === "live_coding" ? "coding" : undefined,
       timestamp: Date.now(),
     });
     emitAnswerTiming("context_snapshot_started");
@@ -811,6 +830,7 @@ function App() {
         requestId,
         status: "busy",
         text: "Retrieving relevant background",
+        audience: contextForAnswer.activeMode === "live_coding" ? "coding" : undefined,
         timestamp: Date.now(),
       });
       emitAnswerTiming("evidence_lookup_started");
@@ -831,9 +851,9 @@ function App() {
       void window.callpilotDesktop?.recordSessionEvent?.("answer_context_built", { ...builtPrompt.debug.answerContextTrace });
     }
     const liveSpokenOutput = contextForAnswer.activeMode !== "live_coding" && (modelProvider === "openai" || modelProvider === "nvidia" || modelProvider === "groq");
-    const recordRawModelOutput = (stage: string, output: GenerateAnswerResult) => {
+    const recordRawModelOutput = (stage: string, output: GenerateAnswerResult, outputRequestId = requestId) => {
       void window.callpilotDesktop?.publishRawModelOutput?.({
-        requestId,
+        requestId: outputRequestId,
         stage,
         provider: output.provider,
         modelName: output.modelName,
@@ -843,10 +863,39 @@ function App() {
         timestamp: Date.now(),
       });
     };
+    const liveCodingChatRequestId = `${requestId}-chat`;
+    const liveCodingChatPromise = contextForAnswer.activeMode === "live_coding" && modelProvider !== "mock" && window.callpilotDesktop?.generateAnswer
+      ? window.callpilotDesktop.generateAnswer({
+        provider: "openai",
+        modelName: "gpt-4o-mini",
+        requestId: liveCodingChatRequestId,
+        structuredOutput: false,
+        liveSpokenOutput: true,
+        audience: "chat",
+        prompt: buildLiveCodingChatPrompt(builtPrompt),
+        apiKey: sessionApiKey,
+        maxTokens: 180,
+        timeoutMs: 35000,
+      }).then((chatResult) => {
+        recordRawModelOutput("live_coding_chat", chatResult, liveCodingChatRequestId);
+        if (chatResult.ok && chatResult.text.trim()) {
+          appendAssistantTranscriptLine(chatResult.text, { publish: false });
+        }
+        return chatResult;
+      }).catch((error): GenerateAnswerResult => ({
+        ok: false,
+        text: "",
+        provider: "openai",
+        modelName: "gpt-4o-mini",
+        requestId: liveCodingChatRequestId,
+        error: error instanceof Error ? error.message : "live_coding_chat_failed",
+      }))
+      : null;
     emitAnswerTiming("prompt_ready", {
       promptChars: builtPrompt.debug.approximateChars,
       liveSpokenOutput,
       structuredOutput: !liveSpokenOutput,
+      liveCodingChat: Boolean(liveCodingChatPromise),
     });
 
     try {
@@ -855,6 +904,7 @@ function App() {
         requestId,
         status: "busy",
         text: `Calling ${providerLabel}`,
+        audience: contextForAnswer.activeMode === "live_coding" ? "coding" : undefined,
         timestamp: Date.now(),
       });
       if (modelProvider === "mock") {
@@ -906,6 +956,7 @@ function App() {
         requestId,
         structuredOutput: !liveSpokenOutput,
         liveSpokenOutput,
+        audience: contextForAnswer.activeMode === "live_coding" ? "coding" : undefined,
         prompt: builtPrompt,
         apiKey: sessionApiKey,
         nativelyApiKey,
@@ -926,6 +977,7 @@ function App() {
         requestId,
         status: "busy",
         text: "Formatting answer",
+        audience: contextForAnswer.activeMode === "live_coding" ? "coding" : undefined,
         timestamp: Date.now(),
       });
       emitAnswerTiming("format_started");
@@ -1123,19 +1175,26 @@ function App() {
           void window.callpilotDesktop.publishAnswerStatus?.({
             requestId,
             status: "completed",
-            text,
+            text: structured.kind === "coding" ? "" : text,
+            audience: structured.kind === "coding" ? "coding" : undefined,
             timestamp: Date.now(),
           });
         } else {
           void window.callpilotDesktop.publishAnswerStatus?.({
             requestId,
             status: result.cancelled ? "cancelled" : result.ok ? "completed" : "failed",
-            text,
+            text: contextForAnswer.activeMode === "live_coding" ? "" : text,
             error: result.error,
+            audience: contextForAnswer.activeMode === "live_coding" ? "coding" : undefined,
             timestamp: Date.now(),
           });
         }
-        if (result.ok) appendAssistantTranscriptLine(text, { publish: false });
+        if (result.ok) {
+          const transcriptAnswer = structured?.kind === "coding"
+            ? structured.payload.narration.spokenAnswer
+            : text;
+          appendAssistantTranscriptLine(transcriptAnswer, { publish: false });
+        }
         emitAnswerTiming("publish_completed", {
           status: result.cancelled ? "cancelled" : result.ok ? "completed" : "failed",
           textChars: text.length,
@@ -1154,8 +1213,9 @@ function App() {
         void window.callpilotDesktop?.publishAnswerStatus?.({
           requestId,
           status: "failed",
-          text,
+          text: contextForAnswer.activeMode === "live_coding" ? "" : text,
           error: message,
+          audience: contextForAnswer.activeMode === "live_coding" ? "coding" : undefined,
           timestamp: Date.now(),
         });
       }

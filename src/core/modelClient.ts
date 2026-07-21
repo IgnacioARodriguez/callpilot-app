@@ -27,6 +27,7 @@ export interface GenerateAnswerInput {
   requestId?: string;
   structuredOutput?: boolean;
   liveSpokenOutput?: boolean;
+  audience?: "chat" | "coding";
   apiKey?: string;
   nativelyApiKey?: string;
   nvidiaApiKey?: string;

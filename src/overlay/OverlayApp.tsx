@@ -27,6 +27,7 @@ interface AnswerDetailPayload {
   done?: boolean;
   cancelled?: boolean;
   error?: string;
+  audience?: "chat" | "coding";
 }
 
 interface AnswerStatusPayload {
@@ -35,6 +36,7 @@ interface AnswerStatusPayload {
   text?: string;
   error?: string;
   timestamp: number;
+  audience?: "chat" | "coding";
 }
 
 interface LiveTranscriptState {
@@ -299,8 +301,13 @@ export default function OverlayApp() {
     });
     const disposeChunk = window.callpilotDesktop?.onAnswerDetailChunk?.((payload: AnswerDetailPayload | string) => {
       const normalized: AnswerDetailPayload = typeof payload === "string" ? { text: payload } : payload;
+      if (normalized.audience === "coding") return;
       const chunk = normalized.text ?? "";
-      if (normalized.requestId) setActiveAnswerRequestId(normalized.done || normalized.cancelled ? null : normalized.requestId);
+      if (normalized.requestId) {
+        setActiveAnswerRequestId(normalized.done || normalized.cancelled
+          ? normalized.audience === "chat" ? activeAnswerRequestIdRef.current : null
+          : normalized.requestId);
+      }
       if (normalized.cancelled) {
         setActivity({ state: "idle", label: "Stopped", updatedAt: Date.now() });
       }
@@ -343,11 +350,21 @@ export default function OverlayApp() {
         delete assistantIdByRequest.current[normalized.requestId];
         delete lastSequenceByRequest.current[normalized.requestId];
         if (activeAssistantId.current === id) activeAssistantId.current = null;
-        setActiveAnswerRequestId(null);
+        if (normalized.audience !== "chat") setActiveAnswerRequestId(null);
       }
     });
     const disposeAnswerStatus = window.callpilotDesktop?.onAnswerStatus?.((payload: AnswerStatusPayload) => {
       const text = (payload.text ?? (payload.error ? `Generation failed: ${payload.error}` : "")).trim();
+      if (payload.audience === "coding") {
+        const terminal = payload.status === "completed" || payload.status === "failed" || payload.status === "cancelled";
+        setActivity({
+          state: terminal ? "idle" : "transcribing",
+          label: payload.status === "failed" ? "Code failed" : payload.status === "cancelled" ? "Stopped" : payload.status === "busy" ? "Coding" : "Ready",
+          updatedAt: Date.now(),
+        });
+        if (terminal && payload.requestId && activeAnswerRequestIdRef.current === payload.requestId) setActiveAnswerRequestId(null);
+        return;
+      }
       if (!text) return;
       const terminal = payload.status === "completed" || payload.status === "failed" || payload.status === "cancelled";
       if (!payload.requestId && payload.status === "busy") {

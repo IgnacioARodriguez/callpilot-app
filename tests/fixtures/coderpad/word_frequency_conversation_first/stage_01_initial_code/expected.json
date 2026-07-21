@@ -1,30 +1,61 @@
 {
-  "expectedFunction": "count_words",
-  "mustContain": [
-    "def count_words(sentence):",
-    "counts",
-    "get",
-    "split"
-  ],
-  "mustPreserve": [
-    "def count_words(sentence):",
-    "counts",
-    "sentence",
-    "word"
-  ],
-  "mustNotContain": [
-    "Counter",
-    "re.findall",
-    "def solution",
-    "def frequency",
-    "lower()",
-    "sorted("
-  ],
-  "semanticExpectations": [
-    "Debe reconocer que la implementacion resuelve el caso normal mostrado.",
-    "Puede senalar que split(\" \") genera strings vacios con espacios multiples.",
-    "No debe convertir esa observacion en un requisito nuevo si el interviewer todavia no lo pidio.",
-    "Debe preservar la firma y nombres visibles.",
-    "No debe reescribir automaticamente la solucion usando Counter."
-  ]
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      [
+        "count",
+        "contar",
+        "conteo",
+        "frecuencia"
+      ],
+      [
+        "dictionary",
+        "diccionario",
+        "dict"
+      ],
+      [
+        "split",
+        "divid",
+        "separar",
+        "dividir"
+      ],
+      [
+        "mantengo",
+        "preservo",
+        "visible",
+        "firma",
+        "count_words"
+      ]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_words",
+    "mustContain": [
+      "def count_words(sentence):",
+      "counts",
+      "get",
+      "split"
+    ],
+    "mustPreserve": [
+      "def count_words(sentence):",
+      "counts",
+      "sentence",
+      "word"
+    ],
+    "mustNotContain": [
+      "Counter",
+      "re.findall",
+      "def solution",
+      "def frequency",
+      "lower()",
+      "sorted("
+    ],
+    "semanticExpectations": [
+      "Debe reconocer que la implementacion resuelve el caso normal mostrado.",
+      "Puede senalar que split(\" \") genera strings vacios con espacios multiples.",
+      "No debe convertir esa observacion en un requisito nuevo si el interviewer todavia no lo pidio.",
+      "Debe preservar la firma y nombres visibles.",
+      "No debe reescribir automaticamente la solucion usando Counter."
+    ]
+  }
 }

@@ -1,27 +1,55 @@
 {
-  "expectedFunction": null,
-  "mustContainAny": [
-    "count_words",
-    "word",
-    "dictionary",
-    "dict",
-    "split"
-  ],
-  "mustNotContain": [
-    "Counter",
-    "re.findall",
-    "strip punctuation",
-    "remove punctuation",
-    "lower()",
-    "sorted(",
-    "input("
-  ],
-  "semanticExpectations": [
-    "Debe distinguir el small talk del problema tecnico.",
-    "Debe inferir unicamente un conteo de palabras separadas por espacios.",
-    "Puede proponer una firma como count_words porque todavia no existe una firma visible.",
-    "Debe reconocer que el nombre de funcion es una eleccion propia, no una firma proporcionada.",
-    "No debe anadir todavia case-insensitive, eliminacion de puntuacion ni sorting.",
-    "No debe exigir un screenshot para poder responder."
-  ]
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      [
+        "count",
+        "contar",
+        "conteo",
+        "frecuencia"
+      ],
+      [
+        "word",
+        "palabra"
+      ],
+      [
+        "dictionary",
+        "diccionario",
+        "dict"
+      ],
+      [
+        "split",
+        "divid",
+        "dividir",
+        "separar"
+      ]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": null,
+    "mustContainAny": [
+      "count_words",
+      "word",
+      "dictionary",
+      "dict",
+      "split"
+    ],
+    "mustNotContain": [
+      "Counter",
+      "re.findall",
+      "strip punctuation",
+      "remove punctuation",
+      "lower()",
+      "sorted(",
+      "input("
+    ],
+    "semanticExpectations": [
+      "Debe distinguir el small talk del problema tecnico.",
+      "Debe inferir unicamente un conteo de palabras separadas por espacios.",
+      "Puede proponer una firma como count_words porque todavia no existe una firma visible.",
+      "Debe reconocer que el nombre de funcion es una eleccion propia, no una firma proporcionada.",
+      "No debe anadir todavia case-insensitive, eliminacion de puntuacion ni sorting.",
+      "No debe exigir un screenshot para poder responder."
+    ]
+  }
 }

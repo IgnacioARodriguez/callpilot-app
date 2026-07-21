@@ -906,13 +906,16 @@ test("live coding display keeps solution code even when user did not ask for cod
   assert.match(compacted.text, /I will use a hash map/);
 });
 
-test("live coding prompt requires commented solution code without expanding narration", () => {
+test("live coding prompt starts with a natural baseline before optimization", () => {
   const prompt = buildPrompt(createGlobalContext({ activeMode: "live_coding", preferredLanguage: "english" }), "interviewer: solve two sum");
   const liveCoding = MODES.find((mode) => mode.id === "live_coding");
 
+  assert.match(liveCoding?.systemPromptFragment ?? "", /natural baseline solution/i);
+  assert.match(liveCoding?.systemPromptFragment ?? "", /Do not jump to the most optimal algorithm/i);
   assert.match(liveCoding?.systemPromptFragment ?? "", /solution\.code/i);
   assert.match(liveCoding?.systemPromptFragment ?? "", /inline comments/i);
-  assert.doesNotMatch(liveCoding?.systemPromptFragment ?? "", /only when requested/i);
+  assert.match(prompt.system, /simplest correct implementation/i);
+  assert.match(prompt.system, /interviewer explicitly ask for an optimized approach/i);
   assert.match(prompt.system, /narration\.spokenAnswer/i);
   assert.match(prompt.system, /short/i);
 });

@@ -1,22 +1,45 @@
 {
-  "expectedFunction": "normalize_name",
-  "mustContain": [
-    "def normalize_name(name):",
-    "limpio",
-    "assert normalize_name",
-    "== \"\""
-  ],
-  "mustNotContain": [
-    "def solution",
-    "input(",
-    "pytest",
-    "unittest",
-    "raise ValueError"
-  ],
-  "semanticExpectations": [
-    "Debe mantener la solucion actual y reconocer la cobertura de los tests.",
-    "Debe cubrir caso normal, espacios multiples, input vacio y whitespace mixto.",
-    "No debe convertir la funcion en una aplicacion interactiva.",
-    "No debe renombrar la funcion ni la variable."
-  ]
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      [
+        "test",
+        "assert",
+        "prueba"
+      ],
+      [
+        "empty",
+        "entrada vac",
+        "vacío",
+        "vacía",
+        "vacio",
+        "vacia",
+        "whitespace",
+        "tabs",
+        "tabul"
+      ]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": "normalize_name",
+    "mustContain": [
+      "def normalize_name(name):",
+      "limpio",
+      "assert normalize_name",
+      "== \"\""
+    ],
+    "mustNotContain": [
+      "def solution",
+      "input(",
+      "pytest",
+      "unittest",
+      "raise ValueError"
+    ],
+    "semanticExpectations": [
+      "Debe mantener la solucion actual y reconocer la cobertura de los tests.",
+      "Debe cubrir caso normal, espacios multiples, input vacio y whitespace mixto.",
+      "No debe convertir la funcion en una aplicacion interactiva.",
+      "No debe renombrar la funcion ni la variable."
+    ]
+  }
 }

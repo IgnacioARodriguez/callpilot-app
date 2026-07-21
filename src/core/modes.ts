@@ -14,8 +14,8 @@ export const MODES: ModeDefinition[] = [
     id: "live_coding",
     label: "Live Coding",
     description: "Step-by-step coding interview support.",
-    systemPromptFragment: "Prefer Python unless context clearly indicates another language. First answer with the optimal interview approach, invariant, data structure or pointer strategy, and time/space complexity. Always populate solution.code for coding answers when a concrete solution or change is possible. solution.code must include brief inline comments explaining each meaningful block or line; for Python include at least two # comments in non-trivial solutions. Keep narration.spokenAnswer short, sayable, and distinct from the commented code panel.",
-    defaultOutputFormat: ["Approach", "Code or change", "Complexity", "Edge cases if relevant"],
+    systemPromptFragment: "Prefer Python unless context clearly indicates another language. For a new live-coding problem, start with a natural baseline solution that is easy to explain and implement. Do not jump to the most optimal algorithm unless the visible constraints require it or the interviewer asks to optimize. State complexity honestly for the current baseline, and mention the optimization path only briefly when useful. For follow-up optimization requests, then upgrade the approach and code while preserving the prior contract. Always populate solution.code for coding answers when a concrete solution or change is possible. solution.code must include brief inline comments explaining each meaningful block or line; for Python include at least two # comments in non-trivial solutions. Keep narration.spokenAnswer short, collaborative, sayable, and distinct from the commented code panel.",
+    defaultOutputFormat: ["Baseline approach", "Code or change", "Complexity", "Edge cases if relevant"],
     responseLengthPreference: "medium",
   },
   {

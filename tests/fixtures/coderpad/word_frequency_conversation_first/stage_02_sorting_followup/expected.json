@@ -1,31 +1,62 @@
 {
-  "expectedFunction": "count_words",
-  "mustContain": [
-    "def count_words(sentence):",
-    "counts"
-  ],
-  "mustPreserve": [
-    "def count_words(sentence):",
-    "sentence",
-    "counts"
-  ],
-  "mustNotContain": [
-    "Counter",
-    "re.findall",
-    "strip_punctuation",
-    "remove_punctuation",
-    "def frequency",
-    "def solution"
-  ],
-  "semanticExpectations": [
-    "Debe adaptar la implementacion visible, no crear otra funcion principal.",
-    "Debe mantener el conteo case-insensitive ya incorporado en el codigo.",
-    "Debe ordenar por frecuencia descendente y alfabeticamente en empates.",
-    "Debe preservar la puntuacion porque el interviewer lo aclaro.",
-    "Debe usar el screenshot actual como fuente de verdad.",
-    "No debe volver al contrato inicial que devolvia un diccionario."
-  ],
-  "semanticChecks": {
-    "sortedWordFrequency": true
+  "conversationAssist": {
+    "maxWords": 130,
+    "mustContainGroups": [
+      [
+        "sort",
+        "orden",
+        "sorting"
+      ],
+      [
+        "descending",
+        "descendente",
+        "mayor",
+        "frecuencia"
+      ],
+      [
+        "ties",
+        "empate",
+        "alphabet",
+        "alfab"
+      ],
+      [
+        "mantengo",
+        "preservo",
+        "existing",
+        "conteo",
+        "count"
+      ]
+    ]
+  },
+  "codingWorkspace": {
+    "expectedFunction": "count_words",
+    "mustContain": [
+      "def count_words(sentence):",
+      "counts"
+    ],
+    "mustPreserve": [
+      "def count_words(sentence):",
+      "sentence",
+      "counts"
+    ],
+    "mustNotContain": [
+      "Counter",
+      "re.findall",
+      "strip_punctuation",
+      "remove_punctuation",
+      "def frequency",
+      "def solution"
+    ],
+    "semanticExpectations": [
+      "Debe adaptar la implementacion visible, no crear otra funcion principal.",
+      "Debe mantener el conteo case-insensitive ya incorporado en el codigo.",
+      "Debe ordenar por frecuencia descendente y alfabeticamente en empates.",
+      "Debe preservar la puntuacion porque el interviewer lo aclaro.",
+      "Debe usar el screenshot actual como fuente de verdad.",
+      "No debe volver al contrato inicial que devolvia un diccionario."
+    ],
+    "semanticChecks": {
+      "sortedWordFrequency": true
+    }
   }
 }
