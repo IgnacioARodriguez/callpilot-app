@@ -56,6 +56,23 @@ const technicalSignalPatterns = [
 const hasTechnicalSignal = (line: string): boolean =>
   technicalSignalPatterns.some((pattern) => pattern.test(line));
 
+const isAssistantOverlayMarker = (line: string): boolean =>
+  /^\s*(?:callpilot|live interview chat|reasoning|what to say|approach|complexity|edge cases|respuesta|enfoque|codigo|c[oó]digo|complejidad|casos borde)\b/i.test(line);
+
+const removeAssistantOverlayBlocks = (lines: string[]): string[] => {
+  const cleaned: string[] = [];
+  let skippingAssistantOverlay = false;
+  for (const line of lines) {
+    if (isAssistantOverlayMarker(line)) {
+      skippingAssistantOverlay = true;
+      continue;
+    }
+    if (skippingAssistantOverlay) continue;
+    cleaned.push(line);
+  }
+  return cleaned;
+};
+
 const isUiNoise = (line: string): boolean => {
   if (exactUiNoisePatterns.some((pattern) => pattern.test(line))) return true;
   const looksLikeUiNoise = uiNoisePatterns.some((pattern) => pattern.test(line));
@@ -71,12 +88,13 @@ export const extractTechnicalScreenFocus = (visibleText: string, maxLines = 32):
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean);
   if (lines.length === 0) return "";
+  const sourceLines = removeAssistantOverlayBlocks(lines);
 
-  const focused = lines
+  const focused = sourceLines
     .filter((line) => hasTechnicalSignal(line) && !isUiNoise(line))
     .slice(0, maxLines);
   if (focused.length > 0) {
-    const title = lines.find((line) =>
+    const title = sourceLines.find((line) =>
       !isUiNoise(line)
       && !focused.includes(line)
       && /^[A-Z0-9][A-Za-z0-9 +#.'_-]{1,80}$/.test(line)
@@ -84,7 +102,7 @@ export const extractTechnicalScreenFocus = (visibleText: string, maxLines = 32):
     return [title, ...focused].filter(Boolean).slice(0, maxLines).join("\n");
   }
 
-  return lines
+  return sourceLines
     .filter((line) => !isUiNoise(line))
     .slice(0, Math.min(maxLines, 12))
     .join("\n");

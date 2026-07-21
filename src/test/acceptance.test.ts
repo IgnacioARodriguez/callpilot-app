@@ -519,6 +519,23 @@ test("acceptance: CoderPad multi-turn E2E validates executable code per turn", (
   assert.match(pkg, /test:e2e:coderpad-reset-flow/);
 });
 
+test("acceptance: live coding replay E2E drives screenshot answer and follow-up through IPC", () => {
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const pkg = read("package.json");
+
+  assert.match(pkg, /test:e2e:live-coding-replay/);
+  assert.match(runner, /startSession/);
+  assert.match(runner, /publishScreenContext/);
+  assert.match(runner, /requestAnswer/);
+  assert.match(runner, /recognizeScreenText/);
+  assert.match(runner, /codingPayload/);
+  assert.match(runner, /initialPreservedVisibleFunction/);
+  assert.match(runner, /followupPreservedVisibleFunction/);
+  assert.match(runner, /raw_model_output_available:\s*false/);
+  assert.match(runner, /parsed_output/);
+  assert.match(runner, /final_rendered_output/);
+});
+
 test("acceptance: live coding controls separate exercise reset from full session reset", () => {
   const app = read("src/main.tsx");
   const resetExerciseStart = app.indexOf("const resetLiveCodingExercise");

@@ -2758,6 +2758,58 @@ test("screen focus extracts CoderPad problem from dirty browser OCR", () => {
   assert.doesNotMatch(focus, /Google Chrome|app\.coderpad\.io|Run Code|Submit|Participants|Redis/);
 });
 
+test("screen focus drops CallPilot assistant overlay code from screenshot OCR", () => {
+  const screenContext = classifyScreenText([
+    "Running CPython 3.13",
+    "def hello():",
+    "    return \"hello\"",
+    "debe retornar el nombre del usuario",
+    "CallPilot",
+    "Live interview chat",
+    "Respuesta: La implementacion asume un nombre estatico.",
+    "Codigo:",
+    "def get_user_name():",
+    "    return \"Ejemplo Usuario\"",
+    "Reasoning",
+    "Problem",
+  ].join("\n"));
+  const prompt = buildPrompt(
+    createGlobalContext({ activeMode: "live_coding", preferredLanguage: "spanish", screenContext }),
+    "interviewer: Ahora el usuario debe poner su nombre en un input",
+  );
+  const structured = parseStructuredAnswerPayload(JSON.stringify({
+    kind: "coding",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: null,
+      responseType: "follow_up_change",
+      spokenAnswer: "",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+      problem: { title: "Retornar nombre", summary: "Retornar nombre", language: "Python", functionSignature: "def hello()", constraints: [] },
+      solution: {
+        approachSteps: ["Read the username."],
+        code: "def hello():\n    # Read the username from stdin.\n    username = input(\"Nombre de usuario: \")\n    return username",
+        complexity: { time: "O(1)", space: "O(1)", rationale: "Single value." },
+        edgeCases: [],
+        invariants: [],
+      },
+      narration: { spokenAnswer: "Leo el nombre desde input.", currentStep: "Update function" },
+      tests: [],
+      patch: { kind: "replace", code: "def hello():\n    username = input(\"Nombre de usuario: \")\n    return username" },
+    },
+  }));
+
+  assert.match(screenContext.visibleText, /def hello\(\):/);
+  assert.doesNotMatch(screenContext.visibleText, /get_user_name/);
+  assert.deepEqual(extractVisiblePythonSymbols(prompt.user), [{ kind: "function", name: "hello", signature: "def hello():" }]);
+  assert.equal(violatesVisibleCodeContinuity(structured, prompt.user), false);
+});
+
 test("screen focus keeps CoderPad failing test lines despite UI labels", () => {
   const focus = extractTechnicalScreenFocus([
     "CoderPad hidden tests are failing for abba and tmmzuxt.",
