@@ -1745,6 +1745,27 @@ const stripInventedCodeWhenNoVisibleCode = (analysisText, visibleText) => {
     .trim();
 };
 
+const OCR_WORKER_READY_TIMEOUT_MS = 15000;
+const OCR_RECOGNIZE_TIMEOUT_MS = 18000;
+const OCR_BEST_EFFORT_BUDGET_MS = 24000;
+const OCR_MAX_UPSCALED_WIDTH = 2200;
+const OCR_MAX_UPSCALED_HEIGHT = 1600;
+
+const withTimeout = (promise, timeoutMs, message) => {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+};
+
+const resetOcrWorker = (language, workerOrPromise) => {
+  ocrWorkers.delete(language);
+  Promise.resolve(workerOrPromise)
+    .then((worker) => worker?.terminate?.())
+    .catch(() => {});
+};
+
 const getOcrWorker = async (language) => {
   const normalizedLanguage = normalizeOcrLanguage(language);
   if (!ocrWorkers.has(normalizedLanguage)) {
@@ -1754,10 +1775,16 @@ const getOcrWorker = async (language) => {
     });
     ocrWorkers.set(normalizedLanguage, workerPromise);
   }
-  return ocrWorkers.get(normalizedLanguage);
+  const workerPromise = ocrWorkers.get(normalizedLanguage);
+  try {
+    return await withTimeout(workerPromise, OCR_WORKER_READY_TIMEOUT_MS, "ocr_worker_timeout");
+  } catch (error) {
+    resetOcrWorker(normalizedLanguage, workerPromise);
+    throw error;
+  }
 };
 
-const recognizeImageText = async ({ imagePath, language }) => {
+const recognizeImageText = async ({ imagePath, language, timeoutMs = OCR_RECOGNIZE_TIMEOUT_MS }) => {
   const normalizedLanguage = normalizeOcrLanguage(language);
   if (!imagePath || typeof imagePath !== "string") {
     return { ok: false, text: "", language: normalizedLanguage, error: "missing_image_path" };
@@ -1765,10 +1792,22 @@ const recognizeImageText = async ({ imagePath, language }) => {
   if (!fs.existsSync(imagePath)) {
     return { ok: false, text: "", language: normalizedLanguage, path: imagePath, error: "image_not_found" };
   }
+  const imageStats = fs.statSync(imagePath);
+  if (!imageStats.isFile() || imageStats.size === 0) {
+    return { ok: false, text: "", language: normalizedLanguage, path: imagePath, error: "empty_image_file" };
+  }
+  if (imageStats.size < 16) {
+    return { ok: false, text: "", language: normalizedLanguage, path: imagePath, error: "invalid_image_file" };
+  }
 
+  let worker;
   try {
-    const worker = await getOcrWorker(normalizedLanguage);
-    const result = await worker.recognize(imagePath);
+    worker = await getOcrWorker(normalizedLanguage);
+    const result = await withTimeout(
+      worker.recognize(imagePath),
+      timeoutMs,
+      "ocr_recognize_timeout",
+    );
     const text = cleanOcrText(result?.data?.text);
     return {
       ok: Boolean(text),
@@ -1779,36 +1818,51 @@ const recognizeImageText = async ({ imagePath, language }) => {
       error: text ? undefined : "empty_ocr_result",
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : "ocr_failed";
+    if (/timeout/i.test(message)) resetOcrWorker(normalizedLanguage, worker);
     return {
       ok: false,
       text: "",
       language: normalizedLanguage,
       path: imagePath,
-      error: error instanceof Error ? error.message : "ocr_failed",
+      error: message,
     };
   }
 };
 
 const recognizeImageTextBestEffort = async ({ imagePath, language }) => {
-  const direct = await recognizeImageText({ imagePath, language });
+  const startedAt = Date.now();
+  const remainingBudget = () => Math.max(2500, OCR_BEST_EFFORT_BUDGET_MS - (Date.now() - startedAt));
+  const direct = await recognizeImageText({
+    imagePath,
+    language,
+    timeoutMs: Math.min(OCR_RECOGNIZE_TIMEOUT_MS, remainingBudget()),
+  });
   if (direct.ok && Number(direct.confidence ?? 0) >= 70) return direct;
+  if (remainingBudget() <= 3500 || direct.error === "ocr_recognize_timeout" || direct.error === "ocr_worker_timeout") return direct;
 
   let upscaledPath = "";
   try {
     const image = nativeImage.createFromPath(imagePath);
     const size = image.getSize();
     if (!size.width || !size.height) return direct;
-    const scale = size.width < 1000 ? 4 : 2;
+    const maxScale = Math.min(OCR_MAX_UPSCALED_WIDTH / size.width, OCR_MAX_UPSCALED_HEIGHT / size.height);
+    const scale = size.width < 900 ? Math.min(2, maxScale) : Math.min(1.35, maxScale);
+    if (scale <= 1.05) return direct;
     const upscaled = image.resize({
-      width: size.width * scale,
-      height: size.height * scale,
+      width: Math.round(size.width * scale),
+      height: Math.round(size.height * scale),
       quality: "best",
     });
     const screenshotDir = path.join(userDataPath(), "screenshots");
     fs.mkdirSync(screenshotDir, { recursive: true });
     upscaledPath = path.join(screenshotDir, `ocr-upscaled-${Date.now()}.png`);
     fs.writeFileSync(upscaledPath, upscaled.toPNG());
-    const retry = await recognizeImageText({ imagePath: upscaledPath, language });
+    const retry = await recognizeImageText({
+      imagePath: upscaledPath,
+      language,
+      timeoutMs: Math.min(OCR_RECOGNIZE_TIMEOUT_MS, remainingBudget()),
+    });
     const directScore = Number(direct.confidence ?? 0) + String(direct.text || "").length / 20;
     const retryScore = Number(retry.confidence ?? 0) + String(retry.text || "").length / 20;
     return retry.ok && retryScore > directScore
@@ -3164,6 +3218,18 @@ ipcMain.handle("screen:capture", async (_event, input) => {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const filePath = path.join(screenshotDir, `screen-${Date.now()}.png`);
     const png = source.thumbnail.toPNG();
+    if (!png.length) {
+      appendTraceEvent("screen_capture_completed", {
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        displayName: source.name,
+        preferredWindowTitle: preferWindowTitle || undefined,
+        hideCallPilotWindows,
+        error: "empty_screen_capture",
+      });
+      writeActiveSessionTrace("active");
+      return { ok: false, error: "empty_screen_capture", displayName: source.name };
+    }
     fs.writeFileSync(filePath, png);
     appendTraceEvent("screen_capture_completed", {
       ok: true,
@@ -3188,6 +3254,12 @@ ipcMain.handle("screen:capture", async (_event, input) => {
 });
 ipcMain.handle("screen:ocr", async (_event, input) => {
   const startedAt = Date.now();
+  appendTraceEvent("screen_ocr_started", {
+    language: input?.language,
+    fileName: typeof input?.path === "string" && input.path ? path.basename(input.path) : "",
+    timeoutMs: OCR_BEST_EFFORT_BUDGET_MS,
+  });
+  writeActiveSessionTrace("active");
   const result = await recognizeImageTextBestEffort({
     imagePath: typeof input?.path === "string" ? input.path : "",
     language: input?.language,
@@ -3284,11 +3356,13 @@ ipcMain.handle("screen:analyze", async (_event, input) => {
 
   try {
     const imageDataUrl = `data:image/png;base64,${fs.readFileSync(imagePath, "base64")}`;
-    const ocr = await recognizeImageTextBestEffort({ imagePath, language: input?.language || "eng" }).catch((error) => ({
-      ok: false,
-      text: "",
-      error: error instanceof Error ? error.message : "ocr_failed",
-    }));
+    const ocr = input?.skipOcr === true
+      ? { ok: false, text: "", error: "ocr_skipped" }
+      : await recognizeImageTextBestEffort({ imagePath, language: input?.language || "eng" }).catch((error) => ({
+        ok: false,
+        text: "",
+        error: error instanceof Error ? error.message : "ocr_failed",
+      }));
     const visibleOcrText = removeNonTechnicalOcrNoise(ocr?.text);
     const prompt = [
       "Analyze this screenshot for a live coding interview assistant.",

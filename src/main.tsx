@@ -799,7 +799,11 @@ function App() {
     transcript,
   ]);
 
-  const ask = React.useCallback(async (questionOverride?: string, answerAudience: AnswerAudience = "both") => {
+  const ask = React.useCallback(async (
+    questionOverride?: string,
+    answerAudience: AnswerAudience = "both",
+    modeOverride?: AssistantModeId,
+  ) => {
     if (isGeneratingRef.current || activeAnswerRequestIdRef.current) {
       setLiveAssistStatus("Already answering; repeated Answer press ignored");
       void window.callpilotDesktop?.recordSessionEvent?.("manual_answer_ignored", {
@@ -835,9 +839,12 @@ function App() {
         })),
       });
     }
-    const contextForAnswer = pendingTranscriptDrafts.length > 0
-      ? { ...context, transcript: flushedTranscript, updatedAt: new Date().toISOString() }
-      : context;
+    const contextForAnswer = {
+      ...(pendingTranscriptDrafts.length > 0
+        ? { ...context, transcript: flushedTranscript, updatedAt: new Date().toISOString() }
+        : context),
+      ...(modeOverride ? { activeMode: modeOverride } : {}),
+    };
     const effectiveQuestion = questionOverride ?? question;
     const requestId = `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const requestStartedAt = Date.now();
@@ -3318,11 +3325,12 @@ function App() {
     });
     const disposeCommand = window.callpilotDesktop?.onRemoteControlCommand?.((command) => {
       if (command.type === "answer_code") {
+        if (activeMode !== "live_coding") setActiveMode("live_coding");
         const prompt = [
           getManualAnswerPrompt(),
           "remote_action: Answer code was pressed. Prioritize the coding workspace: return or update the complete solution.code when a concrete code answer is appropriate, while keeping any chat narration short.",
         ].filter(Boolean).join("\n");
-        void ask(prompt, "coding");
+        void ask(prompt, "coding", "live_coding");
       }
       if (command.type === "stop_answer") void cancelAnswer();
       if (command.type === "reset_exercise") resetLiveCodingExercise();

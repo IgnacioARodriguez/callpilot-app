@@ -8,6 +8,14 @@ interface StructuredAnswerEvent {
   timestamp: number;
 }
 
+type ServiceTone = "idle" | "working" | "ready" | "warn" | "error";
+
+interface ServiceChip {
+  label: string;
+  detail: string;
+  tone: ServiceTone;
+}
+
 const emptyCodingAnswer: CodingAnswerPayload = {
   version: "1",
   answerNeeded: true,
@@ -112,14 +120,28 @@ const CodePlaceholder = () => (
   </div>
 );
 
+const terminalAnswerStatuses = new Set(["completed", "failed", "cancelled"]);
+
 export default function CodingOverlayApp() {
   const [payload, setPayload] = React.useState<CodingAnswerPayload>(emptyCodingAnswer);
   const [updatedAt, setUpdatedAt] = React.useState<number>(0);
   const [screenStatus, setScreenStatus] = React.useState("No screenshot selected");
+  const [captureStatus, setCaptureStatus] = React.useState<ServiceChip>({
+    label: "Image",
+    detail: "No screenshot yet",
+    tone: "idle",
+  });
+  const [answerStatus, setAnswerStatus] = React.useState<ServiceChip>({
+    label: "Answer",
+    detail: "Ready when context is ready",
+    tone: "idle",
+  });
   const [screenshotCount, setScreenshotCount] = React.useState(0);
   const [isCapturingScreen, setIsCapturingScreen] = React.useState(false);
   const [isRequestingAnswer, setIsRequestingAnswer] = React.useState(false);
   const [activeAnswerRequestId, setActiveAnswerRequestId] = React.useState<string | null>(null);
+  const captureStartedAtRef = React.useRef<number | null>(null);
+  const answerStartedAtRef = React.useRef<number | null>(null);
   const codeRef = React.useRef<HTMLPreElement | null>(null);
   const reasoningRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -128,6 +150,7 @@ export default function CodingOverlayApp() {
       if (event.answer.kind !== "coding") return;
       setPayload(event.answer.payload);
       setUpdatedAt(event.timestamp);
+      setAnswerStatus({ label: "Answer", detail: "Code answer ready", tone: "ready" });
     });
     return () => dispose?.();
   }, []);
@@ -135,14 +158,32 @@ export default function CodingOverlayApp() {
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onAnswerStatus?.((event) => {
       if (event.requestId) {
-        setActiveAnswerRequestId(event.status === "completed" || event.status === "failed" || event.status === "cancelled" ? null : event.requestId);
+        setActiveAnswerRequestId(terminalAnswerStatuses.has(event.status) ? null : event.requestId);
       }
-      if (event.status === "completed" || event.status === "failed" || event.status === "cancelled") {
+      if (event.audience === "coding" || event.requestId === activeAnswerRequestId) {
+        if (event.status === "busy") {
+          answerStartedAtRef.current = answerStartedAtRef.current ?? Date.now();
+          setAnswerStatus({ label: "Answer", detail: "Thinking through the code", tone: "working" });
+        }
+        if (event.status === "completed") {
+          answerStartedAtRef.current = null;
+          setAnswerStatus({ label: "Answer", detail: "Answer ready", tone: "ready" });
+        }
+        if (event.status === "failed") {
+          answerStartedAtRef.current = null;
+          setAnswerStatus({ label: "Answer", detail: event.error ? `Failed: ${event.error}` : "Answer failed", tone: "error" });
+        }
+        if (event.status === "cancelled") {
+          answerStartedAtRef.current = null;
+          setAnswerStatus({ label: "Answer", detail: "Stopped", tone: "warn" });
+        }
+      }
+      if (terminalAnswerStatuses.has(event.status)) {
         setIsRequestingAnswer(false);
       }
     });
     return () => dispose?.();
-  }, []);
+  }, [activeAnswerRequestId]);
 
   React.useEffect(() => {
     const dispose = window.callpilotDesktop?.onScreenContextPublished?.((event) => {
@@ -151,8 +192,38 @@ export default function CodingOverlayApp() {
       const hasCodingSignal = classified.kind === "coding_problem" || classified.kind === "code_editor";
       setScreenshotCount((current) => Math.min(5, current + 1));
       setScreenStatus(hasCodingSignal ? "Screenshots ready for Answer code" : "Screenshot captured; no coding problem detected");
+      setCaptureStatus({
+        label: "Image",
+        detail: hasCodingSignal ? "Ready for Answer code" : "Captured, unclear coding signal",
+        tone: hasCodingSignal ? "ready" : "warn",
+      });
     });
     return () => dispose?.();
+  }, []);
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      if (captureStartedAtRef.current) {
+        const elapsed = now - captureStartedAtRef.current;
+        if (elapsed > 30000) {
+          setCaptureStatus({ label: "Image", detail: "May be stuck; recapture if needed", tone: "error" });
+          setScreenStatus("Screenshot is taking too long; try recapturing");
+        } else if (elapsed > 12000) {
+          setCaptureStatus({ label: "Image", detail: "Still reading screenshot", tone: "warn" });
+          setScreenStatus("Still reading screenshot...");
+        }
+      }
+      if (answerStartedAtRef.current) {
+        const elapsed = now - answerStartedAtRef.current;
+        if (elapsed > 45000) {
+          setAnswerStatus({ label: "Answer", detail: "May be stuck; Stop is safe", tone: "error" });
+        } else if (elapsed > 15000) {
+          setAnswerStatus({ label: "Answer", detail: "Still working", tone: "warn" });
+        }
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const captureScreenContext = React.useCallback(async () => {
@@ -166,27 +237,50 @@ export default function CodingOverlayApp() {
     }
 
     setIsCapturingScreen(true);
+    captureStartedAtRef.current = Date.now();
     setScreenStatus("Capturing screen...");
+    setCaptureStatus({ label: "Image", detail: "Capturing screen", tone: "working" });
     try {
       const capturedAt = Date.now();
       const screenshot = await window.callpilotDesktop.captureScreenshot({ hideCallPilotWindows: true });
       if (!screenshot.ok || !screenshot.path) {
         setScreenStatus(`Screenshot failed: ${screenshot.error ?? "unknown"}`);
+        setCaptureStatus({ label: "Image", detail: `Capture failed: ${screenshot.error ?? "unknown"}`, tone: "error" });
         return;
       }
 
       setScreenStatus("Reading screenshot...");
+      setCaptureStatus({ label: "Image", detail: "Reading text with OCR", tone: "working" });
       const ocr = await window.callpilotDesktop.recognizeScreenText({
         path: screenshot.path,
         language: normalizeOcrLanguage("auto"),
       });
+      let visionText = "";
+      let visionError = "";
+      if ((!ocr.ok || !ocr.text) && window.callpilotDesktop.analyzeScreenshot) {
+        setScreenStatus("OCR failed; trying vision...");
+        setCaptureStatus({ label: "Image", detail: "OCR failed; trying vision", tone: "warn" });
+        const vision = await window.callpilotDesktop.analyzeScreenshot({
+          path: screenshot.path,
+          provider: "openai",
+          modelName: "gpt-5-mini",
+          skipOcr: true,
+        });
+        if (vision.ok && vision.text) {
+          visionText = vision.text;
+        } else {
+          visionError = vision.error ?? "vision_failed";
+        }
+      }
       const visibleText = [
         ocr.ok && ocr.text ? ocr.text : "",
         ocr.ok
           ? `Local OCR: ${ocr.language} - confidence ${ocrConfidenceLabel(ocr.confidence)}${typeof ocr.confidence === "number" ? ` (${ocr.confidence.toFixed(1)})` : ""}`
           : `Local OCR failed: ${ocr.error ?? "no text found"}`,
+        visionText ? `Vision fallback:\n${visionText}` : "",
+        visionError ? `Vision fallback failed: ${visionError}` : "",
       ].filter(Boolean).join("\n\n");
-      const classified = classifyScreenText(ocr.ok && ocr.text ? ocr.text : "");
+      const classified = classifyScreenText([ocr.ok && ocr.text ? ocr.text : "", visionText].filter(Boolean).join("\n"));
       const hasCodingSignal = classified.kind === "coding_problem" || classified.kind === "code_editor";
       const published = await window.callpilotDesktop.publishScreenContext({
         screenshotPath: screenshot.path,
@@ -198,19 +292,32 @@ export default function CodingOverlayApp() {
       setScreenStatus(published.ok
         ? hasCodingSignal ? "Screenshot ready for Answer code" : "No coding problem detected"
         : `Context update failed: ${published.error ?? "unknown"}`);
+      setCaptureStatus(published.ok
+        ? {
+          label: "Image",
+          detail: hasCodingSignal ? `${screenshotCount + 1} screenshot${screenshotCount + 1 === 1 ? "" : "s"} ready` : "Captured, but coding text unclear",
+          tone: hasCodingSignal ? "ready" : "warn",
+        }
+        : { label: "Image", detail: `Context failed: ${published.error ?? "unknown"}`, tone: "error" });
     } catch (error) {
       setScreenStatus(error instanceof Error ? error.message : "Screenshot capture failed");
+      setCaptureStatus({ label: "Image", detail: error instanceof Error ? error.message : "Screenshot failed", tone: "error" });
     } finally {
+      captureStartedAtRef.current = null;
       setIsCapturingScreen(false);
     }
-  }, []);
+  }, [screenshotCount]);
 
   const requestAnswer = async () => {
     setIsRequestingAnswer(true);
+    answerStartedAtRef.current = Date.now();
+    setAnswerStatus({ label: "Answer", detail: screenshotCount > 0 ? "Working with screenshots" : "Working without screenshot", tone: "working" });
     const result = await window.callpilotDesktop?.requestAnswer?.({ audience: "coding" }).catch(() => ({ ok: false }));
     if (!result?.ok) {
+      answerStartedAtRef.current = null;
       setIsRequestingAnswer(false);
       setScreenStatus("Answer request failed");
+      setAnswerStatus({ label: "Answer", detail: "Request failed", tone: "error" });
     }
   };
 
@@ -219,6 +326,8 @@ export default function CodingOverlayApp() {
     const requestId = activeAnswerRequestId;
     setActiveAnswerRequestId(null);
     setIsRequestingAnswer(false);
+    answerStartedAtRef.current = null;
+    setAnswerStatus({ label: "Answer", detail: "Stopping", tone: "warn" });
     await window.callpilotDesktop?.cancelAnswer?.(requestId).catch(() => undefined);
   };
 
@@ -226,9 +335,13 @@ export default function CodingOverlayApp() {
     setPayload(emptyCodingAnswer);
     setUpdatedAt(0);
     setScreenStatus("New exercise ready");
+    setCaptureStatus({ label: "Image", detail: "No screenshot for this exercise", tone: "idle" });
+    setAnswerStatus({ label: "Answer", detail: "Ready when context is ready", tone: "idle" });
     setScreenshotCount(0);
     setActiveAnswerRequestId(null);
     setIsRequestingAnswer(false);
+    captureStartedAtRef.current = null;
+    answerStartedAtRef.current = null;
     await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_exercise" }).catch(() => undefined);
   };
 
@@ -236,9 +349,13 @@ export default function CodingOverlayApp() {
     setPayload(emptyCodingAnswer);
     setUpdatedAt(0);
     setScreenStatus("New session ready");
+    setCaptureStatus({ label: "Image", detail: "No screenshot yet", tone: "idle" });
+    setAnswerStatus({ label: "Answer", detail: "Ready when context is ready", tone: "idle" });
     setScreenshotCount(0);
     setActiveAnswerRequestId(null);
     setIsRequestingAnswer(false);
+    captureStartedAtRef.current = null;
+    answerStartedAtRef.current = null;
     await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_session" }).catch(() => undefined);
   };
 
@@ -248,9 +365,13 @@ export default function CodingOverlayApp() {
         setPayload(emptyCodingAnswer);
         setUpdatedAt(0);
         setScreenStatus(command.type === "reset_session" ? "New session ready" : "New exercise ready");
+        setCaptureStatus({ label: "Image", detail: "No screenshot yet", tone: "idle" });
+        setAnswerStatus({ label: "Answer", detail: "Ready when context is ready", tone: "idle" });
         setScreenshotCount(0);
         setActiveAnswerRequestId(null);
         setIsRequestingAnswer(false);
+        captureStartedAtRef.current = null;
+        answerStartedAtRef.current = null;
         return;
       }
       if (command.type === "screenshot") {
@@ -284,6 +405,14 @@ export default function CodingOverlayApp() {
           </span>
           <span>{hasContent ? responseTypeLabel(payload.responseType) : "Solution workspace"}</span>
         </div>
+      </div>
+      <div className="cp-service-strip" aria-label="Live coding service status">
+        {[captureStatus, answerStatus].map((status) => (
+          <span className={`cp-service-chip cp-service-chip--${status.tone}`} key={status.label}>
+            <strong>{status.label}</strong>
+            {status.detail}
+          </span>
+        ))}
       </div>
       <div className="cp-coding__body">
         <section className="cp-code-panel">

@@ -78,7 +78,7 @@ button:disabled {
   padding: 12px;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   -webkit-app-region: drag;
 }
 
@@ -124,6 +124,89 @@ button:disabled {
 .cp-listening--transcribing .cp-listening__dot {
   background: #534ab7;
   box-shadow: 0 0 0 3px rgba(83, 74, 183, 0.14);
+}
+
+.cp-service-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 9px;
+  -webkit-app-region: no-drag;
+}
+
+.cp-service-chip {
+  min-height: 26px;
+  max-width: 100%;
+  border: 1px solid rgba(106, 101, 144, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.48);
+  color: #5d6472;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-service-chip strong {
+  color: currentColor;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.cp-service-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #9aa3af;
+}
+
+.cp-service-chip--working {
+  border-color: rgba(83, 74, 183, 0.28);
+  background: rgba(238, 237, 254, 0.44);
+  color: #5148a8;
+}
+
+.cp-service-chip--working::before {
+  background: #534ab7;
+  box-shadow: 0 0 0 3px rgba(83, 74, 183, 0.13);
+}
+
+.cp-service-chip--ready {
+  border-color: rgba(47, 158, 113, 0.32);
+  background: rgba(235, 250, 241, 0.58);
+  color: #126b3d;
+}
+
+.cp-service-chip--ready::before {
+  background: #2f9e71;
+}
+
+.cp-service-chip--warn {
+  border-color: rgba(196, 132, 20, 0.34);
+  background: rgba(255, 248, 232, 0.62);
+  color: #875b09;
+}
+
+.cp-service-chip--warn::before {
+  background: #c47f0e;
+}
+
+.cp-service-chip--error {
+  border-color: rgba(179, 48, 48, 0.38);
+  background: rgba(255, 241, 241, 0.66);
+  color: #9c2424;
+}
+
+.cp-service-chip--error::before {
+  background: #b64242;
 }
 
 .cp-typing {
@@ -356,7 +439,7 @@ button:disabled {
   border-radius: 12px;
   color: #17202a;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   padding: 10px;
   -webkit-app-region: drag;
@@ -367,7 +450,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 2px 10px;
+  padding: 0 2px 7px;
 }
 
 .cp-coding__bar div {

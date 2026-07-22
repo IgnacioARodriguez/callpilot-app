@@ -773,6 +773,7 @@ test("acceptance: live coding controls separate exercise reset from full session
   assert.match(electronMain, /"answer_code"/);
   assert.match(desktopTypes, /"answer_code"/);
   assert.match(app, /command\.type === "answer_code"/);
+  assert.match(app, /void ask\(prompt, "coding", "live_coding"\)/);
 });
 
 test("acceptance: live coding screenshots accumulate before Answer code", () => {
@@ -791,9 +792,59 @@ test("acceptance: live coding screenshots accumulate before Answer code", () => 
   assert.match(codingOverlay, /const \[screenshotCount, setScreenshotCount\]/);
   assert.match(codingOverlay, /setScreenshotCount\(\(current\) => Math\.min\(5, current \+ 1\)\)/);
   assert.match(codingOverlay, /Screenshots ready for Answer code/);
+  assert.match(codingOverlay, /OCR failed; trying vision/);
+  assert.match(codingOverlay, /skipOcr: true/);
+  assert.match(codingOverlay, /Vision fallback:/);
+  assert.match(codingOverlay, /cp-service-chip/);
+  assert.match(codingOverlay, /Still reading screenshot/);
+  assert.match(codingOverlay, /May be stuck; recapture if needed/);
   assert.match(codingOverlay, /cp-capture-count/);
   assert.match(styles, /\.cp-coding__actions \.cp-capture-count/);
   assert.match(styles, /\.cp-coding__actions \.cp-capture-count\.ready/);
+});
+
+test("acceptance: overlays expose user-readable service readiness and stuck states", () => {
+  const overlay = read("src/overlay/OverlayApp.tsx");
+  const codingOverlay = read("src/overlay/CodingOverlayApp.tsx");
+  const styles = read("src/styles.css");
+
+  assert.match(overlay, /Audio/);
+  assert.match(overlay, /Answer/);
+  assert.match(overlay, /Still working/);
+  assert.match(overlay, /May be stuck; Stop is safe/);
+  assert.match(codingOverlay, /Image/);
+  assert.match(codingOverlay, /Answer/);
+  assert.match(codingOverlay, /Ready for Answer code/);
+  assert.match(styles, /\.cp-service-strip/);
+  assert.match(styles, /\.cp-service-chip--working/);
+  assert.match(styles, /\.cp-service-chip--ready/);
+  assert.match(styles, /\.cp-service-chip--warn/);
+  assert.match(styles, /\.cp-service-chip--error/);
+});
+
+test("acceptance: desktop OCR is bounded and traceable", () => {
+  const electronMain = read("electron/main.cjs");
+
+  assert.match(electronMain, /OCR_RECOGNIZE_TIMEOUT_MS/);
+  assert.match(electronMain, /OCR_BEST_EFFORT_BUDGET_MS/);
+  assert.match(electronMain, /screen_ocr_started/);
+  assert.match(electronMain, /ocr_recognize_timeout/);
+  assert.match(electronMain, /empty_image_file/);
+  assert.match(electronMain, /empty_screen_capture/);
+  assert.match(electronMain, /resetOcrWorker/);
+});
+
+test("acceptance: Electron stress runner covers real hang classes", () => {
+  const pkg = JSON.parse(read("package.json"));
+  const stress = read("tests/e2e/stress/electronStress.cjs");
+
+  assert.match(pkg.scripts["test:e2e:stress"], /tests\/e2e\/stress\/electronStress\.cjs/);
+  assert.match(stress, /empty_image_file/);
+  assert.match(stress, /parallel transcript plus OCR plus answer stays bounded/);
+  assert.match(stress, /every OCR start has an OCR completion/);
+  assert.match(stress, /no OCR operation exceeds bounded budget/);
+  assert.match(stress, /answer path remains in live_coding mode/);
+  assert.match(stress, /structured answer reaches renderer event bridge/);
 });
 
 test("acceptance: session start clears stale live transcription streams", () => {
