@@ -154,7 +154,7 @@ declare global {
       runPrivacyCheck: () => Promise<PrivacyCheckResult>;
       captureScreenshot: (input?: { preferWindowTitle?: string; strictWindowTitle?: boolean; hideCallPilotWindows?: boolean }) => Promise<ScreenshotResult>;
       recognizeScreenText: (input: { path: string; language?: OcrLanguage | "auto" | "english" | "spanish" }) => Promise<OcrResult>;
-      analyzeScreenshot: (input: { path: string; modelName: string; provider?: "openai" | "nvidia"; apiKey?: string; nvidiaApiKey?: string }) => Promise<ScreenAnalysisResult>;
+      analyzeScreenshot: (input: { path: string; modelName: string; provider?: "openai" | "nvidia"; apiKey?: string; nvidiaApiKey?: string; skipOcr?: boolean }) => Promise<ScreenAnalysisResult>;
       publishScreenContext: (payload: PublishScreenContextInput) => Promise<PublishScreenContextResult>;
       startSession: (options?: {
         mode?: AssistantModeId;

@@ -44,6 +44,7 @@
     "test:e2e:real-vision": "node --experimental-strip-types tests/e2e/runner/sessionRunner.ts --track=real-vision",
     "test:e2e:desktop-video-interview": "npm run test:e2e:desktop-video-interview:smoke",
     "test:e2e:desktop-video-interview:smoke": "npm run build && node tests/e2e/video-interview/desktopVideoInterviewSmoke.cjs",
+    "test:e2e:stress": "npm run build && node tests/e2e/stress/electronStress.cjs",
     "test:e2e:local-video-interview": "npm run build && node tests/e2e/video-interview/localVideoInterviewRunner.cjs",
     "analyze:local-video-interview": "node tests/local-video-analysis/analyzeLocalVideo.cjs",
     "test:e2e:reports": "node scripts/summarize-e2e-reports.mjs",

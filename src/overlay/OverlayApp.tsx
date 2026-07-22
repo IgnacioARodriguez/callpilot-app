@@ -46,6 +46,14 @@ interface LiveTranscriptState {
   lastUpdatedAt: number;
 }
 
+type ServiceTone = "idle" | "working" | "ready" | "warn" | "error";
+
+interface ServiceChip {
+  label: string;
+  detail: string;
+  tone: ServiceTone;
+}
+
 const toRole = (speaker: string): OverlayMessageRole =>
   speaker === "candidate" ? "candidate" : speaker === "assistant" ? "assistant" : "recruiter";
 
@@ -107,6 +115,8 @@ const liveTranscriptText = (text = ""): string => {
   return `...${clean.slice(-260)}`;
 };
 
+const terminalAnswerStatuses = new Set(["completed", "failed", "cancelled"]);
+
 export default function OverlayApp() {
   const [messages, setMessages] = React.useState<OverlayMessage[]>([]);
   const [isRequestingAnswer, setIsRequestingAnswer] = React.useState(false);
@@ -116,12 +126,23 @@ export default function OverlayApp() {
     label: "Waiting",
     updatedAt: 0,
   });
+  const [audioStatus, setAudioStatus] = React.useState<ServiceChip>({
+    label: "Audio",
+    detail: "Waiting for live audio",
+    tone: "idle",
+  });
+  const [answerStatus, setAnswerStatus] = React.useState<ServiceChip>({
+    label: "Answer",
+    detail: "Ready when asked",
+    tone: "idle",
+  });
   const activeAssistantId = React.useRef<string | null>(null);
   const assistantIdByRequest = React.useRef<Record<string, string>>({});
   const lastSequenceByRequest = React.useRef<Record<string, number>>({});
   const liveTranscriptByRole = React.useRef<Partial<Record<OverlayMessageRole, LiveTranscriptState>>>({});
   const messagesStateRef = React.useRef<OverlayMessage[]>([]);
   const activeAnswerRequestIdRef = React.useRef<string | null>(null);
+  const answerStartedAtRef = React.useRef<number | null>(null);
   const messagesRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
@@ -234,33 +255,44 @@ export default function OverlayApp() {
     const disposeTranscript = window.callpilotDesktop?.onTranscriptMessage?.((message) => {
       const role = toRole(message.speaker);
       setActivity({ state: "transcribing", label: role === "candidate" ? "Me" : "Transcribing", updatedAt: Date.now() });
+      setAudioStatus({ label: "Audio", detail: role === "candidate" ? "Heard your voice" : "Transcript updated", tone: "working" });
       upsertLiveTranscript(role, message.text, "final");
     });
     const disposeLive = window.callpilotDesktop?.onLiveTranscript?.((message) => {
       const role = toRole(message.speaker);
       setActivity({ state: "transcribing", label: role === "candidate" ? "Me" : "Transcribing", updatedAt: Date.now() });
+      setAudioStatus({ label: "Audio", detail: role === "candidate" ? "Hearing you now" : "Hearing interviewer", tone: "working" });
       upsertLiveTranscript(role, message.text, "partial");
     });
     const disposeNativelyStatus = window.callpilotDesktop?.onNativelyStatus?.((payload) => {
       const detail = payload.detail?.toLowerCase() ?? "";
       if (payload.status === "connected" || detail.includes("connected")) {
         setActivity({ state: "listening", label: "Listening", updatedAt: Date.now() });
+        setAudioStatus({ label: "Audio", detail: "Listening", tone: "ready" });
       }
       if (payload.status === "closed" || detail.includes("closed") || detail.includes("ended")) {
         setActivity({ state: "idle", label: "Stopped", updatedAt: Date.now() });
+        setAudioStatus({ label: "Audio", detail: "Stopped", tone: "warn" });
       }
       if (payload.status === "error") {
         setActivity({ state: "idle", label: "Check audio", updatedAt: Date.now() });
+        setAudioStatus({ label: "Audio", detail: payload.detail || "Check audio", tone: "error" });
       }
     });
     const disposeManualAnswerStatus = window.callpilotDesktop?.onManualAnswerStatus?.((payload) => {
       if (payload.status === "cancelled") {
         setActiveAnswerRequestId(null);
+        answerStartedAtRef.current = null;
       }
       setActivity({
         state: payload.status === "cancelled" ? "idle" : payload.ok ? "transcribing" : "idle",
         label: payload.status === "cancelled" ? "Stopped" : payload.ok ? "Sent" : "Request failed",
         updatedAt: Date.now(),
+      });
+      setAnswerStatus({
+        label: "Answer",
+        detail: payload.status === "cancelled" ? "Stopped" : payload.ok ? "Request sent" : "Request failed",
+        tone: payload.status === "cancelled" ? "warn" : payload.ok ? "working" : "error",
       });
     });
     const ensureAssistantMessage = (requestId?: string): string => {
@@ -366,9 +398,10 @@ export default function OverlayApp() {
         return;
       }
       if (!text) return;
-      const terminal = payload.status === "completed" || payload.status === "failed" || payload.status === "cancelled";
+      const terminal = terminalAnswerStatuses.has(payload.status);
       if (!payload.requestId && payload.status === "busy") {
         setActivity({ state: "transcribing", label: "Already answering", updatedAt: Date.now() });
+        setAnswerStatus({ label: "Answer", detail: "Already answering", tone: "warn" });
         return;
       }
       const id = payload.requestId ? ensureAssistantMessage(payload.requestId) : `assistant-status-${payload.timestamp || Date.now()}`;
@@ -400,6 +433,22 @@ export default function OverlayApp() {
               : "Ready",
         updatedAt: Date.now(),
       });
+      if (payload.status === "busy") {
+        answerStartedAtRef.current = answerStartedAtRef.current ?? Date.now();
+        setAnswerStatus({ label: "Answer", detail: "Working on a reply", tone: "working" });
+      }
+      if (payload.status === "completed") {
+        answerStartedAtRef.current = null;
+        setAnswerStatus({ label: "Answer", detail: "Reply ready", tone: "ready" });
+      }
+      if (payload.status === "failed") {
+        answerStartedAtRef.current = null;
+        setAnswerStatus({ label: "Answer", detail: payload.error ? `Failed: ${payload.error}` : "Answer failed", tone: "error" });
+      }
+      if (payload.status === "cancelled") {
+        answerStartedAtRef.current = null;
+        setAnswerStatus({ label: "Answer", detail: "Stopped", tone: "warn" });
+      }
       if (terminal && payload.requestId) {
         delete assistantIdByRequest.current[payload.requestId];
         delete lastSequenceByRequest.current[payload.requestId];
@@ -429,6 +478,14 @@ export default function OverlayApp() {
           ? { state: "listening", label: "Listening", updatedAt: current.updatedAt }
           : current;
       });
+      if (answerStartedAtRef.current) {
+        const elapsed = Date.now() - answerStartedAtRef.current;
+        if (elapsed > 45000) {
+          setAnswerStatus({ label: "Answer", detail: "May be stuck; Stop is safe", tone: "error" });
+        } else if (elapsed > 15000) {
+          setAnswerStatus({ label: "Answer", detail: "Still working", tone: "warn" });
+        }
+      }
     }, 700);
     return () => window.clearInterval(timer);
   }, []);
@@ -444,6 +501,9 @@ export default function OverlayApp() {
         setActiveAnswerRequestId(null);
         setIsRequestingAnswer(false);
         setActivity({ state: "idle", label: "Reset", updatedAt: Date.now() });
+        setAudioStatus({ label: "Audio", detail: "Waiting for live audio", tone: "idle" });
+        setAnswerStatus({ label: "Answer", detail: "Ready when asked", tone: "idle" });
+        answerStartedAtRef.current = null;
         activeAssistantId.current = null;
         assistantIdByRequest.current = {};
         lastSequenceByRequest.current = {};
@@ -458,15 +518,20 @@ export default function OverlayApp() {
 
   const requestAnswer = async () => {
     setIsRequestingAnswer(true);
+    answerStartedAtRef.current = Date.now();
     setActivity({ state: "transcribing", label: "Answering", updatedAt: Date.now() });
+    setAnswerStatus({ label: "Answer", detail: "Sending request", tone: "working" });
     try {
       if (!window.callpilotDesktop?.requestAnswer) {
         setActivity({ state: "idle", label: "Restart app", updatedAt: Date.now() });
+        setAnswerStatus({ label: "Answer", detail: "Desktop bridge unavailable", tone: "error" });
         return;
       }
       const result = await window.callpilotDesktop.requestAnswer({ audience: "chat" });
       if (!result.ok) {
+        answerStartedAtRef.current = null;
         setActivity({ state: "idle", label: "Request failed", updatedAt: Date.now() });
+        setAnswerStatus({ label: "Answer", detail: "Request failed", tone: "error" });
       }
     } finally {
       window.setTimeout(() => setIsRequestingAnswer(false), 500);
@@ -478,16 +543,22 @@ export default function OverlayApp() {
     const requestId = activeAnswerRequestId;
     setActiveAnswerRequestId(null);
     setIsRequestingAnswer(false);
+    answerStartedAtRef.current = null;
     setActivity({ state: "idle", label: "Stopping", updatedAt: Date.now() });
+    setAnswerStatus({ label: "Answer", detail: "Stopping", tone: "warn" });
     const result = await window.callpilotDesktop?.cancelAnswer?.(requestId).catch(() => ({ ok: false }));
     setActivity({ state: "idle", label: result?.ok ? "Stopped" : "Stop failed", updatedAt: Date.now() });
+    setAnswerStatus({ label: "Answer", detail: result?.ok ? "Stopped" : "Stop failed", tone: result?.ok ? "warn" : "error" });
   };
 
   const resetSession = async () => {
     setMessages([]);
     setActiveAnswerRequestId(null);
     setIsRequestingAnswer(false);
+    answerStartedAtRef.current = null;
     setActivity({ state: "idle", label: "Reset", updatedAt: Date.now() });
+    setAudioStatus({ label: "Audio", detail: "Waiting for live audio", tone: "idle" });
+    setAnswerStatus({ label: "Answer", detail: "Ready when asked", tone: "idle" });
     await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_session" }).catch(() => undefined);
   };
 
@@ -509,6 +580,14 @@ export default function OverlayApp() {
             </span>
           )}
         </div>
+      </div>
+      <div className="cp-service-strip" aria-label="Interview service status">
+        {[audioStatus, answerStatus].map((status) => (
+          <span className={`cp-service-chip cp-service-chip--${status.tone}`} key={status.label}>
+            <strong>{status.label}</strong>
+            {status.detail}
+          </span>
+        ))}
       </div>
       <div className="cp-overlay__messages" ref={messagesRef}>
         {messages.length === 0 ? (

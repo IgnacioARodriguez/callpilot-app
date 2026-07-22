@@ -25,11 +25,11 @@ body:has(.cp-coding),
 }
 
 :root {
-  --cp-overlay-bg: rgba(255, 255, 255, 0.46);
-  --cp-bubble-candidate: rgba(241, 239, 232, 0.68);
-  --cp-bubble-recruiter: rgba(245, 244, 239, 0.54);
-  --cp-bubble-assistant-bg: rgba(238, 237, 254, 0.58);
-  --cp-bubble-assistant-border: rgba(206, 203, 246, 0.68);
+  --cp-overlay-bg: rgba(255, 255, 255, 0.22);
+  --cp-bubble-candidate: rgba(241, 239, 232, 0.42);
+  --cp-bubble-recruiter: rgba(245, 244, 239, 0.34);
+  --cp-bubble-assistant-bg: rgba(238, 237, 254, 0.36);
+  --cp-bubble-assistant-border: rgba(206, 203, 246, 0.46);
   --cp-text: #17202a;
   --cp-text-muted: #5f5e5a;
   --cp-accent: #534ab7;
@@ -71,14 +71,14 @@ button:disabled {
 .cp-overlay {
   height: 100vh;
   background: var(--cp-overlay-bg);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: 16px;
   padding: 12px;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   -webkit-app-region: drag;
 }
 
@@ -124,6 +124,89 @@ button:disabled {
 .cp-listening--transcribing .cp-listening__dot {
   background: #534ab7;
   box-shadow: 0 0 0 3px rgba(83, 74, 183, 0.14);
+}
+
+.cp-service-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 9px;
+  -webkit-app-region: no-drag;
+}
+
+.cp-service-chip {
+  min-height: 26px;
+  max-width: 100%;
+  border: 1px solid rgba(106, 101, 144, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.48);
+  color: #5d6472;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-service-chip strong {
+  color: currentColor;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.cp-service-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #9aa3af;
+}
+
+.cp-service-chip--working {
+  border-color: rgba(83, 74, 183, 0.28);
+  background: rgba(238, 237, 254, 0.44);
+  color: #5148a8;
+}
+
+.cp-service-chip--working::before {
+  background: #534ab7;
+  box-shadow: 0 0 0 3px rgba(83, 74, 183, 0.13);
+}
+
+.cp-service-chip--ready {
+  border-color: rgba(47, 158, 113, 0.32);
+  background: rgba(235, 250, 241, 0.58);
+  color: #126b3d;
+}
+
+.cp-service-chip--ready::before {
+  background: #2f9e71;
+}
+
+.cp-service-chip--warn {
+  border-color: rgba(196, 132, 20, 0.34);
+  background: rgba(255, 248, 232, 0.62);
+  color: #875b09;
+}
+
+.cp-service-chip--warn::before {
+  background: #c47f0e;
+}
+
+.cp-service-chip--error {
+  border-color: rgba(179, 48, 48, 0.38);
+  background: rgba(255, 241, 241, 0.66);
+  color: #9c2424;
+}
+
+.cp-service-chip--error::before {
+  background: #b64242;
 }
 
 .cp-typing {
@@ -349,14 +432,14 @@ button:disabled {
 
 .cp-coding {
   height: 100vh;
-  background: rgba(248, 250, 252, 0.38);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.48);
+  background: rgba(248, 250, 252, 0.22);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.34);
   border-radius: 12px;
   color: #17202a;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   padding: 10px;
   -webkit-app-region: drag;
@@ -367,7 +450,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 2px 10px;
+  padding: 0 2px 7px;
 }
 
 .cp-coding__bar div {
@@ -438,7 +521,7 @@ button:disabled {
   min-height: 0;
   border: 1px solid rgba(203, 213, 225, 0.68);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.26);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
@@ -446,12 +529,12 @@ button:disabled {
 
 .cp-code-panel {
   border-color: rgba(62, 68, 81, 0.82);
-  background: rgba(40, 44, 52, 0.68);
+  background: rgba(40, 44, 52, 0.48);
 }
 
 .cp-code-panel .cp-panel-title {
   border-bottom-color: rgba(62, 68, 81, 0.82);
-  background: rgba(33, 37, 43, 0.72);
+  background: rgba(33, 37, 43, 0.52);
 }
 
 .cp-code-panel .cp-panel-title strong {
@@ -486,7 +569,7 @@ button:disabled {
   margin: 0;
   overflow: auto;
   padding: 12px 0;
-  background: rgba(40, 44, 52, 0.68);
+  background: rgba(40, 44, 52, 0.48);
   color: #d7dae0;
   font-family: "Cascadia Code", "Fira Code", "SFMono-Regular", Consolas, monospace;
   font-size: 13px;
@@ -560,7 +643,7 @@ button:disabled {
   gap: 7px;
   padding: 18px;
   text-align: center;
-  background: rgba(40, 44, 52, 0.68);
+  background: rgba(40, 44, 52, 0.48);
   color: #abb2bf;
 }
 
@@ -588,7 +671,7 @@ button:disabled {
 .cp-mini-chat div {
   border: 1px solid rgba(217, 225, 234, 0.68);
   border-radius: 8px;
-  background: rgba(238, 237, 254, 0.44);
+  background: rgba(238, 237, 254, 0.32);
   padding: 10px;
 }
 
