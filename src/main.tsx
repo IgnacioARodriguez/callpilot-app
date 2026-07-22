@@ -184,6 +184,9 @@ type LiveCodingScreenCapture = {
   visibleText: string;
   screenshotPath: string;
   displayName: string;
+  visualRole: string;
+  visibleFile: string;
+  panelLabel: string;
   capturedAt: number;
 };
 
@@ -214,6 +217,9 @@ const formatLiveCodingScreenCaptures = (captures: LiveCodingScreenCapture[]): st
   );
   const metadata = captures.map((capture) => [
     `capture ${capture.index}: ${capture.screenshotPath || "no screenshot path"}`,
+    capture.visualRole ? `role: ${capture.visualRole}` : "",
+    capture.visibleFile ? `file: ${capture.visibleFile}` : "",
+    capture.panelLabel ? `panel: ${capture.panelLabel}` : "",
     capture.displayName ? `display: ${capture.displayName}` : "",
   ].filter(Boolean).join(" | "));
   return [
@@ -3421,6 +3427,9 @@ function App() {
               visibleText,
               screenshotPath: payload.screenshotPath ?? "",
               displayName: payload.displayName ?? "",
+              visualRole: payload.visualRole ?? "",
+              visibleFile: payload.visibleFile ?? "",
+              panelLabel: payload.panelLabel ?? "",
               capturedAt: typeof payload.capturedAt === "number" ? payload.capturedAt : Date.now(),
             },
           ].slice(-5);
@@ -3433,6 +3442,9 @@ function App() {
             visibleText,
             payload.screenshotPath ? `Screenshot: ${payload.screenshotPath}` : "",
             payload.displayName ? `Display: ${payload.displayName}` : "",
+            payload.visualRole ? `Role: ${payload.visualRole}` : "",
+            payload.visibleFile ? `File: ${payload.visibleFile}` : "",
+            payload.panelLabel ? `Panel: ${payload.panelLabel}` : "",
             payload.source ? `Source: ${payload.source}` : "",
           ].filter(Boolean).join("\n");
         })();

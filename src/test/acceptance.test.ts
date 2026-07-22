@@ -784,6 +784,8 @@ test("acceptance: live coding screenshots accumulate before Answer code", () => 
   assert.match(app, /type LiveCodingScreenCapture/);
   assert.match(app, /mergeScreenTextWithOverlap/);
   assert.match(app, /Combined live coding screenshots: \$\{captures\.length\} ready/);
+  assert.match(app, /capture\.visualRole \? `role: \$\{capture\.visualRole\}`/);
+  assert.match(app, /payload\.visibleFile \? `File: \$\{payload\.visibleFile\}`/);
   assert.match(app, /payload\.source === "coding_overlay"/);
   assert.match(app, /liveCodingScreenCapturesRef\.current = captures\.map/);
   assert.match(app, /formatLiveCodingScreenCaptures\(liveCodingScreenCapturesRef\.current\)/);
@@ -801,6 +803,27 @@ test("acceptance: live coding screenshots accumulate before Answer code", () => 
   assert.match(codingOverlay, /cp-capture-count/);
   assert.match(styles, /\.cp-coding__actions \.cp-capture-count/);
   assert.match(styles, /\.cp-coding__actions \.cp-capture-count\.ready/);
+});
+
+test("acceptance: live coding prompt and replay support multi-surface visual context", () => {
+  const promptBuilder = read("src/core/promptBuilder.ts");
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const desktopTypes = read("src/desktop.d.ts");
+  const electronMain = read("electron/main.cjs");
+
+  assert.match(desktopTypes, /visualRole\?:/);
+  assert.match(desktopTypes, /visibleFile\?:\s*string/);
+  assert.match(electronMain, /visualRole/);
+  assert.match(electronMain, /visibleFile/);
+  assert.match(promptBuilder, /multiple screenshots or panels/);
+  assert.match(promptBuilder, /Distinguish implementation code, tests, instructions\/README, terminal\/output, and file tree/);
+  assert.match(promptBuilder, /tests and terminal output are evidence/);
+  assert.match(promptBuilder, /Implementation\/editor code is the code to modify/);
+  assert.match(runner, /visualContext\?:\s*Array/);
+  assert.match(runner, /LoadedVisualContextImage/);
+  assert.match(runner, /role: \$\{image\.role\}/);
+  assert.match(runner, /file: \$\{image\.visibleFile\}/);
+  assert.match(runner, /panel: \$\{image\.panelLabel\}/);
 });
 
 test("acceptance: overlays expose user-readable service readiness and stuck states", () => {

@@ -140,9 +140,22 @@ type ScenarioStage = {
   answerAction?: "chat" | "coding" | "both";
   image?: string | null;
   images?: string[];
+  visualContext?: Array<{
+    image: string;
+    role?: "implementation" | "tests" | "instructions" | "terminal" | "file_tree" | "output" | "unknown";
+    visibleFile?: string;
+    panelLabel?: string;
+  }>;
   code: string | null;
   transcript_delta: string;
   expected: string;
+};
+
+type LoadedVisualContextImage = {
+  path: string;
+  role: string;
+  visibleFile: string;
+  panelLabel: string;
 };
 
 type StageScenario = {
@@ -154,6 +167,7 @@ type StageScenario = {
 type LoadedScenarioStage = ScenarioStage & {
   imagePath: string | null;
   imagePaths: string[];
+  visualImages: LoadedVisualContextImage[];
   codePath: string | null;
   transcriptPath: string;
   expectedPath: string;
@@ -365,7 +379,17 @@ const readStageScenario = (): LoadedStageScenario | null => {
   const stages = [...parsed.stages]
     .sort((a, b) => a.order - b.order)
     .map((stage) => {
-      const imagePaths = Array.isArray(stage.images)
+      const visualImages = Array.isArray(stage.visualContext)
+        ? stage.visualContext.map((item) => ({
+          path: path.resolve(baseDir, String(item.image)),
+          role: String(item.role ?? "unknown"),
+          visibleFile: String(item.visibleFile ?? ""),
+          panelLabel: String(item.panelLabel ?? ""),
+        }))
+        : [];
+      const imagePaths = visualImages.length > 0
+        ? visualImages.map((image) => image.path)
+        : Array.isArray(stage.images)
         ? stage.images.map((image) => path.resolve(baseDir, String(image)))
         : typeof stage.image === "string"
           ? [path.resolve(baseDir, stage.image)]
@@ -389,6 +413,7 @@ const readStageScenario = (): LoadedStageScenario | null => {
         ...stage,
         imagePath,
         imagePaths,
+        visualImages,
         codePath,
         transcriptPath,
         expectedPath,
@@ -978,12 +1003,20 @@ const resolveScreenText = async (client: CdpClient, imagePath: string, fallbackT
   return { text, ocrResult, visionResult };
 };
 
-const publishScreen = async (client: CdpClient, text: string, imagePath: string) => {
+const publishScreen = async (
+  client: CdpClient,
+  text: string,
+  imagePath: string,
+  metadata: { visualRole?: string; visibleFile?: string; panelLabel?: string } = {},
+) => {
   const result = await evaluate<any>(client, `window.callpilotDesktop.publishScreenContext({
     visibleText: ${JSON.stringify(text)},
     screenshotPath: ${JSON.stringify(imagePath)},
     displayName: ${JSON.stringify(imagePath ? path.basename(imagePath) : "manual-screen-text")},
     source: "e2e_live_coding_replay",
+    visualRole: ${JSON.stringify(metadata.visualRole ?? "")},
+    visibleFile: ${JSON.stringify(metadata.visibleFile ?? "")},
+    panelLabel: ${JSON.stringify(metadata.panelLabel ?? "")},
     capturedAt: Date.now()
   })`);
   if (!result?.ok) throw new Error(`screen:publish-context failed: ${result?.error || "unknown"}`);
@@ -991,20 +1024,29 @@ const publishScreen = async (client: CdpClient, text: string, imagePath: string)
 
 const resolveStageScreenText = async (
   client: CdpClient,
-  imagePaths: string[],
+  imagesInput: string[] | LoadedVisualContextImage[],
   timings: Record<string, number>,
 ) => {
-  if (imagePaths.length === 0) {
+  const imageDescriptors = imagesInput.map((item): LoadedVisualContextImage =>
+    typeof item === "string"
+      ? { path: item, role: "unknown", visibleFile: "", panelLabel: "" }
+      : item,
+  );
+  if (imageDescriptors.length === 0) {
     return { text: "", images: [], ocrResult: null, visionResult: null };
   }
   const images = [];
-  for (let index = 0; index < imagePaths.length; index += 1) {
-    const imagePath = imagePaths[index];
+  for (let index = 0; index < imageDescriptors.length; index += 1) {
+    const descriptor = imageDescriptors[index];
+    const imagePath = descriptor.path;
     const imageTimings: Record<string, number> = {};
     const screen = await resolveScreenText(client, imagePath, "", imageTimings);
     timings[`resolve_screen_text_${index + 1}_ms`] = Object.values(imageTimings).reduce((sum, value) => sum + value, 0);
     images.push({
       path: imagePath,
+      role: descriptor.role,
+      visibleFile: descriptor.visibleFile,
+      panelLabel: descriptor.panelLabel,
       text: screen.text,
       ocrResult: screen.ocrResult,
       visionResult: screen.visionResult,
@@ -1013,6 +1055,9 @@ const resolveStageScreenText = async (
   const text = images
     .map((image, index) => [
       `[screenshot ${index + 1}/${images.length}: ${path.basename(image.path)}]`,
+      image.role && image.role !== "unknown" ? `role: ${image.role}` : "",
+      image.visibleFile ? `file: ${image.visibleFile}` : "",
+      image.panelLabel ? `panel: ${image.panelLabel}` : "",
       image.text,
     ].filter(Boolean).join("\n"))
     .join("\n\n")
@@ -1662,8 +1707,9 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
   for (const stage of scenario.stages) {
     const stageTimings: Record<string, number> = {};
     await timed(stageTimings, "publish_transcript_delta_ms", () => publishTranscriptDelta(client, scenario.id, stage));
+    const screenInputs = stage.visualImages.length > 0 ? stage.visualImages : stage.imagePaths;
     const screen = stage.imagePaths.length > 0
-      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveStageScreenText(client, stage.imagePaths, stageTimings))
+      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveStageScreenText(client, screenInputs, stageTimings))
       : { text: "", ocrResult: null, visionResult: null };
     if (stage.imagePaths.length > 0 && !screen.text.trim()) {
       stages.push({
@@ -1678,7 +1724,12 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       break;
     }
     if (stage.imagePaths.length > 0) {
-      await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath));
+      const firstVisualImage = stage.visualImages[0];
+      await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath, {
+        visualRole: firstVisualImage?.role,
+        visibleFile: firstVisualImage?.visibleFile,
+        panelLabel: firstVisualImage?.panelLabel,
+      }));
     }
     const eventClient = await timed(stageTimings, "open_session_event_client_ms", () => getSessionEventClient());
     const answerRun = await requestAnswer(
@@ -1709,6 +1760,9 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
         screenshotCount: stage.imagePaths.length,
         images: screen.images?.map((image: any) => ({
           path: image.path,
+          role: image.role,
+          visibleFile: image.visibleFile,
+          panelLabel: image.panelLabel,
           textChars: image.text.length,
           textPreview: image.text.slice(0, 300),
           ocrOk: image.ocrResult?.ok ?? null,

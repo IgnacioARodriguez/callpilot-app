@@ -3280,6 +3280,9 @@ ipcMain.handle("screen:publish-context", (_event, payload) => {
   const visibleText = typeof payload?.visibleText === "string" ? payload.visibleText : "";
   const displayName = typeof payload?.displayName === "string" ? payload.displayName : "";
   const source = typeof payload?.source === "string" ? payload.source : "unknown";
+  const visualRole = typeof payload?.visualRole === "string" ? payload.visualRole : "";
+  const visibleFile = typeof payload?.visibleFile === "string" ? payload.visibleFile : "";
+  const panelLabel = typeof payload?.panelLabel === "string" ? payload.panelLabel : "";
   if (!screenshotPath && !visibleText.trim()) {
     appendTraceEvent("screen_context_publish_failed", { source, error: "empty_screen_context" });
     writeActiveSessionTrace("active");
@@ -3290,12 +3293,18 @@ ipcMain.handle("screen:publish-context", (_event, payload) => {
     visibleText,
     displayName,
     source,
+    visualRole,
+    visibleFile,
+    panelLabel,
     capturedAt: typeof payload?.capturedAt === "number" ? payload.capturedAt : Date.now(),
   };
   appendTraceEvent("screen_context_published", {
     source,
     hasScreenshot: Boolean(screenshotPath),
     displayName,
+    visualRole,
+    visibleFile,
+    panelLabel,
     text: textSummary(visibleText, 180),
     fileName: screenshotPath ? path.basename(screenshotPath) : "",
   });
