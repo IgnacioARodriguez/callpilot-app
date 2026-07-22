@@ -826,6 +826,38 @@ test("acceptance: live coding prompt and replay support multi-surface visual con
   assert.match(runner, /panel: \$\{image\.panelLabel\}/);
 });
 
+test("acceptance: live coding replay reports coverage for P0 multi-surface fixture", () => {
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const scenario = read("tests/fixtures/coderpad/multi_surface_memory_p0/scenario.json");
+  const manifest = read("tests/fixtures/coderpad/multi_surface_memory_p0/screenshot_manifest.json");
+  const readme = read("tests/fixtures/coderpad/multi_surface_memory_p0/README.md");
+  const stage0Expected = read("tests/fixtures/coderpad/multi_surface_memory_p0/stage_00_instructions_only/expected.json");
+  const stage3Expected = read("tests/fixtures/coderpad/multi_surface_memory_p0/stage_03_implementation_plus_tests/expected.json");
+  const stage4Expected = read("tests/fixtures/coderpad/multi_surface_memory_p0/stage_04_terminal_failure/expected.json");
+
+  assert.match(runner, /coverage\?:\s*string\[\]/);
+  assert.match(runner, /summarizeCoverage/);
+  assert.match(runner, /coverageSummary/);
+  assert.match(runner, /expectedRules\?\.codingWorkspace === null/);
+  assert.match(scenario, /multi_surface_memory_p0/);
+  assert.match(scenario, /"visualContext":\s*\[/);
+  assert.match(scenario, /"role":\s*"implementation"/);
+  assert.match(scenario, /"role":\s*"tests"/);
+  assert.match(scenario, /"role":\s*"instructions"/);
+  assert.match(scenario, /"role":\s*"terminal"/);
+  assert.match(scenario, /"coverage":\s*\[/);
+  assert.match(scenario, /"B2"/);
+  assert.match(scenario, /"B5"/);
+  assert.match(scenario, /"G2"/);
+  assert.match(scenario, /"MEM"/);
+  assert.match(manifest, /requiredVisibleSignals/);
+  assert.match(readme, /P0 live-coding replay fixture/);
+  assert.match(stage0Expected, /doesNotInventUnseenVisualContent/);
+  assert.match(stage3Expected, /doesNotCopyTestsIntoImplementation/);
+  assert.match(stage3Expected, /updatesImplementationNotTests/);
+  assert.match(stage4Expected, /perceivesTerminalFailure/);
+});
+
 test("acceptance: overlays expose user-readable service readiness and stuck states", () => {
   const overlay = read("src/overlay/OverlayApp.tsx");
   const codingOverlay = read("src/overlay/CodingOverlayApp.tsx");

@@ -138,6 +138,7 @@ type ScenarioStage = {
   id: string;
   order: number;
   answerAction?: "chat" | "coding" | "both";
+  coverage?: string[];
   image?: string | null;
   images?: string[];
   visualContext?: Array<{
@@ -221,6 +222,11 @@ const argValue = (name: string): string => {
 
 const hasArg = (name: string): boolean => process.argv.includes(name);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const normalizeCoverageTags = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? [...new Set(value.map((item) => String(item).trim()).filter(Boolean))]
+    : [];
 
 const screenshotPath = argValue("--screenshot") || process.env.CALLPILOT_E2E_SCREENSHOT || "";
 const screenTextArg = argValue("--screen-text") || process.env.CALLPILOT_E2E_SCREEN_TEXT || "";
@@ -362,6 +368,12 @@ const loadConversationAssistExpected = (expectedRules: ConversationAssistExpecte
   };
 };
 
+type CoverageSummaryEntry = {
+  passed: number;
+  total: number;
+  failedStages: string[];
+};
+
 const requireFixtureFile = (scenarioId: string, stageId: string, label: string, filePath: string) => {
   if (!fs.existsSync(filePath)) {
     throw new Error(`Fixture file missing for ${scenarioId}/${stageId} (${label}): ${filePath}`);
@@ -407,7 +419,9 @@ const readStageScenario = (): LoadedStageScenario | null => {
       const transcript = readJsonFile<ScenarioTranscriptTurn[]>(transcriptPath);
       const expectedRules = readJsonFile<ScenarioExpected>(expectedPath);
       if (!Array.isArray(transcript)) throw new Error(`Invalid transcript_delta for ${parsed.id}/${stage.id}: ${transcriptPath}`);
-      const codingWorkspace = expectedRules?.codingWorkspace ?? expectedRules;
+      const codingWorkspace = expectedRules?.codingWorkspace === null && (stage.answerAction ?? "both") === "chat"
+        ? { expectedFunction: null, mustNotContain: [] }
+        : expectedRules?.codingWorkspace ?? expectedRules;
       if (!codingWorkspace || !("expectedFunction" in codingWorkspace)) throw new Error(`Invalid expected.json for ${parsed.id}/${stage.id}: ${expectedPath}`);
       return {
         ...stage,
@@ -1120,6 +1134,13 @@ const hasAny = (text: string, patterns: RegExp[]) => {
   return patterns.some((pattern) => pattern.test(normalized));
 };
 
+const normalizePythonSignature = (signature: string): string =>
+  signature
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),:=])\s*/g, "$1")
+    .replace(/\s*->\s*/g, "->")
+    .trim();
+
 const validateConversationSemanticChecks = (text: string, checks: LoadedConversationAssistExpected["semanticChecks"]) => {
   const failures: string[] = [];
   const normalized = normalizeText(text);
@@ -1250,6 +1271,24 @@ const validateConversationSemanticChecks = (text: string, checks: LoadedConversa
   if (checks.givesConciseComplexityExplanation) {
     if (!hasAny(text, [/complej|complexity|o n|log|e\b|edges|aristas/])) failures.push("conversation assist does not give a concise complexity explanation");
   }
+  if (checks.perceivesImplementationSurface) {
+    if (!hasAny(text, [/implement|codigo|code|funcion|function|archivo|file|editor/])) failures.push("conversation assist does not identify the implementation surface");
+  }
+  if (checks.perceivesTestsAsEvidence) {
+    if (!hasAny(text, [/test|assert|expected|esperad|caso|coverage|validar/])) failures.push("conversation assist does not treat tests as behavioral evidence");
+  }
+  if (checks.perceivesInstructionsAsContract) {
+    if (!hasAny(text, [/instruccion|instruction|readme|contrato|contract|requisit|requirement/])) failures.push("conversation assist does not treat instructions as contract");
+  }
+  if (checks.perceivesTerminalFailure) {
+    if (!hasAny(text, [/terminal|output|traceback|error|failed|falla|exception|actual|expected/])) failures.push("conversation assist does not identify terminal failure evidence");
+  }
+  if (checks.usesPriorVisualContext) {
+    if (!hasAny(text, [/antes|previo|previous|ya vimos|tests? vistos|archivo.*visto|mantener|combinar/])) failures.push("conversation assist does not connect current request to prior visual context");
+  }
+  if (checks.doesNotInventUnseenVisualContent) {
+    if (!hasAny(text, [/no invent|no asumir|si no lo veo|falt|necesit|confirm|assum/])) failures.push("conversation assist does not show caution about unseen visual content");
+  }
   return failures;
 };
 
@@ -1361,6 +1400,23 @@ const validateCodingSemanticChecks = (
   if (checks.finalCodeExecutable && !hasCodeAny([/def\s+schedule_tasks\s*\(/, /assert\s+schedule_tasks/])) failures.push("final code is not shaped as executable code plus assertions");
   if (checks.complexityIsReasonable && !hasAny(rendered, [/o n|o\(|log|complej|complexity|heap|indegree|edges|aristas/])) {
     failures.push("rendered answer does not include a reasonable complexity explanation");
+  }
+  if (checks.doesNotCopyTestsIntoImplementation && hasCodeAny([/\bunittest\b/, /\bpytest\b/, /\bTestCase\b/, /assert\s+.*\(/])) {
+    failures.push("implementation solution appears to copy test code into the implementation");
+  }
+  if (checks.preservesVisibleSignature && stage.codePath) {
+    const fixtureCode = fs.existsSync(stage.codePath) ? fs.readFileSync(stage.codePath, "utf8") : "";
+    const visibleSignatures = [...fixtureCode.matchAll(/^\s*def\s+([A-Za-z_][\w]*)\s*\(([^)\n]*)\)\s*(?:->\s*([^:\n]+))?\s*:/gm)]
+      .map((match) => normalizePythonSignature(`def ${match[1]}(${match[2]})${match[3] ? ` -> ${match[3].trim()}` : ""}:`));
+    for (const signature of visibleSignatures) {
+      const [namePart] = signature.replace(/^def\s+/, "").split("(");
+      if (namePart && !new RegExp(`\\bdef\\s+${namePart}\\s*\\(`).test(code)) {
+        failures.push(`code does not preserve visible signature name: ${namePart}`);
+      }
+    }
+  }
+  if (checks.updatesImplementationNotTests && hasCodeAny([/class\s+Test/, /\bunittest\.main\s*\(/, /pytest/])) {
+    failures.push("coding answer updates tests instead of implementation code");
   }
   return failures;
 };
@@ -1509,6 +1565,25 @@ const summarizeTrace = (tracePath: string): TraceSummary | null => {
         fileName: event.fileName,
       })),
   };
+};
+
+const summarizeCoverage = (loops: any[]): Record<string, CoverageSummaryEntry> => {
+  const summary: Record<string, CoverageSummaryEntry> = {};
+  for (const loop of loops ?? []) {
+    for (const stage of loop.stages ?? []) {
+      for (const tag of normalizeCoverageTags(stage.coverage)) {
+        const entry = summary[tag] ?? { passed: 0, total: 0, failedStages: [] };
+        entry.total += 1;
+        if (stage.ok) {
+          entry.passed += 1;
+        } else {
+          entry.failedStages.push(stage.id);
+        }
+        summary[tag] = entry;
+      }
+    }
+  }
+  return summary;
 };
 
 const resolveCasePaths = (replayCase: ReplayCase) => {
@@ -1715,6 +1790,7 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       stages.push({
         id: stage.id,
         order: stage.order,
+        coverage: normalizeCoverageTags(stage.coverage),
         ok: false,
         failures: [`${scenario.id}/${stage.id}: screen text is empty after OCR/vision`],
         screenshot: stage.imagePath,
@@ -1748,6 +1824,7 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       id: stage.id,
       order: stage.order,
       answerAction: stage.answerAction ?? "both",
+      coverage: normalizeCoverageTags(stage.coverage),
       ok: validation.ok,
       failures: validation.failures,
       screenshot: stage.imagePath,
@@ -1898,6 +1975,7 @@ const run = async () => {
         if (!result.ok) break;
       }
       scenarioReport.ok = scenarioReport.loops.length === loops && scenarioReport.loops.every((item: any) => item.ok);
+      scenarioReport.coverageSummary = summarizeCoverage(scenarioReport.loops);
       report.cases.push(scenarioReport);
     } else {
       for (const replayCase of cases) {

@@ -1,0 +1,10 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Run the tests. Looks like one is still failing."
+  },
+  {
+    "role": "candidate",
+    "text": "The terminal is showing the title case behavior is still not right for multiple spaces."
+  }
+]

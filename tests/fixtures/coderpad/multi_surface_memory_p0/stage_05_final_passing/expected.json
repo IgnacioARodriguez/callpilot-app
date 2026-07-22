@@ -1,0 +1,14 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "perceivesTestsAsEvidence": true,
+      "perceivesTerminalFailure": true,
+      "perceivesInstructionsAsContract": true
+    }
+  },
+  "codingWorkspace": null
+}

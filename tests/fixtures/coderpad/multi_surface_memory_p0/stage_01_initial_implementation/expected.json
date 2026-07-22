@@ -1,0 +1,28 @@
+{
+  "conversationAssist": {
+    "maxWords": 130,
+    "semanticChecks": {
+      "naturalSpokenTone": true,
+      "noCodeBlock": true,
+      "noLongCode": true,
+      "initialPlan": true,
+      "perceivesImplementationSurface": true,
+      "perceivesInstructionsAsContract": true
+    }
+  },
+  "codingWorkspace": {
+    "expectedFunction": "format_user",
+    "mustPreserve": ["def format_user(name):"],
+    "mustContain": ["strip", "title"],
+    "mustNotContain": ["upper()", "unittest", "pytest"],
+    "semanticChecks": {
+      "preservesVisibleSignature": true,
+      "doesNotCopyTestsIntoImplementation": true
+    },
+    "pythonAssertions": [
+      "assert format_user(' ada lovelace ') == 'Ada Lovelace'",
+      "assert format_user('') == 'Anonymous'",
+      "assert format_user('   ') == 'Anonymous'"
+    ]
+  }
+}
