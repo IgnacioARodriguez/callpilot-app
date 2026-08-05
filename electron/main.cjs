@@ -143,6 +143,7 @@ const userDataPath = () => app.getPath("userData");
 const settingsPath = () => path.join(userDataPath(), "settings.json");
 const credentialsPath = () => path.join(userDataPath(), "credentials.json");
 const sessionReportsDir = () => path.join(userDataPath(), "reports", "sessions");
+const fullTraceEnabled = () => /^(1|true|yes|on)$/i.test(String(process.env.CALLPILOT_DEBUG_TRACE || "").trim());
 
 let activeSessionTrace = null;
 
@@ -151,13 +152,15 @@ const hashText = (value) => crypto.createHash("sha256").update(String(value || "
 const textSummary = (value, maxPreview = 160) => {
   const text = String(value || "");
   const normalized = text.replace(/\s+/g, " ").trim();
-  return {
+  const summary = {
     chars: text.length,
     lines: text ? text.split(/\r?\n/).length : 0,
     hash: hashText(text),
     preview: normalized.slice(0, maxPreview),
     truncated: normalized.length > maxPreview,
   };
+  if (fullTraceEnabled()) summary.fullText = text;
+  return summary;
 };
 const extractPromptSection = (promptUser, sectionName) => {
   const value = typeof promptUser === "string" ? promptUser : "";
