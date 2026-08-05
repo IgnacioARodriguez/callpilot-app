@@ -138,11 +138,25 @@ type ScenarioStage = {
   id: string;
   order: number;
   answerAction?: "chat" | "coding" | "both";
+  coverage?: string[];
   image?: string | null;
   images?: string[];
+  visualContext?: Array<{
+    image: string;
+    role?: "implementation" | "tests" | "instructions" | "terminal" | "file_tree" | "output" | "unknown";
+    visibleFile?: string;
+    panelLabel?: string;
+  }>;
   code: string | null;
   transcript_delta: string;
   expected: string;
+};
+
+type LoadedVisualContextImage = {
+  path: string;
+  role: string;
+  visibleFile: string;
+  panelLabel: string;
 };
 
 type StageScenario = {
@@ -154,6 +168,7 @@ type StageScenario = {
 type LoadedScenarioStage = ScenarioStage & {
   imagePath: string | null;
   imagePaths: string[];
+  visualImages: LoadedVisualContextImage[];
   codePath: string | null;
   transcriptPath: string;
   expectedPath: string;
@@ -207,6 +222,11 @@ const argValue = (name: string): string => {
 
 const hasArg = (name: string): boolean => process.argv.includes(name);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const normalizeCoverageTags = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? [...new Set(value.map((item) => String(item).trim()).filter(Boolean))]
+    : [];
 
 const screenshotPath = argValue("--screenshot") || process.env.CALLPILOT_E2E_SCREENSHOT || "";
 const screenTextArg = argValue("--screen-text") || process.env.CALLPILOT_E2E_SCREEN_TEXT || "";
@@ -348,6 +368,12 @@ const loadConversationAssistExpected = (expectedRules: ConversationAssistExpecte
   };
 };
 
+type CoverageSummaryEntry = {
+  passed: number;
+  total: number;
+  failedStages: string[];
+};
+
 const requireFixtureFile = (scenarioId: string, stageId: string, label: string, filePath: string) => {
   if (!fs.existsSync(filePath)) {
     throw new Error(`Fixture file missing for ${scenarioId}/${stageId} (${label}): ${filePath}`);
@@ -365,7 +391,17 @@ const readStageScenario = (): LoadedStageScenario | null => {
   const stages = [...parsed.stages]
     .sort((a, b) => a.order - b.order)
     .map((stage) => {
-      const imagePaths = Array.isArray(stage.images)
+      const visualImages = Array.isArray(stage.visualContext)
+        ? stage.visualContext.map((item) => ({
+          path: path.resolve(baseDir, String(item.image)),
+          role: String(item.role ?? "unknown"),
+          visibleFile: String(item.visibleFile ?? ""),
+          panelLabel: String(item.panelLabel ?? ""),
+        }))
+        : [];
+      const imagePaths = visualImages.length > 0
+        ? visualImages.map((image) => image.path)
+        : Array.isArray(stage.images)
         ? stage.images.map((image) => path.resolve(baseDir, String(image)))
         : typeof stage.image === "string"
           ? [path.resolve(baseDir, stage.image)]
@@ -383,12 +419,15 @@ const readStageScenario = (): LoadedStageScenario | null => {
       const transcript = readJsonFile<ScenarioTranscriptTurn[]>(transcriptPath);
       const expectedRules = readJsonFile<ScenarioExpected>(expectedPath);
       if (!Array.isArray(transcript)) throw new Error(`Invalid transcript_delta for ${parsed.id}/${stage.id}: ${transcriptPath}`);
-      const codingWorkspace = expectedRules?.codingWorkspace ?? expectedRules;
+      const codingWorkspace = expectedRules?.codingWorkspace === null && (stage.answerAction ?? "both") === "chat"
+        ? { expectedFunction: null, mustNotContain: [] }
+        : expectedRules?.codingWorkspace ?? expectedRules;
       if (!codingWorkspace || !("expectedFunction" in codingWorkspace)) throw new Error(`Invalid expected.json for ${parsed.id}/${stage.id}: ${expectedPath}`);
       return {
         ...stage,
         imagePath,
         imagePaths,
+        visualImages,
         codePath,
         transcriptPath,
         expectedPath,
@@ -978,12 +1017,20 @@ const resolveScreenText = async (client: CdpClient, imagePath: string, fallbackT
   return { text, ocrResult, visionResult };
 };
 
-const publishScreen = async (client: CdpClient, text: string, imagePath: string) => {
+const publishScreen = async (
+  client: CdpClient,
+  text: string,
+  imagePath: string,
+  metadata: { visualRole?: string; visibleFile?: string; panelLabel?: string } = {},
+) => {
   const result = await evaluate<any>(client, `window.callpilotDesktop.publishScreenContext({
     visibleText: ${JSON.stringify(text)},
     screenshotPath: ${JSON.stringify(imagePath)},
     displayName: ${JSON.stringify(imagePath ? path.basename(imagePath) : "manual-screen-text")},
     source: "e2e_live_coding_replay",
+    visualRole: ${JSON.stringify(metadata.visualRole ?? "")},
+    visibleFile: ${JSON.stringify(metadata.visibleFile ?? "")},
+    panelLabel: ${JSON.stringify(metadata.panelLabel ?? "")},
     capturedAt: Date.now()
   })`);
   if (!result?.ok) throw new Error(`screen:publish-context failed: ${result?.error || "unknown"}`);
@@ -991,20 +1038,29 @@ const publishScreen = async (client: CdpClient, text: string, imagePath: string)
 
 const resolveStageScreenText = async (
   client: CdpClient,
-  imagePaths: string[],
+  imagesInput: string[] | LoadedVisualContextImage[],
   timings: Record<string, number>,
 ) => {
-  if (imagePaths.length === 0) {
+  const imageDescriptors = imagesInput.map((item): LoadedVisualContextImage =>
+    typeof item === "string"
+      ? { path: item, role: "unknown", visibleFile: "", panelLabel: "" }
+      : item,
+  );
+  if (imageDescriptors.length === 0) {
     return { text: "", images: [], ocrResult: null, visionResult: null };
   }
   const images = [];
-  for (let index = 0; index < imagePaths.length; index += 1) {
-    const imagePath = imagePaths[index];
+  for (let index = 0; index < imageDescriptors.length; index += 1) {
+    const descriptor = imageDescriptors[index];
+    const imagePath = descriptor.path;
     const imageTimings: Record<string, number> = {};
     const screen = await resolveScreenText(client, imagePath, "", imageTimings);
     timings[`resolve_screen_text_${index + 1}_ms`] = Object.values(imageTimings).reduce((sum, value) => sum + value, 0);
     images.push({
       path: imagePath,
+      role: descriptor.role,
+      visibleFile: descriptor.visibleFile,
+      panelLabel: descriptor.panelLabel,
       text: screen.text,
       ocrResult: screen.ocrResult,
       visionResult: screen.visionResult,
@@ -1013,6 +1069,9 @@ const resolveStageScreenText = async (
   const text = images
     .map((image, index) => [
       `[screenshot ${index + 1}/${images.length}: ${path.basename(image.path)}]`,
+      image.role && image.role !== "unknown" ? `role: ${image.role}` : "",
+      image.visibleFile ? `file: ${image.visibleFile}` : "",
+      image.panelLabel ? `panel: ${image.panelLabel}` : "",
       image.text,
     ].filter(Boolean).join("\n"))
     .join("\n\n")
@@ -1074,6 +1133,13 @@ const hasAny = (text: string, patterns: RegExp[]) => {
   const normalized = normalizeText(text);
   return patterns.some((pattern) => pattern.test(normalized));
 };
+
+const normalizePythonSignature = (signature: string): string =>
+  signature
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),:=])\s*/g, "$1")
+    .replace(/\s*->\s*/g, "->")
+    .trim();
 
 const validateConversationSemanticChecks = (text: string, checks: LoadedConversationAssistExpected["semanticChecks"]) => {
   const failures: string[] = [];
@@ -1205,6 +1271,24 @@ const validateConversationSemanticChecks = (text: string, checks: LoadedConversa
   if (checks.givesConciseComplexityExplanation) {
     if (!hasAny(text, [/complej|complexity|o n|log|e\b|edges|aristas/])) failures.push("conversation assist does not give a concise complexity explanation");
   }
+  if (checks.perceivesImplementationSurface) {
+    if (!hasAny(text, [/implement|codigo|code|funcion|function|archivo|file|editor/])) failures.push("conversation assist does not identify the implementation surface");
+  }
+  if (checks.perceivesTestsAsEvidence) {
+    if (!hasAny(text, [/test|assert|expected|esperad|caso|coverage|validar/])) failures.push("conversation assist does not treat tests as behavioral evidence");
+  }
+  if (checks.perceivesInstructionsAsContract) {
+    if (!hasAny(text, [/instruccion|instruction|readme|contrato|contract|requisit|requirement/])) failures.push("conversation assist does not treat instructions as contract");
+  }
+  if (checks.perceivesTerminalFailure) {
+    if (!hasAny(text, [/terminal|output|traceback|error|failed|falla|exception|actual|expected/])) failures.push("conversation assist does not identify terminal failure evidence");
+  }
+  if (checks.usesPriorVisualContext) {
+    if (!hasAny(text, [/antes|previo|previous|ya vimos|tests? vistos|archivo.*visto|mantener|combinar/])) failures.push("conversation assist does not connect current request to prior visual context");
+  }
+  if (checks.doesNotInventUnseenVisualContent) {
+    if (!hasAny(text, [/no invent|no asumir|si no lo veo|falt|necesit|confirm|assum/])) failures.push("conversation assist does not show caution about unseen visual content");
+  }
   return failures;
 };
 
@@ -1316,6 +1400,23 @@ const validateCodingSemanticChecks = (
   if (checks.finalCodeExecutable && !hasCodeAny([/def\s+schedule_tasks\s*\(/, /assert\s+schedule_tasks/])) failures.push("final code is not shaped as executable code plus assertions");
   if (checks.complexityIsReasonable && !hasAny(rendered, [/o n|o\(|log|complej|complexity|heap|indegree|edges|aristas/])) {
     failures.push("rendered answer does not include a reasonable complexity explanation");
+  }
+  if (checks.doesNotCopyTestsIntoImplementation && hasCodeAny([/\bunittest\b/, /\bpytest\b/, /\bTestCase\b/, /assert\s+.*\(/])) {
+    failures.push("implementation solution appears to copy test code into the implementation");
+  }
+  if (checks.preservesVisibleSignature && stage.codePath) {
+    const fixtureCode = fs.existsSync(stage.codePath) ? fs.readFileSync(stage.codePath, "utf8") : "";
+    const visibleSignatures = [...fixtureCode.matchAll(/^\s*def\s+([A-Za-z_][\w]*)\s*\(([^)\n]*)\)\s*(?:->\s*([^:\n]+))?\s*:/gm)]
+      .map((match) => normalizePythonSignature(`def ${match[1]}(${match[2]})${match[3] ? ` -> ${match[3].trim()}` : ""}:`));
+    for (const signature of visibleSignatures) {
+      const [namePart] = signature.replace(/^def\s+/, "").split("(");
+      if (namePart && !new RegExp(`\\bdef\\s+${namePart}\\s*\\(`).test(code)) {
+        failures.push(`code does not preserve visible signature name: ${namePart}`);
+      }
+    }
+  }
+  if (checks.updatesImplementationNotTests && hasCodeAny([/class\s+Test/, /\bunittest\.main\s*\(/, /pytest/])) {
+    failures.push("coding answer updates tests instead of implementation code");
   }
   return failures;
 };
@@ -1464,6 +1565,25 @@ const summarizeTrace = (tracePath: string): TraceSummary | null => {
         fileName: event.fileName,
       })),
   };
+};
+
+const summarizeCoverage = (loops: any[]): Record<string, CoverageSummaryEntry> => {
+  const summary: Record<string, CoverageSummaryEntry> = {};
+  for (const loop of loops ?? []) {
+    for (const stage of loop.stages ?? []) {
+      for (const tag of normalizeCoverageTags(stage.coverage)) {
+        const entry = summary[tag] ?? { passed: 0, total: 0, failedStages: [] };
+        entry.total += 1;
+        if (stage.ok) {
+          entry.passed += 1;
+        } else {
+          entry.failedStages.push(stage.id);
+        }
+        summary[tag] = entry;
+      }
+    }
+  }
+  return summary;
 };
 
 const resolveCasePaths = (replayCase: ReplayCase) => {
@@ -1662,13 +1782,15 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
   for (const stage of scenario.stages) {
     const stageTimings: Record<string, number> = {};
     await timed(stageTimings, "publish_transcript_delta_ms", () => publishTranscriptDelta(client, scenario.id, stage));
+    const screenInputs = stage.visualImages.length > 0 ? stage.visualImages : stage.imagePaths;
     const screen = stage.imagePaths.length > 0
-      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveStageScreenText(client, stage.imagePaths, stageTimings))
+      ? await timed(stageTimings, "resolve_screen_text_ms", () => resolveStageScreenText(client, screenInputs, stageTimings))
       : { text: "", ocrResult: null, visionResult: null };
     if (stage.imagePaths.length > 0 && !screen.text.trim()) {
       stages.push({
         id: stage.id,
         order: stage.order,
+        coverage: normalizeCoverageTags(stage.coverage),
         ok: false,
         failures: [`${scenario.id}/${stage.id}: screen text is empty after OCR/vision`],
         screenshot: stage.imagePath,
@@ -1678,7 +1800,12 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       break;
     }
     if (stage.imagePaths.length > 0) {
-      await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath));
+      const firstVisualImage = stage.visualImages[0];
+      await timed(stageTimings, "publish_screen_context_ms", () => publishScreen(client, screen.text, stage.imagePath, {
+        visualRole: firstVisualImage?.role,
+        visibleFile: firstVisualImage?.visibleFile,
+        panelLabel: firstVisualImage?.panelLabel,
+      }));
     }
     const eventClient = await timed(stageTimings, "open_session_event_client_ms", () => getSessionEventClient());
     const answerRun = await requestAnswer(
@@ -1697,6 +1824,7 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
       id: stage.id,
       order: stage.order,
       answerAction: stage.answerAction ?? "both",
+      coverage: normalizeCoverageTags(stage.coverage),
       ok: validation.ok,
       failures: validation.failures,
       screenshot: stage.imagePath,
@@ -1709,6 +1837,9 @@ const runStageScenarioLoop = async (client: CdpClient, scenario: LoadedStageScen
         screenshotCount: stage.imagePaths.length,
         images: screen.images?.map((image: any) => ({
           path: image.path,
+          role: image.role,
+          visibleFile: image.visibleFile,
+          panelLabel: image.panelLabel,
           textChars: image.text.length,
           textPreview: image.text.slice(0, 300),
           ocrOk: image.ocrResult?.ok ?? null,
@@ -1844,6 +1975,7 @@ const run = async () => {
         if (!result.ok) break;
       }
       scenarioReport.ok = scenarioReport.loops.length === loops && scenarioReport.loops.every((item: any) => item.ok);
+      scenarioReport.coverageSummary = summarizeCoverage(scenarioReport.loops);
       report.cases.push(scenarioReport);
     } else {
       for (const replayCase of cases) {

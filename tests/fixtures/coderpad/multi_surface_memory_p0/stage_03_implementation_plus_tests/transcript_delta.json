@@ -1,0 +1,10 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Okay, go back to the formatter implementation and update it so those tests pass."
+  },
+  {
+    "role": "candidate",
+    "text": "I have both the implementation and tests visible now. The implementation should change, not the tests."
+  }
+]

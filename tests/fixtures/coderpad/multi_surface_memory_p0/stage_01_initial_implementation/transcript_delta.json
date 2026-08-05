@@ -1,0 +1,10 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Now open the implementation file and give me a first pass. Keep it simple."
+  },
+  {
+    "role": "candidate",
+    "text": "I have the formatter file open. It looks like the starter returns the raw name, so I'll make the smallest readable update first."
+  }
+]

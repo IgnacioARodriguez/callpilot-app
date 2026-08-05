@@ -1,0 +1,10 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Let's start by reading the instructions. Don't code yet, just tell me how you understand the contract."
+  },
+  {
+    "role": "candidate",
+    "text": "Okay, I see the README. I want to confirm the exact formatting before touching the implementation."
+  }
+]

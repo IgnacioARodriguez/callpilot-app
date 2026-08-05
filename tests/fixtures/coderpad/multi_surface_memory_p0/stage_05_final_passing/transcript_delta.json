@@ -1,0 +1,10 @@
+[
+  {
+    "role": "interviewer",
+    "text": "Great, the tests are passing now. Can you summarize what changed and why this is enough?"
+  },
+  {
+    "role": "candidate",
+    "text": "Sure, I want to mention the contract, the tests, and that the implementation stayed small."
+  }
+]

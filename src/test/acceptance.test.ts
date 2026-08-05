@@ -784,6 +784,8 @@ test("acceptance: live coding screenshots accumulate before Answer code", () => 
   assert.match(app, /type LiveCodingScreenCapture/);
   assert.match(app, /mergeScreenTextWithOverlap/);
   assert.match(app, /Combined live coding screenshots: \$\{captures\.length\} ready/);
+  assert.match(app, /capture\.visualRole \? `role: \$\{capture\.visualRole\}`/);
+  assert.match(app, /payload\.visibleFile \? `File: \$\{payload\.visibleFile\}`/);
   assert.match(app, /payload\.source === "coding_overlay"/);
   assert.match(app, /liveCodingScreenCapturesRef\.current = captures\.map/);
   assert.match(app, /formatLiveCodingScreenCaptures\(liveCodingScreenCapturesRef\.current\)/);
@@ -801,6 +803,59 @@ test("acceptance: live coding screenshots accumulate before Answer code", () => 
   assert.match(codingOverlay, /cp-capture-count/);
   assert.match(styles, /\.cp-coding__actions \.cp-capture-count/);
   assert.match(styles, /\.cp-coding__actions \.cp-capture-count\.ready/);
+});
+
+test("acceptance: live coding prompt and replay support multi-surface visual context", () => {
+  const promptBuilder = read("src/core/promptBuilder.ts");
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const desktopTypes = read("src/desktop.d.ts");
+  const electronMain = read("electron/main.cjs");
+
+  assert.match(desktopTypes, /visualRole\?:/);
+  assert.match(desktopTypes, /visibleFile\?:\s*string/);
+  assert.match(electronMain, /visualRole/);
+  assert.match(electronMain, /visibleFile/);
+  assert.match(promptBuilder, /multiple screenshots or panels/);
+  assert.match(promptBuilder, /Distinguish implementation code, tests, instructions\/README, terminal\/output, and file tree/);
+  assert.match(promptBuilder, /tests and terminal output are evidence/);
+  assert.match(promptBuilder, /Implementation\/editor code is the code to modify/);
+  assert.match(runner, /visualContext\?:\s*Array/);
+  assert.match(runner, /LoadedVisualContextImage/);
+  assert.match(runner, /role: \$\{image\.role\}/);
+  assert.match(runner, /file: \$\{image\.visibleFile\}/);
+  assert.match(runner, /panel: \$\{image\.panelLabel\}/);
+});
+
+test("acceptance: live coding replay reports coverage for P0 multi-surface fixture", () => {
+  const runner = read("tests/e2e/live-coding/liveCodingReplay.ts");
+  const scenario = read("tests/fixtures/coderpad/multi_surface_memory_p0/scenario.json");
+  const manifest = read("tests/fixtures/coderpad/multi_surface_memory_p0/screenshot_manifest.json");
+  const readme = read("tests/fixtures/coderpad/multi_surface_memory_p0/README.md");
+  const stage0Expected = read("tests/fixtures/coderpad/multi_surface_memory_p0/stage_00_instructions_only/expected.json");
+  const stage3Expected = read("tests/fixtures/coderpad/multi_surface_memory_p0/stage_03_implementation_plus_tests/expected.json");
+  const stage4Expected = read("tests/fixtures/coderpad/multi_surface_memory_p0/stage_04_terminal_failure/expected.json");
+
+  assert.match(runner, /coverage\?:\s*string\[\]/);
+  assert.match(runner, /summarizeCoverage/);
+  assert.match(runner, /coverageSummary/);
+  assert.match(runner, /expectedRules\?\.codingWorkspace === null/);
+  assert.match(scenario, /multi_surface_memory_p0/);
+  assert.match(scenario, /"visualContext":\s*\[/);
+  assert.match(scenario, /"role":\s*"implementation"/);
+  assert.match(scenario, /"role":\s*"tests"/);
+  assert.match(scenario, /"role":\s*"instructions"/);
+  assert.match(scenario, /"role":\s*"terminal"/);
+  assert.match(scenario, /"coverage":\s*\[/);
+  assert.match(scenario, /"B2"/);
+  assert.match(scenario, /"B5"/);
+  assert.match(scenario, /"G2"/);
+  assert.match(scenario, /"MEM"/);
+  assert.match(manifest, /requiredVisibleSignals/);
+  assert.match(readme, /P0 live-coding replay fixture/);
+  assert.match(stage0Expected, /doesNotInventUnseenVisualContent/);
+  assert.match(stage3Expected, /doesNotCopyTestsIntoImplementation/);
+  assert.match(stage3Expected, /updatesImplementationNotTests/);
+  assert.match(stage4Expected, /perceivesTerminalFailure/);
 });
 
 test("acceptance: overlays expose user-readable service readiness and stuck states", () => {

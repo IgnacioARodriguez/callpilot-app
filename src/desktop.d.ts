@@ -44,6 +44,9 @@ export interface PublishScreenContextInput {
   visibleText?: string;
   displayName?: string;
   source?: string;
+  visualRole?: "implementation" | "tests" | "instructions" | "terminal" | "file_tree" | "output" | "unknown";
+  visibleFile?: string;
+  panelLabel?: string;
   capturedAt?: number;
 }
 

@@ -1,0 +1,14 @@
+[
+  {
+    "role": "interviewer",
+    "text": "I'm adding a few tests now. They check extra spaces, empty input, and that this is title case, not all caps."
+  },
+  {
+    "role": "candidate",
+    "text": "Got it, so these tests are the source of truth for the next edit. I won't paste them into the formatter file."
+  },
+  {
+    "role": "interviewer",
+    "text": "Right, just use them to guide the implementation."
+  }
+]

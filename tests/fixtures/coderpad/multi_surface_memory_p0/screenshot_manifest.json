@@ -1,0 +1,73 @@
+{
+  "scenarioId": "multi_surface_memory_p0",
+  "screenshots": [
+    {
+      "stage": "instructions_only_contract",
+      "path": "stage_00_instructions_only/instructions.png",
+      "role": "instructions",
+      "visibleFile": "README.md",
+      "requiredVisibleSignals": ["format_user", "display_name", "trim", "title case"]
+    },
+    {
+      "stage": "initial_implementation_visible",
+      "path": "stage_01_initial_implementation/instructions.png",
+      "role": "instructions",
+      "visibleFile": "README.md",
+      "requiredVisibleSignals": ["format_user", "display_name"]
+    },
+    {
+      "stage": "initial_implementation_visible",
+      "path": "stage_01_initial_implementation/implementation.png",
+      "role": "implementation",
+      "visibleFile": "src/formatter.py",
+      "requiredVisibleSignals": ["def format_user", "return name"]
+    },
+    {
+      "stage": "tests_added_chat_only",
+      "path": "stage_02_tests_added/tests.png",
+      "role": "tests",
+      "visibleFile": "tests/test_formatter.py",
+      "requiredVisibleSignals": ["assert format_user", "Ada Lovelace", "extra spaces"]
+    },
+    {
+      "stage": "implementation_plus_prior_tests",
+      "path": "stage_03_implementation_plus_tests/implementation.png",
+      "role": "implementation",
+      "visibleFile": "src/formatter.py",
+      "requiredVisibleSignals": ["def format_user"]
+    },
+    {
+      "stage": "implementation_plus_prior_tests",
+      "path": "stage_03_implementation_plus_tests/tests.png",
+      "role": "tests",
+      "visibleFile": "tests/test_formatter.py",
+      "requiredVisibleSignals": ["Ada Lovelace", "Grace Hopper"]
+    },
+    {
+      "stage": "terminal_failure_after_run",
+      "path": "stage_04_terminal_failure/terminal.png",
+      "role": "terminal",
+      "requiredVisibleSignals": ["FAILED", "AssertionError", "ADA LOVELACE"]
+    },
+    {
+      "stage": "terminal_failure_after_run",
+      "path": "stage_04_terminal_failure/implementation.png",
+      "role": "implementation",
+      "visibleFile": "src/formatter.py",
+      "requiredVisibleSignals": ["upper"]
+    },
+    {
+      "stage": "final_passing_terminal_chat",
+      "path": "stage_05_final_passing/terminal.png",
+      "role": "terminal",
+      "requiredVisibleSignals": ["passed"]
+    },
+    {
+      "stage": "final_passing_terminal_chat",
+      "path": "stage_05_final_passing/tests.png",
+      "role": "tests",
+      "visibleFile": "tests/test_formatter.py",
+      "requiredVisibleSignals": ["assert format_user"]
+    }
+  ]
+}

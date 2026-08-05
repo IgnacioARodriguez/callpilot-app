@@ -1,0 +1,140 @@
+{
+  "id": "multi_surface_memory_p0",
+  "language": "python",
+  "difficulty": "hard",
+  "sessionMode": "single_session",
+  "transcriptMode": "incremental",
+  "visualContextRule": "Each visualContext item is a distinct current visual surface. Use role, visibleFile, panelLabel, OCR, and transcript together. Do not assume the last screenshot contains all context.",
+  "stages": [
+    {
+      "id": "instructions_only_contract",
+      "order": 0,
+      "purpose": "Perception checkpoint: instructions are visible, implementation is not.",
+      "answerAction": "chat",
+      "coverage": ["B3", "G2", "PER", "RAZ"],
+      "visualContext": [
+        {
+          "image": "stage_00_instructions_only/instructions.png",
+          "role": "instructions",
+          "visibleFile": "README.md",
+          "panelLabel": "instructions"
+        }
+      ],
+      "code": null,
+      "transcript_delta": "stage_00_instructions_only/transcript_delta.json",
+      "expected": "stage_00_instructions_only/expected.json"
+    },
+    {
+      "id": "initial_implementation_visible",
+      "order": 1,
+      "purpose": "Baseline coding checkpoint using instructions plus implementation.",
+      "answerAction": "both",
+      "coverage": ["A2", "B3", "PER", "RAZ"],
+      "visualContext": [
+        {
+          "image": "stage_01_initial_implementation/instructions.png",
+          "role": "instructions",
+          "visibleFile": "README.md",
+          "panelLabel": "instructions"
+        },
+        {
+          "image": "stage_01_initial_implementation/implementation.png",
+          "role": "implementation",
+          "visibleFile": "src/formatter.py",
+          "panelLabel": "editor"
+        }
+      ],
+      "code": "stage_01_initial_implementation/code.py",
+      "transcript_delta": "stage_01_initial_implementation/transcript_delta.json",
+      "expected": "stage_01_initial_implementation/expected.json"
+    },
+    {
+      "id": "tests_added_chat_only",
+      "order": 2,
+      "purpose": "Tests are added while candidate and interviewer talk; no code change should be proposed in chat.",
+      "answerAction": "chat",
+      "coverage": ["B2", "E1", "MEM", "SYNC", "RAZ"],
+      "visualContext": [
+        {
+          "image": "stage_02_tests_added/tests.png",
+          "role": "tests",
+          "visibleFile": "tests/test_formatter.py",
+          "panelLabel": "editor"
+        }
+      ],
+      "code": "stage_02_tests_added/code.py",
+      "transcript_delta": "stage_02_tests_added/transcript_delta.json",
+      "expected": "stage_02_tests_added/expected.json"
+    },
+    {
+      "id": "implementation_plus_prior_tests",
+      "order": 3,
+      "purpose": "Implementation is current; tests from prior and current visual context must drive the change.",
+      "answerAction": "coding",
+      "coverage": ["B2", "E1", "MEM", "RAZ"],
+      "visualContext": [
+        {
+          "image": "stage_03_implementation_plus_tests/implementation.png",
+          "role": "implementation",
+          "visibleFile": "src/formatter.py",
+          "panelLabel": "editor"
+        },
+        {
+          "image": "stage_03_implementation_plus_tests/tests.png",
+          "role": "tests",
+          "visibleFile": "tests/test_formatter.py",
+          "panelLabel": "editor"
+        }
+      ],
+      "code": "stage_03_implementation_plus_tests/code.py",
+      "transcript_delta": "stage_03_implementation_plus_tests/transcript_delta.json",
+      "expected": "stage_03_implementation_plus_tests/expected.json"
+    },
+    {
+      "id": "terminal_failure_after_run",
+      "order": 4,
+      "purpose": "Terminal is current; fix must use implementation context already seen.",
+      "answerAction": "both",
+      "coverage": ["B5", "C1", "MEM", "PER", "RAZ"],
+      "visualContext": [
+        {
+          "image": "stage_04_terminal_failure/terminal.png",
+          "role": "terminal",
+          "panelLabel": "terminal"
+        },
+        {
+          "image": "stage_04_terminal_failure/implementation.png",
+          "role": "implementation",
+          "visibleFile": "src/formatter.py",
+          "panelLabel": "editor"
+        }
+      ],
+      "code": "stage_04_terminal_failure/code.py",
+      "transcript_delta": "stage_04_terminal_failure/transcript_delta.json",
+      "expected": "stage_04_terminal_failure/expected.json"
+    },
+    {
+      "id": "final_passing_terminal_chat",
+      "order": 5,
+      "purpose": "Passing terminal and tests visible; chat should summarize final state, not keep changing code.",
+      "answerAction": "chat",
+      "coverage": ["C3", "E1", "MEM", "RAZ"],
+      "visualContext": [
+        {
+          "image": "stage_05_final_passing/terminal.png",
+          "role": "terminal",
+          "panelLabel": "terminal"
+        },
+        {
+          "image": "stage_05_final_passing/tests.png",
+          "role": "tests",
+          "visibleFile": "tests/test_formatter.py",
+          "panelLabel": "editor"
+        }
+      ],
+      "code": "stage_05_final_passing/code.py",
+      "transcript_delta": "stage_05_final_passing/transcript_delta.json",
+      "expected": "stage_05_final_passing/expected.json"
+    }
+  ]
+}
