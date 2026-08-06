@@ -352,9 +352,33 @@ export const assessPlainInterviewAnswerGrounding = (
 export const withNoAnswerForUngroundedDrift = (
   structured: StructuredAnswerPayload,
   assessment: AnswerGroundingAssessment,
+  userInput = "",
 ): StructuredAnswerPayload => {
   if (assessment.ok || structured.kind !== "interview") return structured;
   if (assessment.reason === "unsupported_behavioral_specifics") {
+    // A manual technical answer should remain useful even when the model tried to
+    // turn an unverified tool into personal production experience. Keep the guard,
+    // but replace only the unsupported claim with an honest transferable answer.
+    const asksAboutPersonalExperience = /\b(have you|has your|did you|have i|used|use[d]? in production|worked with|experience|familiar|background|how have you)\b/i.test(userInput);
+    if (structured.payload.intent === "technical_qa" && asksAboutPersonalExperience) {
+      return {
+        kind: "interview",
+        payload: {
+          ...structured.payload,
+          answerNeeded: true,
+          intent: "technical_qa",
+          spokenAnswer: "I haven't used those exact tools enough to claim direct production experience. My relevant experience is with Python, APIs, dashboards, data pipelines, automation, SQL/NoSQL, and incident analysis. I would apply the same operational principles here: define the important service signals, centralize useful logs, create actionable alerts, and validate them against real incident scenarios.",
+          keyPoints: [
+            "Be transparent about the exact tool gap",
+            "Connect to confirmed experience with Python, dashboards, pipelines, automation, and incident analysis",
+            "Explain the transferable monitoring and troubleshooting approach",
+          ],
+          assumptions: [],
+          evidenceRefs: ["Confirmed Python, APIs, dashboards, data pipelines, automation, SQL/NoSQL, incident analysis"],
+          followUpHint: "If useful, explain how those principles would map to the specific monitoring stack.",
+        },
+      };
+    }
     return {
       kind: "interview",
       payload: {

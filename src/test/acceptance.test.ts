@@ -338,7 +338,8 @@ test("acceptance: live coding setup defaults to OpenAI gpt-5-mini without changi
 
   assert.match(app, /const LIVE_CODING_DEFAULT_PROVIDER: ModelProvider = "openai"/);
   assert.match(app, /const LIVE_CODING_DEFAULT_MODEL = "gpt-5-mini"/);
-  assert.match(app, /const TECHNICAL_INTERVIEW_DEFAULT_PROVIDER: ModelProvider = "nvidia"/);
+  assert.match(app, /const TECHNICAL_INTERVIEW_DEFAULT_PROVIDER: ModelProvider = "natively"/);
+  assert.match(app, /const TECHNICAL_INTERVIEW_DEFAULT_MODEL = "default"/);
   assert.match(setupBody, /setup\.mode === "live_coding"[\s\S]*LIVE_CODING_DEFAULT_PROVIDER/);
   assert.match(setupBody, /answerProviderTouchedRef\.current/);
   assert.match(setupBody, /modelProvider: nextProvider/);

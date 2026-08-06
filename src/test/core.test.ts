@@ -713,7 +713,7 @@ test("prompt tells model not to answer stale topics or non-questions", () => {
   assert.match(prompt.system, /Do not answer stale topics/i);
   assert.match(prompt.system, /do not pivot to resume\/CV topics/i);
   assert.match(prompt.system, /do not answer it with SQL/i);
-  assert.match(prompt.system, /at most two compact/i);
+  assert.match(prompt.system, /2 to 4 conversational sentences/i);
   assert.match(prompt.system, /write like a candidate answer to say aloud/i);
   assert.match(prompt.system, /no 'hola'/i);
   assert.match(prompt.system, /silently ignore their topic/i);

@@ -146,6 +146,10 @@ const sessionReportsDir = () => path.join(userDataPath(), "reports", "sessions")
 const fullTraceEnabled = () => /^(1|true|yes|on)$/i.test(String(process.env.CALLPILOT_DEBUG_TRACE || "").trim());
 
 let activeSessionTrace = null;
+let sessionMetricsTimer = null;
+let sessionMetricsExpectedAt = 0;
+let sessionTraceCounters = { audioChunks: 0, transcriptEvents: 0, answerEvents: 0, traceEvents: 0, traceWrites: 0, traceBytes: 0, lastWriteMs: 0 };
+let lastSessionTraceWriteAt = 0;
 
 const safeIsoStamp = () => new Date().toISOString().replace(/[:.]/g, "-");
 const hashText = (value) => crypto.createHash("sha256").update(String(value || "")).digest("hex").slice(0, 16);
@@ -182,6 +186,29 @@ const promptSummary = (prompt) => ({
     userInput: textSummary(extractPromptSection(prompt.user, "user_input"), 320),
   } : null,
 });
+const sampleSessionMetrics = () => {
+  if (!activeSessionTrace) return;
+  const processes = typeof app.getAppMetrics === "function" ? app.getAppMetrics().map((metric) => ({
+    name: metric.name,
+    type: metric.type,
+    pid: metric.pid,
+    cpuPercent: Number(metric.cpu?.percent || 0),
+    memoryWorkingSetMB: Number(((metric.memory?.workingSetSize || 0) / 1024).toFixed(1)),
+  })) : [];
+  const memory = process.memoryUsage();
+  appendTraceEvent("system_metrics", {
+    sampleIntervalMs: 5000,
+    eventLoopLagMs: Math.max(0, Date.now() - sessionMetricsExpectedAt),
+    mainProcess: {
+      cpuUserMs: Math.round(process.cpuUsage().user / 1000),
+      heapUsedMB: Number((memory.heapUsed / 1048576).toFixed(1)),
+      rssMB: Number((memory.rss / 1048576).toFixed(1)),
+    },
+    workloadCounters: { ...sessionTraceCounters },
+    processes,
+  });
+  writeActiveSessionTrace("active");
+};
 
 const liveSpokenPromptInstructions = [
   "Live spoken response mode.",
@@ -293,6 +320,10 @@ const sanitizeTracePayload = (value, depth = 0) => {
 };
 const appendTraceEvent = (type, payload = {}) => {
   if (!activeSessionTrace) return;
+  sessionTraceCounters.traceEvents += 1;
+  if (type.includes("audio_chunk") && !payload.sampleEvery) sessionTraceCounters.audioChunks += 1;
+  if (type.startsWith("transcript_")) sessionTraceCounters.transcriptEvents += 1;
+  if (type.startsWith("answer_") || type.startsWith("model_generate")) sessionTraceCounters.answerEvents += 1;
   activeSessionTrace.events.push({
     index: activeSessionTrace.events.length,
     at: new Date().toISOString(),
@@ -303,6 +334,11 @@ const appendTraceEvent = (type, payload = {}) => {
 };
 const writeActiveSessionTrace = (status = "active") => {
   if (!activeSessionTrace) return null;
+  const now = Date.now();
+  // Avoid serializing the entire growing session file for every IPC event.
+  // The final write is still forced when the session ends.
+  if (status === "active" && now - lastSessionTraceWriteAt < 2000) return activeSessionTrace.path;
+  const startedAt = Date.now();
   activeSessionTrace.status = status;
   activeSessionTrace.updatedAt = new Date().toISOString();
   activeSessionTrace.durationMs = Date.now() - activeSessionTrace.startedAtMs;
@@ -311,7 +347,12 @@ const writeActiveSessionTrace = (status = "active") => {
     ...activeSessionTrace,
     startedAtMs: undefined,
   };
-  fs.writeFileSync(activeSessionTrace.path, `${JSON.stringify(serialized, null, 2)}\n`);
+  const serializedText = `${JSON.stringify(serialized, null, 2)}\n`;
+  fs.writeFileSync(activeSessionTrace.path, serializedText);
+  lastSessionTraceWriteAt = Date.now();
+  sessionTraceCounters.traceWrites += 1;
+  sessionTraceCounters.traceBytes += Buffer.byteLength(serializedText);
+  sessionTraceCounters.lastWriteMs = Date.now() - startedAt;
   return activeSessionTrace.path;
 };
 
@@ -361,12 +402,21 @@ const startSessionTrace = (options = {}) => {
     })(),
     events: [],
   };
+  sessionTraceCounters = { audioChunks: 0, transcriptEvents: 0, answerEvents: 0, traceEvents: 0, traceWrites: 0, traceBytes: 0, lastWriteMs: 0 };
+  lastSessionTraceWriteAt = 0;
   appendTraceEvent("session_started", { mode: activeSessionTrace.mode });
   writeActiveSessionTrace("active");
+  sessionMetricsExpectedAt = Date.now() + 5000;
+  sessionMetricsTimer = setInterval(() => {
+    sampleSessionMetrics();
+    sessionMetricsExpectedAt = Date.now() + 5000;
+  }, 5000);
   return activeSessionTrace;
 };
 const finishSessionTrace = () => {
   if (!activeSessionTrace) return null;
+  if (sessionMetricsTimer) clearInterval(sessionMetricsTimer);
+  sessionMetricsTimer = null;
   appendTraceEvent("session_ended", {});
   const tracePath = writeActiveSessionTrace("ended");
   activeSessionTrace = null;
@@ -2826,13 +2876,21 @@ ipcMain.handle("deepgram:audio", (_event, input) => {
     stream.queue.push(audioBuffer);
     if (stream.queue.length > 500) stream.queue.shift();
   }
-  appendTraceEvent("deepgram_audio_chunk", {
-    streamId,
-    bytes: audioBuffer.length,
-    connected: Boolean(stream.connected),
-    queuedBefore,
-    queuedAfter: stream.queue.length,
-  });
+  stream.audioChunkCount = (stream.audioChunkCount || 0) + 1;
+  sessionTraceCounters.audioChunks += 1;
+  // Keep one initial sample and then one sample per 25 chunks; aggregate volume
+  // is available in system_metrics without retaining thousands of audio events.
+  if (stream.audioChunkCount === 1 || stream.audioChunkCount % 25 === 0) {
+    appendTraceEvent("deepgram_audio_chunk", {
+      streamId,
+      sampleEvery: stream.audioChunkCount === 1 ? 1 : 25,
+      chunkCount: stream.audioChunkCount,
+      bytes: audioBuffer.length,
+      connected: Boolean(stream.connected),
+      queuedBefore,
+      queuedAfter: stream.queue.length,
+    });
+  }
   writeActiveSessionTrace("active");
   return { ok: true };
 });

@@ -150,8 +150,8 @@ const GROQ_MODEL_PRESETS = [
 
 const LIVE_CODING_DEFAULT_PROVIDER: ModelProvider = "openai";
 const LIVE_CODING_DEFAULT_MODEL = "gpt-5-mini";
-const TECHNICAL_INTERVIEW_DEFAULT_PROVIDER: ModelProvider = "nvidia";
-const TECHNICAL_INTERVIEW_DEFAULT_MODEL = NVIDIA_MODEL_PRESETS[0];
+const TECHNICAL_INTERVIEW_DEFAULT_PROVIDER: ModelProvider = "natively";
+const TECHNICAL_INTERVIEW_DEFAULT_MODEL = "default";
 
 const createEmptyCodingPayload = (): CodingAnswerPayload => ({
   version: "1",
@@ -413,13 +413,13 @@ function App() {
     streamId: string;
     context: AudioContext;
     source: MediaStreamAudioSourceNode;
-    processor: ScriptProcessorNode;
+    processor: AudioWorkletNode;
   }>>([]);
   const deepgramSessionsRef = React.useRef<Array<{
     streamId: string;
     context: AudioContext;
     source: MediaStreamAudioSourceNode;
-    processor: ScriptProcessorNode;
+    processor: AudioWorkletNode;
   }>>([]);
   const autoCheckRanRef = React.useRef(false);
   const localSttPipelineRef = React.useRef<Promise<unknown> | null>(null);
@@ -1191,7 +1191,7 @@ function App() {
         });
       }
       let structured = parsedStructured && grounding
-        ? withNoAnswerForUngroundedDrift(parsedStructured, grounding)
+        ? withNoAnswerForUngroundedDrift(parsedStructured, grounding, effectiveQuestion)
         : parsedStructured;
       let text = result.ok
         ? formatAnswerForDisplay(result.text, structured, {
@@ -2491,7 +2491,12 @@ function App() {
       for (const [index, channel] of channels.entries()) {
         const context = new AudioContextCtor();
         const source = context.createMediaStreamSource(channel.stream);
-        const processor = context.createScriptProcessor(4096, 1, 1);
+        await context.audioWorklet.addModule(new URL("./audio/liveAudioProcessor.ts", import.meta.url));
+        const processor = new AudioWorkletNode(context, "callpilot-live-audio", {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [1],
+        });
         const streamId = `${channel.speaker === "candidate" ? "mic" : "system"}-${Date.now()}-${index}`;
         const nativelyChannel = channel.speaker === "candidate" ? "mic" : "system";
         const startResult = await window.callpilotDesktop.startNativelyTranscription({
@@ -2504,9 +2509,9 @@ function App() {
         if (!startResult.ok) {
           throw new Error(startResult.error ?? "natively_start_failed");
         }
-        processor.onaudioprocess = (event) => {
-          event.outputBuffer.getChannelData(0).fill(0);
-          const input = event.inputBuffer.getChannelData(0);
+        processor.port.onmessage = (event: MessageEvent<Float32Array>) => {
+          const input = event.data;
+          if (!(input instanceof Float32Array) || input.length === 0) return;
           const resampled = resampleMono(input, context.sampleRate, 16000);
           const energy = audioEnergy(resampled);
           if (channel.speaker === "interviewer" && energy.peak > 0.018 && Date.now() - lastSystemAudioSignalAtRef.current > 3000) {
@@ -2519,7 +2524,10 @@ function App() {
           void window.callpilotDesktop?.sendNativelyAudio?.({ streamId, arrayBuffer: pcm });
         };
         source.connect(processor);
-        processor.connect(context.destination);
+        const silentGain = context.createGain();
+        silentGain.gain.value = 0;
+        processor.connect(silentGain);
+        silentGain.connect(context.destination);
         nativelySessionsRef.current.push({ streamId, context, source, processor });
         started.push(channel.label);
       }
@@ -2558,7 +2566,12 @@ function App() {
       for (const [index, channel] of channels.entries()) {
         const context = new AudioContextCtor();
         const source = context.createMediaStreamSource(channel.stream);
-        const processor = context.createScriptProcessor(4096, 1, 1);
+        await context.audioWorklet.addModule(new URL("./audio/liveAudioProcessor.ts", import.meta.url));
+        const processor = new AudioWorkletNode(context, "callpilot-live-audio", {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [1],
+        });
         const streamId = `${channel.speaker === "candidate" ? "mic" : "system"}-${Date.now()}-${index}`;
         const deepgramChannel = channel.speaker === "candidate" ? "mic" : "system";
         const startResult = await window.callpilotDesktop.startDeepgramTranscription({
@@ -2573,9 +2586,10 @@ function App() {
         if (!startResult.ok) {
           throw new Error(startResult.error ?? "deepgram_start_failed");
         }
-        processor.onaudioprocess = (event) => {
-          event.outputBuffer.getChannelData(0).fill(0);
-          const input = event.inputBuffer.getChannelData(0);
+        let pendingPcm: Float32Array<ArrayBufferLike> = new Float32Array(0);
+        processor.port.onmessage = (event: MessageEvent<Float32Array>) => {
+          const input = event.data;
+          if (!(input instanceof Float32Array) || input.length === 0) return;
           const resampled = resampleMono(input, context.sampleRate, 16000);
           const energy = audioEnergy(resampled);
           if (channel.speaker === "interviewer" && energy.peak > 0.018 && Date.now() - lastSystemAudioSignalAtRef.current > 3000) {
@@ -2594,11 +2608,27 @@ function App() {
               sent: true,
             });
           }
-          const pcm = floatToLinear16(resampled);
-          void window.callpilotDesktop?.sendDeepgramAudio?.({ streamId, arrayBuffer: pcm });
+          if (pendingPcm.length === 0) {
+            pendingPcm = resampled;
+          } else {
+            const combined = new Float32Array(pendingPcm.length + resampled.length);
+            combined.set(pendingPcm);
+            combined.set(resampled, pendingPcm.length);
+            pendingPcm = combined;
+          }
+          const packetSamples = 320;
+          while (pendingPcm.length >= packetSamples) {
+            const packet = pendingPcm.slice(0, packetSamples);
+            pendingPcm = pendingPcm.slice(packetSamples);
+            const pcm = floatToLinear16(packet);
+            void window.callpilotDesktop?.sendDeepgramAudio?.({ streamId, arrayBuffer: pcm });
+          }
         };
         source.connect(processor);
-        processor.connect(context.destination);
+        const silentGain = context.createGain();
+        silentGain.gain.value = 0;
+        processor.connect(silentGain);
+        silentGain.connect(context.destination);
         deepgramSessionsRef.current.push({ streamId, context, source, processor });
         started.push(channel.label);
       }
@@ -2734,17 +2764,25 @@ function App() {
     }
     stopLiveRecording();
     resetSessionRuntimeContext();
+    await window.callpilotDesktop?.dispatchRemoteControlCommand?.({ type: "reset_session" }).catch(() => undefined);
     applyInterviewSetup(selectedSetup);
     autoAnswerEnabledRef.current = false;
     setAutoAnswerEnabled(false);
     const sessionMode = selectedSetup === "live_coding" ? "live_coding" : "technical_qa";
+    const setupUsesDefaults = !answerProviderTouchedRef.current;
+    const effectiveProvider = setupUsesDefaults
+      ? selectedSetup === "live_coding" ? LIVE_CODING_DEFAULT_PROVIDER : TECHNICAL_INTERVIEW_DEFAULT_PROVIDER
+      : modelProvider;
+    const effectiveModel = setupUsesDefaults
+      ? selectedSetup === "live_coding" ? LIVE_CODING_DEFAULT_MODEL : TECHNICAL_INTERVIEW_DEFAULT_MODEL
+      : modelName;
     await window.callpilotDesktop.saveSettings?.({
       activeMode: sessionMode,
       preferredLanguage,
       defaultCodingLanguage: codingLanguage,
       answerVerbosity,
-      modelProvider,
-      modelName,
+      modelProvider: effectiveProvider,
+      modelName: effectiveModel,
       ollamaBaseUrl,
       transcriptionModelName,
       liveTranscriptionProvider,
@@ -2757,8 +2795,8 @@ function App() {
       mode: sessionMode,
       activeMode: sessionMode,
       preferredLanguage,
-      modelProvider,
-      modelName,
+      modelProvider: effectiveProvider,
+      modelName: effectiveModel,
       liveTranscriptionProvider,
       liveLatencyPreset,
       liveAudioSource,

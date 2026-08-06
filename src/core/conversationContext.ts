@@ -62,7 +62,14 @@ const normalizeComparable = (value: string): string =>
     .toLowerCase();
 
 const isFiller = (turn: ConversationTurn): boolean =>
-  /^(ok|okay|right|vale|bien|perfecto|gracias|thanks|thank you)[.!?]?$/i.test(normalizeContent(turn.content));
+  /^(ok|okay|right|vale|bien|perfecto|gracias|thanks|thank you|sure|great|got it|understood|one second|give me a second|let us move on|i am taking notes|thanks for that|that makes sense|no problem)[.!?,\s]*(?:i'?m opening (?:the )?(?:repo|cv)|let'?s continue)?$/i.test(normalizeContent(turn.content));
+
+const isLikelyActionable = (turn: ConversationTurn): boolean =>
+  !isFiller(turn) && (
+    turn.role !== "interviewer"
+    || /[?¿]|\b(what|why|how|when|where|which|who|can|could|would|have you|tell me|walk me|explain|describe|suppose|imagine|if|how would|actually|i meant|correction|que|por que|como|cuando|donde|cual|puedes|podrias|explica|describe)\b/i.test(turn.content)
+    || /\b(api|service|deploy|deployment|incident|alert|monitor|latency|error|database|redis|sql|python|ticket|runbook|rollback|production|pipeline|dashboard|queue|trace|log)\b/i.test(turn.content)
+  );
 
 const isCumulativeDuplicate = (previous: ConversationTurn, next: ConversationTurn): boolean => {
   if (previous.role !== next.role) return false;
@@ -184,7 +191,7 @@ export const buildAnswerContext = (
     .filter((turn) => previousAssistantCutoff === null || turn.createdAt >= previousAssistantCutoff)
     .slice(-maxPreviousAssistantAnswers);
   let recentTurns = conversationTurns
-    .filter((turn) => turn.role !== "assistant")
+    .filter((turn) => turn.role !== "assistant" && isLikelyActionable(turn))
     .slice(-maxRecentTurns);
 
   const requiredIds = new Set<string>([currentQuestion.id, ...previousAssistantAnswers.map((turn) => turn.id)]);
