@@ -17,6 +17,7 @@ import {
   buildLiveCodingFollowUpPrompt,
   buildPrompt,
   buildPromptWithEvidence,
+  buildAnswerContext,
   classifyScreenText,
   consumeSegmentChunks,
   createGlobalContext,
@@ -51,6 +52,7 @@ import {
   violatesVisibleCodeContinuity,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
+  selectAdaptiveFollowUp,
   shouldSendNativelyFrame,
   shouldAutoAnswer,
   speechSimilarity,
@@ -587,6 +589,18 @@ function App() {
     });
   }, []);
 
+  React.useEffect(() => {
+    return window.callpilotDesktop?.onTranscriptMessage?.((message) => {
+      if (!(message as { simulation?: boolean }).simulation || message.speaker === "assistant" || !message.text?.trim()) return;
+      setTranscript((current) => {
+        if (current.messages.some((item) => item.id === message.id)) return current;
+        const next = new TranscriptBuffer(current);
+        next.append(message.text, "stt", message.timestamp || Date.now(), message.speaker);
+        return next.snapshot();
+      });
+    });
+  }, []);
+
   const appendAssistantTranscriptLine = React.useCallback((text: string, options: { publish?: boolean } = {}) => {
     if (!text.trim()) return;
     const shouldPublish = options.publish !== false;
@@ -851,7 +865,15 @@ function App() {
         : context),
       ...(modeOverride ? { activeMode: modeOverride } : {}),
     };
-    const effectiveQuestion = questionOverride ?? question;
+    const effectiveQuestion = questionOverride?.trim() ?? "";
+    const resolvedAnswerContext = buildAnswerContext({
+      transcript: contextForAnswer.transcript,
+      mode: contextForAnswer.activeMode,
+      userInput: effectiveQuestion,
+      screenContext: contextForAnswer.screenContext,
+    });
+    const evidenceQuery = effectiveQuestion || resolvedAnswerContext.currentQuestion.content;
+    const questionForAnswer = evidenceQuery;
     const requestId = `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const requestStartedAt = Date.now();
     const emitAnswerTiming = (stage: string, payload: Record<string, unknown> = {}) => {
@@ -902,7 +924,7 @@ function App() {
       });
       emitAnswerTiming("evidence_lookup_started");
       const embedder = await getEvidenceEmbedder();
-      const evidence = await pickEvidenceWithEmbeddings(contextForAnswer, effectiveQuestion, embedder, 4);
+      const evidence = await pickEvidenceWithEmbeddings(contextForAnswer, evidenceQuery, embedder, 4);
       builtPrompt = buildPromptWithEvidence(contextForAnswer, effectiveQuestion, evidence);
       emitAnswerTiming("evidence_lookup_completed", {
         selectedEvidenceCount: evidence.items.length,
@@ -1180,7 +1202,7 @@ function App() {
         parsedStructured: Boolean(parsedStructured),
         structuredKind: parsedStructured?.kind,
       });
-      const grounding = parsedStructured ? assessAnswerGrounding(contextForAnswer, effectiveQuestion, parsedStructured) : null;
+      const grounding = parsedStructured ? assessAnswerGrounding(contextForAnswer, questionForAnswer, parsedStructured) : null;
       if (grounding) {
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
           requestId,
@@ -1191,7 +1213,7 @@ function App() {
         });
       }
       let structured = parsedStructured && grounding
-        ? withNoAnswerForUngroundedDrift(parsedStructured, grounding, effectiveQuestion)
+        ? withNoAnswerForUngroundedDrift(parsedStructured, grounding, questionForAnswer)
         : parsedStructured;
       let text = result.ok
         ? formatAnswerForDisplay(result.text, structured, {
@@ -1201,7 +1223,7 @@ function App() {
       if (result.ok && liveSpokenOutput) {
         const compacted = compactLiveSpokenAnswer(text, {
           mode: contextForAnswer.activeMode,
-          userInput: effectiveQuestion,
+          userInput: questionForAnswer,
         });
         if (compacted.compacted) {
           text = compacted.text;
@@ -1212,14 +1234,14 @@ function App() {
         }
       }
       if (result.ok) {
-        const repaired = repairLiveCodingAnswerCoverage(text, effectiveQuestion, contextForAnswer.activeMode);
+        const repaired = repairLiveCodingAnswerCoverage(text, questionForAnswer, contextForAnswer.activeMode);
         if (repaired !== text) {
           text = repaired;
           emitAnswerTiming("live_coding_repaired", { textChars: text.length });
         }
       }
       if (result.ok && !parsedStructured && contextForAnswer.activeMode !== "live_coding") {
-        const plainGrounding = assessPlainInterviewAnswerGrounding(contextForAnswer, effectiveQuestion, text);
+        const plainGrounding = assessPlainInterviewAnswerGrounding(contextForAnswer, questionForAnswer, text);
         void window.callpilotDesktop?.recordSessionEvent?.("answer_grounding_decision", {
           requestId,
           ok: plainGrounding.ok,
@@ -1242,7 +1264,7 @@ function App() {
               evidenceRefs: [],
               followUpHint: null,
             },
-          }, plainGrounding);
+          }, plainGrounding, questionForAnswer);
           text = formatAnswerForDisplay(text, structured, { mode: "interview" });
         }
       }
@@ -1250,6 +1272,16 @@ function App() {
         checked: Boolean(grounding) || (result.ok && !parsedStructured && contextForAnswer.activeMode !== "live_coding"),
         structured: Boolean(structured),
       });
+      if (result.ok && text.trim()) {
+        const adaptiveFollowUp = selectAdaptiveFollowUp(text);
+        void window.callpilotDesktop?.recordSessionEvent?.("answer_generation_linked", {
+          requestId,
+          question: questionForAnswer,
+          answerChars: text.length,
+          adaptivePolicy: adaptiveFollowUp.policy,
+          adaptiveReason: adaptiveFollowUp.reason,
+        });
+      }
       emitAnswerTiming("format_completed", {
         ok: result.ok,
         textChars: text.length,
@@ -1982,6 +2014,11 @@ function App() {
         displayStream.getTracks().forEach((track) => track.stop());
         throw new Error("system_audio_not_shared");
       }
+      // Chromium requires a video track to grant display capture, but the
+      // interview pipeline only needs the system audio. Keeping the tiny
+      // video track alive causes Electron frame-pool errors and can starve
+      // loopback audio, so release it immediately after capture starts.
+      displayStream.getVideoTracks().forEach((track) => track.stop());
       audioTracks.forEach((track) => {
         track.onmute = () => setDesktopStatus("Computer audio track is muted by the capture source");
         track.onended = () => setDesktopStatus("Computer audio capture ended");
@@ -2514,9 +2551,17 @@ function App() {
           if (!(input instanceof Float32Array) || input.length === 0) return;
           const resampled = resampleMono(input, context.sampleRate, 16000);
           const energy = audioEnergy(resampled);
-          if (channel.speaker === "interviewer" && energy.peak > 0.018 && Date.now() - lastSystemAudioSignalAtRef.current > 3000) {
+          if (channel.speaker === "interviewer" && Date.now() - lastSystemAudioSignalAtRef.current > 3000) {
             lastSystemAudioSignalAtRef.current = Date.now();
-            setDesktopStatus("Computer audio signal detected");
+            if (energy.peak > 0.018) setDesktopStatus("Computer audio signal detected");
+            void window.callpilotDesktop?.recordSessionEvent?.("live_audio_signal", {
+              provider: "deepgram",
+              speaker: "interviewer",
+              streamId,
+              rms: Number(energy.rms.toFixed(6)),
+              peak: Number(energy.peak.toFixed(6)),
+              sent: true,
+            });
           }
           const nativelySpeaker = channel.speaker === "candidate" ? "candidate" : "interviewer";
           if (!shouldSendNativelyFrame(nativelySpeaker, energy)) return;

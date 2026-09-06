@@ -73,6 +73,7 @@ import {
   shouldAutoAnswer,
   shouldDropCandidateEcho,
   shouldDrainTranscriptionQueue,
+  selectAdaptiveFollowUp,
   shouldSendNativelyFrame,
   speechSimilarity,
   STRUCTURED_ANSWER_PAYLOAD_JSON_SCHEMA,
@@ -87,6 +88,13 @@ import {
   parseSseChunk,
   type CodingAnswerPayload,
 } from "../core/index.ts";
+
+test("adaptive follow-up policy is selected from the completed answer", () => {
+  assert.equal(selectAdaptiveFollowUp("I have limited experience with it, so I would validate the scope first.").policy, "clarify_scope");
+  assert.equal(selectAdaptiveFollowUp("I would use retries and monitor latency during an incident.").policy, "challenge_tradeoff");
+  assert.equal(selectAdaptiveFollowUp("Actually, I would correct that claim.").policy, "repair_claim");
+  assert.equal(selectAdaptiveFollowUp("It works this way because the client retries.").policy, "deepen_mechanism");
+});
 
 test("fixed modes are available", () => {
   assert.deepEqual(MODES.map((mode) => mode.id), ["live_coding", "system_design", "behavioral", "technical_qa", "meeting_notes"]);
@@ -764,6 +772,40 @@ test("prompt excludes previous assistant suggestions from factual transcript", (
   const previousAnswers = prompt.user.match(/<previous_assistant_answers>\n([\s\S]*?)\n<\/previous_assistant_answers>/)?.[1] ?? "";
   assert.doesNotMatch(factualTranscript, /assistant: SQL is a relational query language/);
   assert.match(previousAnswers, /Assistant suggestion: SQL is a relational query language/);
+});
+
+test("technical usage question keeps personal context when Answer is manual", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Have you used Prometheus?", "stt", 1000, "interviewer");
+  const prompt = buildPrompt(createGlobalContext({
+    activeMode: "technical_qa",
+    transcript: transcript.snapshot(),
+    resumeText: "Used monitoring dashboards and PromQL for incident investigation.",
+  }), "");
+
+  assert.match(prompt.user, /<latest_actionable_input>[\s\S]*Have you used Prometheus/);
+  assert.match(prompt.user, /<resume>[\s\S]*PromQL/);
+});
+
+test("technical usage answer blocks unsupported personal tools and metrics", () => {
+  const context = createGlobalContext({ activeMode: "technical_qa" });
+  const assessment = assessAnswerGrounding(context, "interviewer: Have you used Prometheus?", {
+    kind: "interview",
+    payload: {
+      version: "1",
+      answerNeeded: true,
+      intent: "technical_qa",
+      spokenAnswer: "Yes, I led PagerDuty triage and reduced alerts by 40%.",
+      keyPoints: [],
+      correction: { needed: false, transition: null, correctedClaim: null },
+      assumptions: [],
+      evidenceRefs: [],
+      followUpHint: null,
+    },
+  });
+
+  assert.equal(assessment.ok, false);
+  assert.equal(assessment.reason, "unsupported_behavioral_specifics");
 });
 
 test("live conversation detects interview questions in English and Spanish", () => {

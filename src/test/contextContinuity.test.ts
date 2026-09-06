@@ -136,6 +136,24 @@ test("cumulative STT fragments compact into the final question", () => {
   assert.equal(answerContext.recentTurns.filter((turn) => /What is HTML/i.test(turn.content)).length, 0);
 });
 
+test("candidate filler never replaces the latest interviewer question", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Have you used Prometheus?", "stt", 1_000, "interviewer");
+  transcript.append("Yes, give me a second...", "stt", 2_000, "candidate");
+  const answerContext = buildAnswerContext({ transcript: transcript.snapshot(), mode: "technical_qa" });
+
+  assert.equal(answerContext.currentQuestion.content, "Have you used Prometheus?");
+});
+
+test("consecutive interviewer fragments become one actionable question", () => {
+  const transcript = new TranscriptBuffer();
+  transcript.append("Have you used", "stt", 1_000, "interviewer");
+  transcript.append("Prometheus in production?", "stt", 1_500, "interviewer");
+  const answerContext = buildAnswerContext({ transcript: transcript.snapshot(), mode: "technical_qa" });
+
+  assert.equal(answerContext.currentQuestion.content, "Have you used Prometheus in production?");
+});
+
 test("long transcript compacts without losing active topic, current question, or recent references", () => {
   const transcript = new TranscriptBuffer();
   for (let index = 0; index < 220; index += 1) {

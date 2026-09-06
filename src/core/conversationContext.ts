@@ -71,6 +71,24 @@ const isLikelyActionable = (turn: ConversationTurn): boolean =>
     || /\b(api|service|deploy|deployment|incident|alert|monitor|latency|error|database|redis|sql|python|ticket|runbook|rollback|production|pipeline|dashboard|queue|trace|log)\b/i.test(turn.content)
   );
 
+const mergeInterviewerFragments = (turns: ConversationTurn[]): ConversationTurn[] => {
+  const merged: ConversationTurn[] = [];
+  for (const turn of turns) {
+    const previous = merged.at(-1);
+    if (previous?.role === "interviewer" && turn.role === "interviewer" && turn.createdAt - previous.createdAt <= 8_000) {
+      merged[merged.length - 1] = {
+        ...previous,
+        id: turn.id,
+        content: `${previous.content} ${turn.content}`.replace(/\s+/g, " ").trim(),
+        createdAt: turn.createdAt,
+      };
+      continue;
+    }
+    merged.push(turn);
+  }
+  return merged;
+};
+
 const isCumulativeDuplicate = (previous: ConversationTurn, next: ConversationTurn): boolean => {
   if (previous.role !== next.role) return false;
   const left = normalizeComparable(previous.content);
@@ -176,7 +194,7 @@ export const buildAnswerContext = (
   const maxRecentTurns = input.maxRecentTurns ?? MAX_RECENT_TURNS;
   const maxPreviousAssistantAnswers = input.maxPreviousAssistantAnswers ?? MAX_PREVIOUS_ASSISTANT_ANSWERS;
   const maxContextChars = input.maxContextChars ?? MAX_CONTEXT_CHARS;
-  const allTurns = dedupeCumulativeTurns(toConversationTurns(input.transcript));
+  const allTurns = mergeInterviewerFragments(dedupeCumulativeTurns(toConversationTurns(input.transcript)));
   const freshnessCutoff = freshnessCutoffForScreen(input.mode, input.screenContext);
   const previousAssistantCutoff = previousAssistantCutoffForScreen(input.mode, input.screenContext);
   const currentQuestion = chooseCurrentQuestion(allTurns, input.userInput ?? "", now, freshnessCutoff);
@@ -186,10 +204,13 @@ export const buildAnswerContext = (
       .map((turn) => turn.id),
   );
   const conversationTurns = allTurns.filter((turn) => !sameCurrentTurnIds.has(turn.id));
-  const previousAssistantAnswers = conversationTurns
-    .filter((turn) => turn.role === "assistant" && turn.source === "generated" && !isFiller(turn))
-    .filter((turn) => previousAssistantCutoff === null || turn.createdAt >= previousAssistantCutoff)
-    .slice(-maxPreviousAssistantAnswers);
+  const followsPreviousAnswer = /\b(earlier|previous|you said|you mentioned|that answer|correct that|rephrase|follow[- ]?up|what about|and how|you made that|can you expand|trade[- ]?offs?|when would you use|where did you use|where would you use|en que contexto|donde lo usarias|antes dijiste|mencionaste|corrige|repregunta)\b/i.test(currentQuestion.content);
+  const previousAssistantAnswers = followsPreviousAnswer
+    ? conversationTurns
+      .filter((turn) => turn.role === "assistant" && turn.source === "generated" && !isFiller(turn))
+      .filter((turn) => previousAssistantCutoff === null || turn.createdAt >= previousAssistantCutoff)
+      .slice(-maxPreviousAssistantAnswers)
+    : [];
   let recentTurns = conversationTurns
     .filter((turn) => turn.role !== "assistant" && isLikelyActionable(turn))
     .slice(-maxRecentTurns);

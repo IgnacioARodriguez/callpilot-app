@@ -135,7 +135,8 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
     ? visiblePythonContinuityContract(screenTechnicalFocus || factualContext.screenContext.visibleText)
     : "";
   const outputLabels = localizedOutputLabels(mode.defaultOutputFormat, context.preferredLanguage);
-  const includePersonalContext = shouldIncludePersonalContext(context, userInput);
+  const resolvedActionableInput = userInput.trim() || formatAnswerContextSection([answerContext.currentQuestion]);
+  const includePersonalContext = shouldIncludePersonalContext(context, resolvedActionableInput);
   const includedSections: string[] = ["mode", "output_format"];
   const omittedSections: Array<{ section: string; reason: string }> = [];
   const structuredContract = context.activeMode === "live_coding"
@@ -194,7 +195,7 @@ export const buildPromptWithEvidence = (context: GlobalContext, userInput: strin
   add("recent_conversation", formatAnswerContextSection(answerContext.recentTurns));
   add("previous_assistant_answers", formatAnswerContextSection(answerContext.previousAssistantAnswers));
   add("current_question", formatAnswerContextSection([answerContext.currentQuestion]));
-  add("latest_actionable_input", userInput);
+  add("latest_actionable_input", resolvedActionableInput);
   add("transcript", compactTranscript(factualContext.transcript, 6000, 80));
   add("screen_context", [
     `kind: ${factualContext.screenContext.kind}`,

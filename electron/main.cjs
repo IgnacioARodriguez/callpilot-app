@@ -2474,6 +2474,7 @@ const sendToOverlay = (channel, payload) => {
 };
 
 const sendToSessionWindows = (channel, payload) => {
+  mainWindow?.webContents.send(channel, payload);
   overlayWindow?.webContents.send(channel, payload);
   codingWindow?.webContents.send(channel, payload);
 };
@@ -2728,6 +2729,9 @@ ipcMain.handle("transcript:publish", (_event, message) => {
   });
   writeActiveSessionTrace("active");
   sendToOverlay("transcript:message", message);
+  if (message?.simulation === true) {
+    mainWindow?.webContents.send("transcript:message", message);
+  }
   return { ok: true };
 });
 ipcMain.handle("transcript:publish-live", (_event, message) => {

@@ -55,6 +55,7 @@ export {
 } from "./ocr.ts";
 export { DEFAULT_MAX_TRANSCRIPT_MESSAGES, TranscriptBuffer, compactTranscript, createEmptyTranscriptSnapshot, formatConversationWindow, formatFactualTranscriptText, type TranscriptSnapshot, type TranscriptSpeaker } from "./transcriptBuffer.ts";
 export { normalizeTechnicalTranscript } from "./transcriptNormalize.ts";
+export { selectAdaptiveFollowUp, type AdaptiveFollowUpDecision, type AdaptiveFollowUpPolicy } from "./adaptiveInterview.ts";
 export {
   assessPartialTurnStability,
   detectQuestionIntent,
